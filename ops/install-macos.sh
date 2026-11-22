@@ -50,7 +50,9 @@ fi
 
 agent_dir="$HOME/Library/LaunchAgents"
 domain="gui/$(id -u)"
-mkdir -p "$agent_dir" "$root/logs"
+log_dir="$HOME/Library/Logs/ATC Iso"
+mkdir -p "$agent_dir" "$root/logs" "$log_dir"
+log_xml="$(printf '%s' "$log_dir" | sed -e 's/\&/\&amp;/g')"
 
 xml_escape() {
   printf '%s' "$1" | sed -e 's/\&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
@@ -89,9 +91,9 @@ install_agent() {
     <string>$path_xml</string>
   </dict>
   <key>StandardOutPath</key>
-  <string>$root_xml/logs/$job.log</string>
+  <string>$log_xml/$job.log</string>
   <key>StandardErrorPath</key>
-  <string>$root_xml/logs/$job-error.log</string>
+  <string>$log_xml/$job-error.log</string>
   $schedule
 </dict>
 </plist>
@@ -137,5 +139,6 @@ if curl -s -m 3 -o /dev/null http://127.0.0.1:4317/api/profiles; then
 else
   echo "Máy chủ web: CHƯA chạy." >&2
   echo "== thử chạy trực tiếp 5 giây" >&2
-  ( cd "$root" && timeout 5 "$node_path" bin/server.js 2>&1 | tail -5 ) || true
+  ( cd "$root" && "$node_path" bin/server.js > /tmp/atciso-try.log 2>&1 & p=$!; sleep 5; kill $p 2>/dev/null; tail -5 /tmp/atciso-try.log ) || true
+  echo "== nhật ký nền:" >&2; tail -n 8 "$log_dir/server-error.log" 2>/dev/null >&2
 fi
