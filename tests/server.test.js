@@ -132,7 +132,7 @@ test('Task 3 HTTP API and static files', async (t) => {
   scheduledWins = false;
   assert.equal((await post('/api/scan', { watchId: 'example-com' })).status, 202);
   assert.equal(target, 'example-com');
-  assert.deepEqual(await (await get('/api/status')).json(), { scanning: true, scanningWatchId: target, last });
+  assert.deepEqual(await (await get('/api/status')).json(), { scanning: true, scanningWatchId: target, last, lanUrls: [] });
   assert.equal((await post('/api/scan')).status, 409);
   finishScan();
 
