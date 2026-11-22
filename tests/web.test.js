@@ -509,8 +509,8 @@ test('overview shows grouped changes, stable watch colors and all seven totals',
   assert.equal(expand(1)[0].children[0].children[1].textContent, 'Theo dõi');
   const totals = nodes.get('totals').children;
   assert.deepEqual(totals.map((card) => card.children.map((node) => node.textContent)), [
-    ['Dự án mới', '1'], ['Nhà quảng cáo mới', '0'], ['Ads mới', '4'], ['Tăng', '1'],
-    ['Giảm', '1'], ['Đã dừng', '1'], ['Ads đang chạy', '7'],
+    ['Dự án mới', '1'], ['Nhà quảng cáo mới', '0'], ['Ads mới', '4'], ['Tăng ads', '1', 'mục · 0 ads'],
+    ['Giảm ads', '1', 'mục · 0 ads'], ['Dừng hẳn', '1', 'mục · 0 ads'], ['Ads đang chạy', '7'],
   ]);
   assert.equal(totals[6].title, 'Số mẫu quảng cáo có hiển thị trong phạm vi ngày đã chọn');
   const visibleStatuses = () => rows().filter((_, index) => index % 2).flatMap((row) =>
@@ -521,9 +521,9 @@ test('overview shows grouped changes, stable watch colors and all seven totals',
     assert.deepEqual(visibleStatuses(), [card.children[0].textContent]);
   }
   totals[6].onclick();
-  assert.deepEqual(visibleStatuses(), ['Dự án mới', 'Giảm', 'Ổn định', 'Tăng']);
+  assert.deepEqual(visibleStatuses(), ['Dự án mới', 'Giảm ads', 'Ổn định', 'Tăng ads']);
   totals[6].onclick();
-  assert.deepEqual(visibleStatuses(), ['Dự án mới', 'Giảm', 'Đã dừng', 'Ổn định', 'Tăng']);
+  assert.deepEqual(visibleStatuses(), ['Dự án mới', 'Giảm ads', 'Dừng hẳn', 'Ổn định', 'Tăng ads']);
 });
 
 test('group opens inline and loads only the selected watch and group', async () => {

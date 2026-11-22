@@ -35,11 +35,11 @@ let selectedAd;
 let ads = [];
 let rangeAds = [];
 const kindLabels = { competitor: 'Nhà quảng cáo', project: 'Dự án' };
-const groupLabels = { increase: 'Tăng', decrease: 'Giảm', stopped: 'Đã dừng', steady: 'Ổn định' };
+const groupLabels = { increase: 'Tăng ads', decrease: 'Giảm ads', stopped: 'Dừng hẳn', steady: 'Ổn định' };
 const overviewTotals = [
   ['newProjects', 'Dự án mới', 'competitor'], ['newAdvertisers', 'Nhà quảng cáo mới', 'project'],
-  ['newAds', 'Ads mới', 'new'], ['increased', 'Tăng', 'increase'],
-  ['decreased', 'Giảm', 'decrease'], ['stopped', 'Đã dừng', 'stopped'],
+  ['newAds', 'Ads mới', 'new'], ['increased', 'Tăng ads', 'increase'],
+  ['decreased', 'Giảm ads', 'decrease'], ['stopped', 'Dừng hẳn', 'stopped'],
   ['runningAds', 'Ads đang chạy', 'running'],
 ];
 const watchColors = [
@@ -958,9 +958,21 @@ function renderOverview() {
     button.setAttribute('data-label', label);
     button.append(element('span', label),
       element('strong', summary?.totals[key] != null ? formatCount.format(summary.totals[key]) : '—'));
-    if (key === 'runningAds') {
-      button.title = 'Số mẫu quảng cáo có hiển thị trong phạm vi ngày đã chọn';
+    // Tăng/Giảm/Dừng đếm số dự án (hoặc nhà quảng cáo) — ghi rõ đơn vị và số ads thay đổi đi kèm.
+    const adsKey = { increased: 'increasedAds', decreased: 'decreasedAds', stopped: 'stoppedAds' }[key];
+    if (adsKey && summary?.totals[key] != null) {
+      const ads = summary.totals[adsKey] ?? 0;
+      const note = element('small', 'mục · ' + (ads > 0 ? '+' : ads < 0 ? '−' : '') + formatCount.format(Math.abs(ads)) + ' ads');
+      note.className = 'total-note';
+      button.append(note);
     }
+    const hints = {
+      increased: 'Số dự án/nhà quảng cáo đang chạy NHIỀU ads hơn kỳ trước',
+      decreased: 'Số dự án/nhà quảng cáo vẫn chạy nhưng ÍT ads hơn kỳ trước',
+      stopped: 'Số dự án/nhà quảng cáo kỳ trước có chạy, kỳ này không còn ads nào',
+      runningAds: 'Số mẫu quảng cáo có hiển thị trong phạm vi ngày đã chọn',
+    };
+    if (hints[key]) button.title = hints[key];
     button.setAttribute('aria-pressed', String(overviewFilter === key));
     button.onclick = () => {
       overviewFilter = overviewFilter === key ? '' : key;

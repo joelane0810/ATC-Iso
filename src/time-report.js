@@ -145,7 +145,8 @@ export function createTimeReport({ all, scanHistory }) {
       const prevTo = shiftDate(start, -1);
       const prevFrom = shiftDate(prevTo, -daysBetween(start, end));
       const totals = { newProjects: 0, newAdvertisers: 0, newAds: 0,
-        increased: 0, decreased: 0, stopped: 0, runningAds: 0 };
+        increased: 0, decreased: 0, stopped: 0, runningAds: 0,
+        increasedAds: 0, decreasedAds: 0, stoppedAds: 0 };
       const watches = all(`SELECT w.id AS watchId, p.label, p.kind, w.last_scan_at AS lastScanAt
         FROM profile_watches p JOIN watches w ON w.id = p.watch_id
         WHERE p.profile_id = ? AND p.deleted_at IS NULL ORDER BY p.rowid`, pid).map(row => ({
@@ -198,6 +199,9 @@ export function createTimeReport({ all, scanHistory }) {
           totals[watch.kind === 'project' ? 'newAdvertisers' : 'newProjects']++;
         }
         if (totalKeys[status]) totals[totalKeys[status]]++;
+        if (status === 'increase') totals.increasedAds += delta;
+        if (status === 'decrease') totals.decreasedAds += delta;
+        if (status === 'stopped') totals.stoppedAds -= runningPrev;
         totals.newAds += newAds;
         totals.runningAds += runningNow;
       }

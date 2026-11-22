@@ -875,3 +875,5 @@ main {
   .topbar .profile-menu summary { width: 36px; padding: 0; font-size: 0; justify-content: center; }
   .topbar .profile-menu summary::before { font-size: 20px; }
 }
+
+.total .total-note { display: block; margin-top: 2px; font-size: 11px; font-weight: 500; color: var(--muted, #5f6368); }

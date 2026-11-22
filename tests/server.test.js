@@ -180,7 +180,7 @@ test('profile summary and group filters follow the API contract', async t => {
   const result = await (await request(summary)).json();
   assert.deepEqual(result.lastScan, { at, status: 'ok' });
   assert.deepEqual(result.totals, { newProjects: 1, newAdvertisers: 1, newAds: 2,
-    increased: 0, decreased: 0, stopped: 0, runningAds: 2 });
+    increased: 0, decreased: 0, stopped: 0, runningAds: 2, increasedAds: 0, decreasedAds: 0, stoppedAds: 0 });
   assert.equal((await (await request(summary + '?window=7d')).json()).window, '7d');
   const series = await (await request(`/api/profiles/dai/series?watchId=${project.id}&group=AR1&days=2`)).json();
   assert.equal(series.points.length, 2);

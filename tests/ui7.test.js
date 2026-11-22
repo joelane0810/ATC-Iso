@@ -165,7 +165,7 @@ test('overview selects the period, displays the seven totals and expands only fi
   assert.equal(params.get('from'), '2026-10-24');
   assert.equal(params.get('to'), refDate);
   assert.deepEqual(get('totals').children.map((card) => card.children[0].textContent),
-    ['Dự án mới', 'Nhà quảng cáo mới', 'Ads mới', 'Tăng', 'Giảm', 'Đã dừng', 'Ads đang chạy']);
+    ['Dự án mới', 'Nhà quảng cáo mới', 'Ads mới', 'Tăng ads', 'Giảm ads', 'Dừng hẳn', 'Ads đang chạy']);
   assert.equal(rows()[1].hidden, true);
   const [running, delta] = rows()[0].children[2].children[0].children;
   assert.equal(running.textContent, '2');

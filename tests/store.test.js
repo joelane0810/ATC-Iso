@@ -163,7 +163,7 @@ test('summary uses Vietnamese dates, all windows, and ATC dates after repeat sca
   assert.equal(first.refDate, '2026-11-22');
   assert.equal(first.prevDate, '2026-11-21');
   assert.deepEqual(first.totals, { newProjects: 1, newAdvertisers: 2, newAds: 4,
-    increased: 1, decreased: 1, stopped: 1, runningAds: 9 });
+    increased: 1, decreased: 1, stopped: 1, runningAds: 9, increasedAds: 1, decreasedAds: -1, stoppedAds: -1 });
   assert.deepEqual(first.watches[0].groups.slice(0, 4).map(g => [g.key, g.status, g.delta, g.followed]), [
     ['new.com', 'new', 1, true], ['increase.com', 'increase', 1, false],
     ['decrease.com', 'decrease', -1, false], ['stopped.com', 'stopped', -1, false],
