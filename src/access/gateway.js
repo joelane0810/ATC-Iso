@@ -24,7 +24,11 @@ export function gatewayBinary(root, { os = platform(), cpu = arch() } = {}) {
   return binary;
 }
 
-export function startGateway({ root, port, hostname, log = console.error, spawnProcess = spawn, binary = gatewayBinary(root) }) {
+function safeBinary(root, log) {
+  try { return gatewayBinary(root); } catch (error) { log(`[cổng Tailscale] Không mở được tệp cổng: ${error.message}`); return null; }
+}
+
+export function startGateway({ root, port, hostname, log = console.error, spawnProcess = spawn, binary = safeBinary(root, log) }) {
   const state = { hostname, running: false, loginUrl: null, error: null };
   if (!binary) {
     state.error = 'Máy này chưa có cổng Tailscale cho app.';

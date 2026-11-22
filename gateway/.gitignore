@@ -1,2 +1,2 @@
-atc-iso-gateway-*
-!bin/
+/atc-iso-gateway-*
+/g-*
