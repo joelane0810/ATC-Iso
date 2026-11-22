@@ -19,12 +19,19 @@ export async function runScan({
   const changes = [];
   const runningSince = scannedAt.getTime() - RUNNING_WINDOW;
 
-  let detailCalls = 0;
+  const attemptedDetails = new Set();
+  const scanId = await store.beginScan?.(scannedAt.toISOString());
   let retries = 0;
   let captures = 0;
   let nextCaptureAt = 0;
   try {
-    for (const watch of await store.allWatches()) {
+    const watches = await store.allWatches();
+    const watchCount = watches.length || 1;
+    const baseQuota = Math.floor(MAX_DETAILS / watchCount);
+    const extra = MAX_DETAILS % watchCount;
+    const offset = Math.floor(scannedAt.getTime() / 86_400_000) % watchCount;
+    for (const [index, watch] of watches.entries()) {
+      const quota = baseQuota + Number((index - offset + watches.length) % watches.length < extra);
       const previous = await store.getAds(watch.id);
       const seen = new Set(Object.entries(previous?.ads ?? {})
         .filter(([, ad]) => ad.platform === 'search').map(([id]) => id));
@@ -35,6 +42,7 @@ export async function runScan({
       const tokens = new Set();
       let pageToken = null;
       let pages = 0;
+      let refreshThrough = null;
 
       do {
         const request = buildSearchCreativesReq({ watch, pageToken });
@@ -43,7 +51,10 @@ export async function runScan({
         pages++;
         let hasUnconfirmedAds = false;
         for (const ad of pageAds) {
-          ads.set(ad.creativeId, ad);
+          const lastShown = ads.get(ad.creativeId)?.lastShown;
+          ads.set(ad.creativeId, { ...ad,
+            lastShown: !ad.lastShown || Date.parse(lastShown) > Date.parse(ad.lastShown) ? lastShown ?? ad.lastShown : ad.lastShown,
+          });
           if (!seen.has(ad.creativeId)) {
             seen.add(ad.creativeId);
             hasUnconfirmedAds = true;
@@ -52,7 +63,8 @@ export async function runScan({
 
         log(`Đang quét ${watch.label || watch.value}: trang ${pages}, ${ads.size} mẫu`);
         if (pages >= (previous ? MAX_PAGES_LATER : MAX_PAGES_FIRST)) break;
-        if (previous && !hasUnconfirmedAds) break;
+        if (previous && !hasUnconfirmedAds && refreshThrough == null) refreshThrough = pages + 3;
+        if (pages === refreshThrough) break;
         if (!nextToken || tokens.has(nextToken)) break;
         tokens.add(nextToken);
         pageToken = nextToken;
@@ -63,7 +75,7 @@ export async function runScan({
       const { file, newIds } = await store.mergeAds(watch, [...ads.values()].map(ad => ({
         ...ad,
         previewUrl: ad.previewUrl ?? ad.imageUrl ?? previous?.ads[ad.creativeId]?.previewUrl ?? null,
-      })), scannedAt);
+      })), scannedAt, scanId);
       result.watched++;
       result.newAds += newIds.length;
 
@@ -78,15 +90,15 @@ export async function runScan({
         total: searchAds.length,
       });
 
-      if (detailCalls < MAX_DETAILS && store.creativesNeedingRegions) {
-        const pending = await store.creativesNeedingRegions(MAX_DETAILS - detailCalls, {
+      if (quota > 0 && store.creativesNeedingRegions) {
+        const pending = await store.creativesNeedingRegions(quota + attemptedDetails.size, {
           watchId: watch.id, now: scannedAt,
         });
-        for (const creative of pending) {
-          if (detailCalls >= MAX_DETAILS) break;
-          detailCalls++;
+        for (const creative of pending.filter(ad => !attemptedDetails.has(ad.creativeId)).slice(0, quota)) {
+          attemptedDetails.add(creative.creativeId);
           const detail = await client.rpc('LookupService/GetCreativeById', buildCreativeDetailReq(creative));
-          await store.setCreativeRegions(creative.creativeId, parseCreativeRegions(detail));
+          const regions = parseCreativeRegions(detail);
+          await store.setCreativeRegions(creative.creativeId, regions, scannedAt);
         }
       }
 
@@ -120,7 +132,7 @@ export async function runScan({
     log(result.error);
   }
 
-  const scanId = await record({ at: scannedAt.toISOString(), ...result, changes });
-  if (scanId != null) await store.recordGroupSnapshots?.(scanId, scannedAt);
+  // The logging callback finalizes the same scan row that owns the watch snapshots.
+  await record({ at: scannedAt.toISOString(), ...result, changes, ...(scanId == null ? {} : { scanId }) });
   return result;
 }

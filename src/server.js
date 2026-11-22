@@ -1,3 +1,4 @@
+import { isSqliteBusy } from './db.js';
 import { readFile, realpath } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -58,6 +59,8 @@ async function serveFile(res, dir, name) {
 export async function startServer({
   store, port = 4317, host = '127.0.0.1', triggerScan, isScanning, waitForAcquisition = false,
 }) {
+  const webStore = store.forWeb?.();
+  store = webStore ?? store;
   let scanPending = false;
   const scanning = () => scanPending || isScanning();
 
@@ -153,6 +156,9 @@ export async function startServer({
       }
       return json(res, 404, { error: 'Không tìm thấy.' });
     } catch (error) {
+      if (isSqliteBusy(error)) {
+        return json(res, 503, { error: 'Đang cập nhật dữ liệu, thử lại sau vài giây' });
+      }
       if (error.code) {
         console.error(error);
         return json(res, 500, { error: 'Có lỗi xảy ra. Vui lòng thử lại.' });
@@ -161,12 +167,18 @@ export async function startServer({
     }
   });
 
-  await new Promise((resolveListen, reject) => {
-    server.once('error', reject);
-    server.listen(port, host, () => {
-      server.off('error', reject);
-      resolveListen();
+  if (webStore) server.once('close', () => webStore.close());
+  try {
+    await new Promise((resolveListen, reject) => {
+      server.once('error', reject);
+      server.listen(port, host, () => {
+        server.off('error', reject);
+        resolveListen();
+      });
     });
-  });
+  } catch (error) {
+    await webStore?.close();
+    throw error;
+  }
   return server;
 }

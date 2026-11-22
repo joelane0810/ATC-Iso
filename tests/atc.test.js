@@ -82,3 +82,9 @@ test('creative detail builds the request and reads calendar dates from the real 
   assert.deepEqual([2380, 2840, 2704, 2392, 2276, 2248].map(regionIdToIso), ['IT', 'US', 'VN', 'JP', 'DE', 'AX']);
   assert.deepEqual(parseCreativeRegions({ 17: [{ 1: 2840, 5: 20260230 }] }), []);
 });
+
+test('creative detail distinguishes omitted countries from a confirmed empty list', async () => {
+  const { parseCreativeRegions } = await import('../src/atc.js');
+  assert.equal(parseCreativeRegions({}), null);
+  assert.deepEqual(parseCreativeRegions({ 17: [] }), []);
+});

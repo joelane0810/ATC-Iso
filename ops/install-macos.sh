@@ -19,7 +19,8 @@ node_path=
 npm_path=
 for dir in ${NODE_BIN:+"$(dirname "$NODE_BIN")"} "$HOME/.local/bin" "$HOME/.homebrew/bin" /opt/homebrew/bin ${path_dirs[@]+"${path_dirs[@]}"} /usr/local/bin /usr/bin; do
   if [[ "$dir" = /* && -x "$dir/node" ]] &&
-     "$dir/node" -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 20 ? 0 : 1)'; then
+     "$dir/node" -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major > 22 || (major === 22 && minor >= 13) ? 0 : 1)' &&
+     "$dir/node" -e 'require("node:sqlite")' >/dev/null 2>&1; then
     node_path="$dir/node"
     [[ -x "$dir/npm" ]] && npm_path="$dir/npm"
     export PATH="$dir:$PATH"
@@ -27,7 +28,7 @@ for dir in ${NODE_BIN:+"$(dirname "$NODE_BIN")"} "$HOME/.local/bin" "$HOME/.home
   fi
 done
 if [[ -z "$node_path" ]]; then
-  echo "Cần cài Node.js từ phiên bản 20 trở lên." >&2
+  echo "Cần cài Node.js từ phiên bản 22.13 trở lên có hỗ trợ SQLite." >&2
   exit 1
 fi
 [[ -z "$npm_path" && -n "${NPM_BIN:-}" && -x "$NPM_BIN" ]] && npm_path="$NPM_BIN"

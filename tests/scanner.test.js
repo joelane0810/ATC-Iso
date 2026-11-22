@@ -86,13 +86,13 @@ test('first scan stops after five pages', async () => {
   assert.equal(run.logs[0].status, 'ok');
 });
 
-test('later scan stops on a page with no new ads', async () => {
-  const run = setup((req, n) => page(n === 1 ? ['CRnew', 'CRold'] : ['CRold'], String(n)), {
+test('later scan reads up to three extra pages after a page with all known ads', async () => {
+  const run = setup((req, n) => page(n === 1 ? ['CRnew', 'CRold'] : n === 4 ? ['CRlater'] : ['CRold'], String(n)), {
     previous: ['CRold'], saved: { CRold: { platform: 'search', image: 'images/CRold.png' } },
   });
-  assert.deepEqual(await run.scan(), { status: 'ok', watched: 1, newAds: 1 });
-  assert.equal(run.requests.length, 2);
-  assert.deepEqual(run.captures, ['CRnew']);
+  assert.deepEqual(await run.scan(), { status: 'ok', watched: 1, newAds: 2 });
+  assert.equal(run.requests.length, 5);
+  assert.deepEqual(run.captures, ['CRnew', 'CRlater']);
 });
 
 test('blocking stops the scan and retains completed watches', async () => {
@@ -271,9 +271,8 @@ test('details prioritize new ads per watch and share a limit of 60 across watche
   assert.equal(calls.length, 62);
   assert.equal(calls[0], first.id);
   assert.ok(calls.slice(1, 31).every(id => id.startsWith(first.id + '-')));
-  assert.equal(calls[31], 'old');
-  assert.equal(calls[32], second.id);
-  assert.ok(calls.slice(33).every(id => id.startsWith(second.id + '-')));
+  assert.equal(calls[31], second.id);
+  assert.ok(calls.slice(32).every(id => id.startsWith(second.id + '-')));
   const pending = store.creativesNeedingRegions(60, { now: now() });
   assert.equal(pending.length, 11);
   assert.equal(store.listAdsForProfile(id, { q: 'first.com' })[0].regions[0].iso, 'US');
@@ -299,4 +298,28 @@ test('a creative detail block stops all further requests', async t => {
   assert.deepEqual(calls, ['SearchService/SearchCreatives', 'LookupService/GetCreativeById']);
   assert.equal(store.getAds(first.id).ads.CR1.creativeId, 'CR1');
   assert.equal(store.getSummary(id, now()).lastScan.status, 'blocked');
+});
+
+test('a missing country response is retried next scan while a confirmed empty result is cached', async t => {
+  const { createStore } = await import('../src/store.js');
+  const root = await mkdtemp(join(tmpdir(), 'atc-detail-missing-'));
+  const store = createStore(root);
+  t.after(() => {
+    store.close();
+    return rm(root, { recursive: true, force: true });
+  });
+  store.addWatch(store.addProfile('Dai').id, 'site.com');
+  let detailCalls = 0;
+  let date = 22;
+  const client = {
+    async rpc(method) {
+      if (method.startsWith('LookupService/')) return ++detailCalls === 1 ? null : [];
+      return { ads: [{ creativeId: 'CR1', advertiserId: 'AR1', lastShown: '2026-11-10T02:00:00Z' }] };
+    },
+  };
+  for (; date <= 24; date++) {
+    const result = await runScan({ store, client, now: () => new Date(`2026-11-${date}T02:00:00Z`), log: () => {} });
+    assert.equal(result.status, 'ok');
+  }
+  assert.equal(detailCalls, 2);
 });
