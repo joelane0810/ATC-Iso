@@ -29,11 +29,23 @@ export async function scanOnce({
   return withLock(join(root, 'data', '.scan.lock'), async () => {
     onAcquired();
     // Bị Google chặn thì nghỉ 6 tiếng rồi mới quét lại.
-    const lastLog = (await store.getScanLog?.())?.at(-1);
+    // Trong lúc nghỉ, chỉ quét nhẹ (2 trang, không mở trang chi tiết) các mục mới thêm chưa quét lần nào.
     const COOLDOWN_MS = 6 * 60 * 60 * 1000;
-    if (lastLog?.status === 'blocked' && Date.now() - Date.parse(lastLog.at) < COOLDOWN_MS) {
-      log('Đang nghỉ sau khi bị Google chặn — chưa quét lại.');
-      return { status: 'cooldown' };
+    const history = (await store.getScanLog?.()) ?? [];
+    const lastBlockedIndex = history.map(e => e.status).lastIndexOf('blocked');
+    const lastBlocked = lastBlockedIndex >= 0 ? history[lastBlockedIndex] : null;
+    const okSince = lastBlockedIndex >= 0 && history.slice(lastBlockedIndex + 1).some(e => e.status === 'ok' && !e.light);
+    let scanOptions = {};
+    if (lastBlocked && !okSince && Date.now() - Date.parse(lastBlocked.at) < COOLDOWN_MS) {
+      const resumeAt = new Date(Date.parse(lastBlocked.at) + COOLDOWN_MS).toISOString();
+      const fresh = [];
+      for (const watch of await store.allWatches()) if (!(await store.getAds(watch.id))) fresh.push(watch.id);
+      if (!fresh.length) {
+        log('Đang nghỉ sau khi bị Google chặn — chưa quét lại.');
+        await store.appendScanLog({ at: new Date().toISOString(), status: 'cooldown', resumeAt, watched: 0, newAds: 0 });
+        return { status: 'cooldown', resumeAt };
+      }
+      scanOptions = { onlyWatchIds: fresh, maxPages: 2, maxDetails: 0 };
     }
     let client;
     let entry;
@@ -53,9 +65,9 @@ export async function scanOnce({
     }
     if (client) {
       try {
-        await runScan({ store, client, log, record: async value => {
+        await runScan({ store, client, log, ...scanOptions, record: async value => {
           entry = value;
-          scanId = await store.appendScanLog(value);
+          scanId = await store.appendScanLog(scanOptions.onlyWatchIds ? { ...value, light: true } : value);
           return scanId;
         } });
       } finally {

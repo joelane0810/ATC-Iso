@@ -537,11 +537,12 @@ async function refreshStatus(wasScanning = false) {
   clearTimeout(pollTimer);
   const { scanning, last } = await api('status');
   scan.disabled = scanning;
-  const labels = { ok: 'Hoàn tất', blocked: 'Bị chặn', error: 'Gặp lỗi' };
+  const labels = { ok: 'Hoàn tất', blocked: 'Bị Google chặn', error: 'Gặp lỗi', cooldown: 'Đang nghỉ sau khi Google chặn' };
   const date = last?.at ?? last?.startedAt ?? last?.finishedAt ?? last?.time;
   byId('status').textContent = scanning ? 'Đang quét…' : last
     ? [labels[last.status], date && displayDate(date, timeFormat),
-      Number.isFinite(last.newAds) && `${last.newAds} mẫu mới`].filter(Boolean).join(' · ')
+      last.status === 'cooldown' && last.resumeAt ? `quét lại lúc ${displayDate(last.resumeAt, timeFormat)}` : null,
+      last.status !== 'cooldown' && Number.isFinite(last.newAds) && `${last.newAds} mẫu mới`].filter(Boolean).join(' · ')
     : 'Chưa có lượt quét.';
   if (scanning) {
     pollTimer = setTimeout(() => {

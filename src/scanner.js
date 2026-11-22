@@ -11,6 +11,7 @@ const RUNNING_WINDOW = 2 * 24 * 60 * 60 * 1000;
 export async function runScan({
   store, client, now = () => new Date(), log = console.log,
   maxDetails = typeof client.lookupRegions === 'function' ? DEFAULT_MAX_DETAILS : 0,
+  onlyWatchIds = null, maxPages = null,
   record = entry => store.appendScanLog(entry), waitForCapture = delay,
 }) {
   const scannedAt = now();
@@ -24,7 +25,7 @@ export async function runScan({
   let captures = 0;
   let nextCaptureAt = 0;
   try {
-    const watches = await store.allWatches();
+    const watches = (await store.allWatches()).filter(w => !onlyWatchIds || onlyWatchIds.includes(w.id));
     let regionFailures = 0;
     const watchCount = watches.length || 1;
     const baseQuota = Math.floor(maxDetails / watchCount);
@@ -62,7 +63,7 @@ export async function runScan({
         }
 
         log(`Đang quét ${watch.label || watch.value}: trang ${pages}, ${ads.size} mẫu`);
-        if (pages >= (previous ? MAX_PAGES_LATER : MAX_PAGES_FIRST)) break;
+        if (pages >= (maxPages ?? (previous ? MAX_PAGES_LATER : MAX_PAGES_FIRST))) break;
         if (previous && !hasUnconfirmedAds && refreshThrough == null) refreshThrough = pages + 3;
         if (pages === refreshThrough) break;
         if (!nextToken || tokens.has(nextToken)) break;

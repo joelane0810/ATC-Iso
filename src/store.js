@@ -204,7 +204,7 @@ export function createStore(root, options) {
       const cutoff = new Date(now ?? Date.now()).toISOString();
       const [latest, previous] = all(`SELECT id, at, status FROM scans
         WHERE status IN ('ok', 'blocked', 'error') AND julianday(at) <= julianday(?) ORDER BY id DESC LIMIT 2`, cutoff);
-      const currentScan = get(`SELECT id FROM scans WHERE status IS NOT NULL AND julianday(at) <= julianday(?) ORDER BY id DESC LIMIT 1`, cutoff);
+      const currentScan = get(`SELECT id FROM scans WHERE status IS NOT NULL AND status != 'cooldown' AND julianday(at) <= julianday(?) ORDER BY id DESC LIMIT 1`, cutoff);
       const totals = { newGroups: 0, increased: 0, decreased: 0, stopped: 0, runningAds: 0 };
       const statusTotals = { new: 'newGroups', increase: 'increased', decrease: 'decreased', stopped: 'stopped' };
       const watches = getWatchlist(pid).map(watch => {
