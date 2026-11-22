@@ -16,10 +16,10 @@ test('addWatch dedupes across inputs and profiles while preserving regions', (t)
   const dai = store.addProfile('Dai');
   const lan = store.addProfile('Lan');
   const watch = store.addWatch(dai.id, 'https://www.Nike.com/a');
-  assert.equal(watch.kind, 'competitor');
+  assert.equal(watch.kind, 'project');
   assert.deepEqual(store.addWatch(dai.id, 'nike.com'), watch);
-  assert.deepEqual(store.addWatch(dai.id, 'nike.com', null, 'project'), { ...watch, kind: 'project' });
-  assert.deepEqual(store.getWatchlist(dai.id), [{ ...watch, kind: 'project' }]);
+  assert.deepEqual(store.addWatch(dai.id, 'nike.com', null, 'competitor'), watch);
+  assert.deepEqual(store.getWatchlist(dai.id), [watch]);
   store.addWatch(lan.id, 'nike.com');
   const regional = store.addWatch(lan.id, 'nike.com', 2840);
   assert.equal(regional.id, 'nike-com-r2840');
@@ -102,7 +102,7 @@ test('legacy JSON migrates once with all rows and leaves the originals intact', 
   }
   const store = createStore(root);
   assert.deepEqual(store.listProfiles(), profiles);
-  assert.deepEqual(store.getWatchlist('dai'), [{ ...watch, kind: 'competitor', groupId: null }]);
+  assert.deepEqual(store.getWatchlist('dai'), [{ ...watch, kind: 'project', groupId: null }]);
   assert.equal(store.getWatchlist('lan')[0].kind, 'project');
   assert.deepEqual(store.getScanLog(), logs);
   assert.equal(store.getAds('x-com').ads.CR2.image, 'images/CR2.png');
@@ -202,7 +202,7 @@ test('summary uses Vietnamese dates, all windows, and ATC dates after repeat sca
 test('ranges count ads on any overlapping day and compare the preceding equal-length range', t => {
   const { store } = setup(t);
   const { id } = store.addProfile('Dai');
-  const watch = store.addWatch(id, 'example.com');
+  const watch = store.addWatch(id, 'AR1');
   const now = '2026-11-22T13:00:00Z';
   const ad = (creativeId, firstShown, lastShown, domain = creativeId + '.com') =>
     ({ creativeId, domain, firstShown, lastShown });
@@ -268,14 +268,16 @@ test('suggest counts known domains and advertisers and addWatch resolves exact n
   ]);
   assert.equal(store.suggest('').length, 10);
   assert.deepEqual(store.suggest('missing'), []);
-  const named = store.addWatch(id, '  áo ĐẸP ');
+  const named = store.addWatch(id, '  áo ĐẸP ', null, 'project');
+  assert.equal(named.kind, 'competitor');
   assert.equal(named.label, 'Áo Đẹp');
   for (const input of ['ar123', 'https://adstransparency.google.com/advertiser/AR123?region=VN',
     'adstransparency.google.com/advertiser/AR123/creative/CR1',
     '//www.adstransparency.google.com/intl/vi/advertiser/AR123/creative/CR1#top']) {
-    assert.deepEqual(store.addWatch(id, input), named);
+    assert.deepEqual(store.addWatch(id, input, null, 'project'), named);
   }
-  const domain = store.addWatch(id, 'www.Shop.com/path');
+  const domain = store.addWatch(id, 'www.Shop.com/path', null, 'không hợp lệ');
+  assert.equal(domain.kind, 'project');
   assert.deepEqual(store.addWatch(id, 'https://shop.com'), domain);
   assert.throws(() => store.addWatch(id, 'Áo'), /Không nhận ra/);
 });
@@ -668,4 +670,43 @@ test('nâng DB phiên bản 3 giữ mục theo dõi và quảng cáo đã lưu',
   assert.deepEqual(upgraded.getWatchlist(id), [watch]);
   assert.deepEqual(upgraded.getTrash(id), []);
   assert.equal(upgraded.listAdsForProfile(id)[0].firstSeenByUs, at);
+});
+
+test('nâng DB phiên bản 4 phân loại lại mục theo dõi đúng một lần', async t => {
+  const { root, store } = setup(t);
+  const { DatabaseSync } = await import('node:sqlite');
+  const { id } = store.addProfile('Dai');
+  const projects = store.addGroup(id, 'Dự án', 'project');
+  const advertisers = store.addGroup(id, 'Nhà quảng cáo', 'competitor');
+  const domain = store.addWatch(id, 'shop.com');
+  const advertiser = store.addWatch(id, 'AR1', null, undefined, advertisers.id);
+  const unchanged = store.addWatch(id, 'other.com', null, undefined, projects.id);
+  store.removeWatch(id, advertiser.id);
+  store.close();
+
+  const db = new DatabaseSync(join(root, 'data', 'atc.db'));
+  t.after(() => db.close());
+  db.prepare("UPDATE profile_watches SET kind = 'competitor', group_id = ? WHERE watch_id = ?")
+    .run(advertisers.id, domain.id);
+  db.prepare("UPDATE profile_watches SET kind = 'project' WHERE watch_id = ?").run(advertiser.id);
+  db.exec(`UPDATE watches SET kind = CASE type WHEN 'domain' THEN 'competitor' ELSE 'project' END;
+    PRAGMA user_version = 4;`);
+
+  const upgraded = createStore(root);
+  assert.deepEqual(upgraded.getWatchlist(id), [domain, unchanged]);
+  const [trashed] = upgraded.getTrash(id);
+  assert.equal(trashed.kind, 'competitor');
+  assert.equal(trashed.groupId, advertisers.id);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 5);
+  const kind = db.prepare('SELECT kind FROM watches WHERE id = ?');
+  assert.equal(kind.get(domain.id).kind, 'project');
+  assert.equal(kind.get(advertiser.id).kind, 'competitor');
+  upgraded.close();
+
+  db.prepare("UPDATE profile_watches SET kind = 'competitor' WHERE watch_id = ?").run(domain.id);
+  db.prepare("UPDATE watches SET kind = 'competitor' WHERE id = ?").run(domain.id);
+  const reopened = createStore(root);
+  t.after(() => reopened.close());
+  assert.equal(reopened.getWatchlist(id)[0].kind, 'competitor');
+  assert.equal(kind.get(domain.id).kind, 'competitor');
 });

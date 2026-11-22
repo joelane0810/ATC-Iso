@@ -44,7 +44,7 @@ async function readBody(req, allowEmpty = false) {
   }
 }
 
-async function serveFile(res, dir, name) {
+async function serveFile(res, dir, name, headers = {}) {
   const type = contentTypes[extname(name).toLowerCase()];
   if (!type || name !== basename(name) || name.includes('\\')) return false;
   try {
@@ -53,7 +53,7 @@ async function serveFile(res, dir, name) {
     const path = relative(root, file);
     if (!path || path === '..' || path.startsWith('..' + sep) || isAbsolute(path)) return false;
     const data = await readFile(file);
-    res.writeHead(200, { 'Content-Type': type, 'X-Content-Type-Options': 'nosniff' });
+    res.writeHead(200, { 'Content-Type': type, 'X-Content-Type-Options': 'nosniff', ...headers });
     res.end(data);
     return true;
   } catch (error) {
@@ -162,14 +162,14 @@ export async function startServer({
         if (resource === 'watchlist') {
           if (method === 'GET' && !wid) return json(res, 200, await store.getWatchlist(pid));
           if (method === 'POST' && !wid) {
-            const { input, region = null, kind, groupId } = await readBody(req);
+            const { input, region = null, groupId } = await readBody(req);
             if (typeof input !== 'string' || !input.trim()) {
               throw new Error('Vui lòng nhập tên miền hoặc link nhà quảng cáo.');
             }
             if (region !== null && (!Number.isSafeInteger(region) || region <= 0)) {
               throw new Error('Khu vực không hợp lệ.');
             }
-            return json(res, 201, await store.addWatch(pid, input, region, kind, groupId));
+            return json(res, 201, await store.addWatch(pid, input, region, undefined, groupId));
           }
           if (method === 'POST' && wid === 'delete') {
             const { ids } = await readBody(req);
@@ -213,7 +213,7 @@ export async function startServer({
 
       if (method === 'GET') {
         const name = webFiles.get(path);
-        if (name && await serveFile(res, webDir, name)) return;
+        if (name && await serveFile(res, webDir, name, { 'Cache-Control': 'no-cache' })) return;
         if (path.startsWith('/images/')) {
           let image;
           try {

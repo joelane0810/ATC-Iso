@@ -64,8 +64,9 @@ test('Task 3 HTTP API and static files', async (t) => {
     getWatchlist: () => watches,
     addWatch(pid, input, region, kind) {
       assert.equal(pid, 'dai');
+      assert.equal(kind, undefined);
       if (input === 'abc') throw new Error('Không nhận ra tên miền hoặc link nhà quảng cáo');
-      const watch = { id: input, label: input, region, kind };
+      const watch = { id: input, label: input, region, kind: 'project' };
       watches.push(watch);
       return watch;
     },
@@ -135,9 +136,16 @@ test('Task 3 HTTP API and static files', async (t) => {
   assert.equal((await post('/api/scan')).status, 409);
   finishScan();
 
-  assert.match(await (await get('/')).text(), /Quét ngay/);
-  assert.match((await get('/app.js')).headers.get('content-type'), /javascript/);
-  assert.equal(await (await get('/images/CR1.png')).text(), 'ảnh');
+  const home = await get('/');
+  assert.equal(home.headers.get('cache-control'), 'no-cache');
+  assert.match(await home.text(), /Quét ngay/);
+  const app = await get('/app.js');
+  assert.equal(app.headers.get('cache-control'), 'no-cache');
+  assert.match(app.headers.get('content-type'), /javascript/);
+  assert.equal((await get('/style.css')).headers.get('cache-control'), 'no-cache');
+  const image = await get('/images/CR1.png');
+  assert.equal(image.headers.get('cache-control'), null);
+  assert.equal(await image.text(), 'ảnh');
   assert.equal((await get('/images/../package.json')).status, 404);
   assert.equal((await get('/images/..%2Fpackage.json')).status, 404);
 });
@@ -286,11 +294,13 @@ test('API quản lý nhóm và thùng rác theo hồ sơ', async t => {
   assert.deepEqual(await (await send('PATCH', groupPath, { name: 'Bán lẻ' })).json(),
     { ...group, name: 'Bán lẻ' });
 
-  const wrongKind = await send('POST', list, { input: 'shop.com', groupId: group.id });
+  const wrongKind = await send('POST', list, { input: 'AR1', kind: 'project', groupId: group.id });
   assert.equal(wrongKind.status, 400);
-  assert.match((await wrongKind.json()).error, /cùng loại/);
-  const first = await (await send('POST', list, { input: 'shop.com', kind: 'project', groupId: group.id })).json();
-  const second = await (await send('POST', list, { input: 'rival.com' })).json();
+  assert.deepEqual(await wrongKind.json(), { error: 'Nhóm này thuộc loại khác' });
+  const first = await (await send('POST', list, { input: 'shop.com', kind: 'competitor', groupId: group.id })).json();
+  const second = await (await send('POST', list, { input: 'AR1', kind: 'project' })).json();
+  assert.equal(first.kind, 'project');
+  assert.equal(second.kind, 'competitor');
   assert.equal(first.groupId, group.id);
   assert.equal(second.groupId, null);
   assert.equal((await send('PATCH', list + '/' + second.id, { groupId: group.id })).status, 400);

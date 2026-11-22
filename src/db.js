@@ -36,7 +36,7 @@ function jsonFiles(path) {
   }
 }
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 export const TRASH_RETENTION_MS = 60 * 24 * 60 * 60 * 1000;
 const retryWait = new Int32Array(new SharedArrayBuffer(4));
 
@@ -315,7 +315,7 @@ export function openDb(data, { readOnly = false, web = false, now = () => new Da
             saveSnapshot(scanId, id, at, ads);
           }
         }
-        db.exec(`
+        if (previous < 4) db.exec(`
           CREATE TABLE watch_groups (
             id TEXT PRIMARY KEY, profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
             name TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('competitor', 'project')),
@@ -325,6 +325,21 @@ export function openDb(data, { readOnly = false, web = false, now = () => new Da
           ALTER TABLE profile_watches ADD COLUMN group_id TEXT REFERENCES watch_groups(id) ON DELETE SET NULL;
           ALTER TABLE profile_watches ADD COLUMN deleted_at TEXT;
           CREATE INDEX profile_watches_trash ON profile_watches(deleted_at) WHERE deleted_at IS NOT NULL;
+        `);
+        db.exec(`
+          UPDATE profile_watches AS p
+          SET kind = CASE w.type WHEN 'domain' THEN 'project' ELSE 'competitor' END,
+              group_id = (SELECT g.id FROM watch_groups AS g WHERE g.id = p.group_id
+                AND g.kind = CASE w.type WHEN 'domain' THEN 'project' ELSE 'competitor' END)
+          FROM watches AS w
+          WHERE p.watch_id = w.id AND (
+            (w.type = 'domain' AND p.kind = 'competitor') OR
+            (w.type = 'advertiser' AND p.kind = 'project')
+          );
+          UPDATE watches
+          SET kind = CASE type WHEN 'domain' THEN 'project' ELSE 'competitor' END
+          WHERE (type = 'domain' AND kind = 'competitor') OR
+                (type = 'advertiser' AND kind = 'project');
         `);
         db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
       });

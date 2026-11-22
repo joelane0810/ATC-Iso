@@ -11,6 +11,7 @@ import { createWebStore } from './web-store.js';
 const DAY = 24 * 60 * 60 * 1000;
 const watchFields = 'w.id, w.type, w.value, w.region, p.label, p.kind, p.added_at AS addedAt, p.group_id AS groupId';
 const groupTypeFor = (kind) => kind === 'project' ? 'advertiser' : 'domain';
+const kindForWatchType = (type) => type === 'domain' ? 'project' : 'competitor';
 
 function notFound(message) {
   return Object.assign(new Error(message), { code: 'NOT_FOUND' });
@@ -49,7 +50,7 @@ export function createStore(root, options) {
 
   function validateGroup(pid, gid, kind) {
     if (gid !== null && requireGroup(pid, gid).kind !== kind) {
-      throw new Error('Nhóm phải cùng loại với mục theo dõi.');
+      throw new Error('Nhóm này thuộc loại khác');
     }
   }
 
@@ -151,30 +152,28 @@ export function createStore(root, options) {
         run('DELETE FROM watch_groups WHERE id = ?', gid);
       });
     },
-    addWatch(pid, input, region = null, kind, groupId) {
-      if (kind !== undefined) watchKind(kind);
+    addWatch(pid, input, region = null, _kind, groupId) {
       return transaction(() => {
         requireProfile(pid);
         const addedAt = new Date(now()).toISOString();
         purgeExpiredTrash(addedAt);
-        const named = get(`SELECT a.id, a.name FROM advertisers a JOIN creatives c ON c.advertiser_id = a.id
-          WHERE fold_name(a.name) = fold_name(?) AND fold_name(a.name) != ''
-          GROUP BY a.id ORDER BY count(*) DESC, a.id LIMIT 1`, input);
         let parsed;
         try {
           parsed = parseWatchInput(input);
         } catch (error) {
+          const named = get(`SELECT a.id FROM advertisers a JOIN creatives c ON c.advertiser_id = a.id
+            WHERE fold_name(a.name) = fold_name(?) AND fold_name(a.name) != ''
+            GROUP BY a.id ORDER BY count(*) DESC, a.id LIMIT 1`, input);
           if (!named) throw error;
+          parsed = { type: 'advertiser', value: named.id };
         }
-        const { type, value } = named && parsed?.type !== 'advertiser'
-          ? { type: 'advertiser', value: named.id } : parsed;
+        const { type, value } = parsed;
         const label = type === 'advertiser'
           ? get('SELECT name FROM advertisers WHERE id = ?', value)?.name || value : value;
         const existing = get(`SELECT ${watchFields}, p.deleted_at AS deletedAt FROM profile_watches p
           JOIN watches w ON w.id = p.watch_id WHERE p.profile_id = ? AND w.type = ?
           AND w.value = ? AND w.region IS ?`, pid, type, value, region);
-        // Re-adding a trashed watch without a kind restores its original kind and group.
-        const nextKind = kind ?? (existing?.deletedAt ? existing.kind : 'competitor');
+        const nextKind = kindForWatchType(type);
         const nextGroup = groupId === undefined
           ? (existing?.kind === nextKind ? existing.groupId : null) : groupId;
         validateGroup(pid, nextGroup, nextKind);
@@ -267,7 +266,7 @@ export function createStore(root, options) {
         const label = watch.type === 'advertiser' && watch.label === watch.value && advertiserName
           ? advertiserName : watch.label;
         run('UPDATE watches SET last_scan_at = ?, label = ?, kind = ? WHERE id = ?',
-          lastScanAt, label, watch.kind ?? 'competitor', watch.id);
+          lastScanAt, label, kindForWatchType(watch.type), watch.id);
         if (watch.type === 'advertiser' && label !== watch.value) {
           run('UPDATE profile_watches SET label = ? WHERE watch_id = ? AND label = ?', label, watch.id, watch.value);
         }
