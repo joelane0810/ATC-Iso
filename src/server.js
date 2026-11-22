@@ -55,6 +55,51 @@ async function serveFile(res, dir, name) {
   }
 }
 
+async function getSummary(store, pid) {
+  const [latest, previous] = (await store.getScanLog())
+    .filter(({ status }) => status === 'ok' || status === 'blocked').slice(-2).reverse();
+  const lastScan = latest ? { at: latest.at, status: latest.status } : null;
+  const changes = new Map(latest?.changes?.map(change => [change.watchId, change]));
+  const totals = { new: 0, stopped: 0, running: 0 };
+  const byWatch = [];
+  const newAds = [];
+  const stoppedAds = [];
+
+  for (const { id: watchId, label, kind } of await store.getWatchlist(pid)) {
+    const file = await store.getAds(watchId);
+    const change = changes.get(watchId);
+    const newIds = new Set(change?.newIds);
+    const stoppedIds = new Set(change?.stoppedIds);
+    const runningSince = Date.parse(file?.lastScanAt) - 2 * 24 * 60 * 60 * 1000;
+    const counts = { watchId, label, kind, new: 0, stopped: 0, running: 0, total: 0 };
+    for (const ad of Object.values(file?.ads ?? {})) {
+      if (ad.platform !== 'search') continue;
+      counts.total++;
+      if (Date.parse(ad.lastShown) >= runningSince) counts.running++;
+      const labeled = { ...ad, watchId, watchLabel: label, watchKind: kind };
+      if (newIds.has(ad.creativeId)) {
+        counts.new++;
+        newAds.push(labeled);
+      }
+      if (stoppedIds.has(ad.creativeId)) {
+        counts.stopped++;
+        stoppedAds.push(labeled);
+      }
+    }
+    byWatch.push(counts);
+    for (const key of Object.keys(totals)) totals[key] += counts[key];
+  }
+
+  return {
+    lastScan,
+    previousScanAt: previous?.at ?? null,
+    totals,
+    byWatch,
+    newAds: newAds.sort((a, b) => Date.parse(b.firstSeenByUs) - Date.parse(a.firstSeenByUs)).slice(0, 24),
+    stoppedAds: stoppedAds.sort((a, b) => Date.parse(b.lastShown) - Date.parse(a.lastShown)).slice(0, 24),
+  };
+}
+
 export async function startServer({
   store, port = 4317, host = '127.0.0.1', triggerScan, isScanning, waitForAcquisition = false,
 }) {
@@ -101,26 +146,29 @@ export async function startServer({
         return json(res, status, { scanning: true });
       }
 
-      const profile = path.match(/^\/api\/profiles\/([\w-]+)\/(watchlist|ads)(?:\/([\w.-]+))?$/);
+      const profile = path.match(/^\/api\/profiles\/([\w-]+)\/(watchlist|ads|summary)(?:\/([\w.-]+))?$/);
       if (profile) {
         const [, pid, resource, wid] = profile;
         if (resource === 'watchlist') {
           if (method === 'GET' && !wid) return json(res, 200, await store.getWatchlist(pid));
           if (method === 'POST' && !wid) {
-            const { input, region = null } = await readBody(req);
+            const { input, region = null, kind = 'competitor' } = await readBody(req);
             if (typeof input !== 'string' || !input.trim()) {
               throw new Error('Vui lòng nhập tên miền hoặc link nhà quảng cáo.');
             }
             if (region !== null && (!Number.isSafeInteger(region) || region <= 0)) {
               throw new Error('Khu vực không hợp lệ.');
             }
-            return json(res, 201, await store.addWatch(pid, input, region));
+            return json(res, 201, await store.addWatch(pid, input, region, kind));
           }
           if (method === 'DELETE' && wid && wid !== '.' && wid !== '..') {
             await store.removeWatch(pid, wid);
             res.writeHead(204);
             return res.end();
           }
+        }
+        if (method === 'GET' && resource === 'summary' && !wid) {
+          return json(res, 200, await getSummary(store, pid));
         }
         if (method === 'GET' && resource === 'ads' && !wid) {
           const filters = {

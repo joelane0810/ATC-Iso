@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -16,7 +16,14 @@ test('addWatch dedupes across inputs and profiles while preserving regions', (t)
   const dai = store.addProfile('Dai');
   const lan = store.addProfile('Lan');
   const watch = store.addWatch(dai.id, 'https://www.Nike.com/a');
+  assert.equal(watch.kind, 'competitor');
   assert.deepEqual(store.addWatch(dai.id, 'nike.com'), watch);
+  const path = join(root, 'data', 'profiles', dai.id, 'watchlist.json');
+  const { kind, ...legacyWatch } = watch;
+  writeFileSync(path, JSON.stringify([legacyWatch]));
+  assert.deepEqual(store.getWatchlist(dai.id), [watch]);
+  assert.deepEqual(store.addWatch(dai.id, 'nike.com', null, 'project'), { ...watch, kind: 'project' });
+  assert.deepEqual(store.getWatchlist(dai.id), [{ ...watch, kind: 'project' }]);
   store.addWatch(lan.id, 'nike.com');
   const regional = store.addWatch(lan.id, 'nike.com', 2840);
   assert.equal(regional.id, 'nike-com-r2840');
@@ -39,6 +46,7 @@ test('mergeAds preserves firstSeenByUs and images across scans', (t) => {
   const initial = store.mergeAds(watch, [raw], first);
   assert.deepEqual(initial.newIds, ['CR1']);
   assert.equal(initial.file.ads.CR1.image, null);
+  assert.equal(initial.file.ads.CR1.platform, 'search');
   assert.equal(store.imagesDir(), join(root, 'data', 'images'));
   store.setAdImage(watch.id, 'CR1', 'images/CR1.png');
   const updated = store.mergeAds(watch, [{ ...raw, lastShown: second.toISOString() }], second);

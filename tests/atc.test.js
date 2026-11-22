@@ -24,13 +24,13 @@ test('parseWatchInput normalizes domains and advertiser IDs', () => {
 
 test('buildSearchCreativesReq includes the matching selector, region and token', () => {
   assert.deepEqual(buildSearchCreativesReq({ watch: { type: 'domain', value: 'nike.com' } }), {
-    2: 40, 3: { 12: { 1: 'nike.com', 2: true } }, 7: { 1: 1, 2: 30, 3: 2840 },
+    2: 40, 3: { 12: { 1: 'nike.com', 2: true }, 14: [3] }, 7: { 1: 1, 2: 30, 3: 2840 },
   });
   assert.deepEqual(buildSearchCreativesReq({
     watch: { type: 'advertiser', value: 'AR016', region: 2840 },
     pageToken: 'next', pageSize: 10,
   }), {
-    2: 10, 3: { 8: [2840], 13: { 1: ['AR016'] } }, 4: 'next', 7: { 1: 1, 2: 30, 3: 2840 },
+    2: 10, 3: { 8: [2840], 13: { 1: ['AR016'] }, 14: [3] }, 4: 'next', 7: { 1: 1, 2: 30, 3: 2840 },
   });
 });
 

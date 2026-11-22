@@ -30,9 +30,9 @@ const now = () => new Date('2026-11-22T02:00:00Z');
 const first = { id: 'first', type: 'domain', value: 'first.example' };
 const second = { id: 'second', type: 'domain', value: 'second.example' };
 
-function setup(respond, { watches = [first], previous = [], capture, saved = {} } = {}) {
+function setup(respond, { watches = [first], previous = [], capture, saved = {}, previousAt } = {}) {
   const files = new Map();
-  if (previous.length) files.set(first.id, { ads: Object.fromEntries(previous.map(id => [id, saved[id] ?? {}])) });
+  if (previous.length) files.set(first.id, { lastScanAt: previousAt, ads: Object.fromEntries(previous.map(id => [id, saved[id] ?? {}])) });
   const logs = [];
   const requests = [];
   const captures = [];
@@ -45,7 +45,7 @@ function setup(respond, { watches = [first], previous = [], capture, saved = {} 
       const newIds = [];
       for (const ad of ads) {
         if (!Object.hasOwn(file.ads, ad.creativeId)) newIds.push(ad.creativeId);
-        file.ads[ad.creativeId] = { ...file.ads[ad.creativeId], ...ad };
+        file.ads[ad.creativeId] = { ...file.ads[ad.creativeId], ...ad, platform: 'search' };
       }
       files.set(watch.id, file);
       return { file, newIds };
@@ -86,7 +86,7 @@ test('first scan stops after five pages', async () => {
 
 test('later scan stops on a page with no new ads', async () => {
   const run = setup((req, n) => page(n === 1 ? ['CRnew', 'CRold'] : ['CRold'], String(n)), {
-    previous: ['CRold'], saved: { CRold: { image: 'images/CRold.png' } },
+    previous: ['CRold'], saved: { CRold: { platform: 'search', image: 'images/CRold.png' } },
   });
   assert.deepEqual(await run.scan(), { status: 'ok', watched: 1, newAds: 1 });
   assert.equal(run.requests.length, 2);
@@ -194,4 +194,31 @@ test('missing current imageUrl still uses the saved archive URL on a video ad', 
   });
   assert.equal((await run.scan()).status, 'ok');
   assert.deepEqual(run.images, [[first.id, 'CR1', 'images/CR1.jpg']]);
+});
+
+test('scan continues past unconfirmed ads and records search changes at the two-day boundary', async () => {
+  const watch = { ...first, label: 'Dự án', kind: 'project' };
+  const boundary = '2026-11-20T02:00:00Z';
+  const old = lastShown => ({ platform: 'search', lastShown });
+  const saved = {
+    legacy: {},
+    newlyStopped: old('2026-11-19T02:00:00Z'),
+    alreadyStopped: old('2026-11-19T01:59:59Z'),
+    running: old(boundary),
+    hidden: { lastShown: boundary },
+  };
+  const run = setup((req, n) => ({
+    ads: n === 1 ? [{ creativeId: 'legacy' }]
+      : [{ creativeId: 'new', lastShown: boundary }],
+    nextToken: n === 1 ? 'next' : null,
+  }), {
+    watches: [watch], previous: Object.keys(saved), saved, previousAt: '2026-11-21T02:00:00Z',
+  });
+
+  assert.equal((await run.scan()).status, 'ok');
+  assert.deepEqual(run.requests.map(req => req.pageToken), [null, 'next']);
+  assert.deepEqual(run.logs[0].changes, [{
+    watchId: watch.id, label: watch.label, kind: 'project',
+    newIds: ['new'], stoppedIds: ['newlyStopped'], running: 2, total: 5,
+  }]);
 });

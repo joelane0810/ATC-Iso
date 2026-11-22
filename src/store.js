@@ -40,7 +40,9 @@ export function createStore(root) {
   const adsPath = (wid) => resolve(data, 'ads', `${pathId(wid)}.json`);
 
   const listProfiles = () => readJson(profilesPath, []);
-  const getWatchlist = (pid) => readJson(watchlistPath(pid), []);
+  const getWatchlist = (pid) => readJson(watchlistPath(pid), []).map(
+    (watch) => ({ ...watch, kind: watch.kind ?? 'competitor' }),
+  );
   const getAds = (wid) => readJson(adsPath(wid), null);
   const getScanLog = () => readJson(logPath, []);
 
@@ -60,14 +62,21 @@ export function createStore(root) {
       return profile;
     },
     getWatchlist,
-    addWatch(pid, input, region = null) {
+    addWatch(pid, input, region = null, kind = 'competitor') {
+      if (kind !== 'competitor' && kind !== 'project') throw new Error('Loại theo dõi không hợp lệ.');
       const watches = getWatchlist(pid);
       const { type, value } = parseWatchInput(input);
       const existing = watches.find((watch) => watch.type === type && watch.value === value && watch.region === region);
-      if (existing) return existing;
+      if (existing) {
+        if (existing.kind !== kind) {
+          existing.kind = kind;
+          writeJson(watchlistPath(pid), watches);
+        }
+        return existing;
+      }
 
       const id = pathId(region == null ? slugify(value) : `${slugify(value)}-r${region}`);
-      const watch = { id, type, value, label: value, region, addedAt: new Date().toISOString() };
+      const watch = { id, type, value, label: value, region, kind, addedAt: new Date().toISOString() };
       writeJson(watchlistPath(pid), [...watches, watch]);
       return watch;
     },
@@ -96,6 +105,7 @@ export function createStore(root) {
         if (!previous) newIds.push(raw.creativeId);
         ads[raw.creativeId] = {
           ...raw,
+          platform: 'search',
           lastShown: raw.lastShown ?? previous?.lastShown ?? null,
           imageUrl: raw.imageUrl ?? previous?.imageUrl ?? null,
           image: previous?.image ?? null,
@@ -140,6 +150,7 @@ export function createStore(root) {
         if (!file) continue;
         const runningSince = Date.parse(file.lastScanAt) - 2 * DAY;
         for (const ad of Object.values(file.ads)) {
+          if (ad.platform !== 'search') continue;
           const existing = creatives.get(ad.creativeId);
           const watchIds = existing?.watchIds ?? [];
           const watchLabels = existing?.watchLabels ?? [];
@@ -151,6 +162,7 @@ export function createStore(root) {
             ...ad,
             watchId: watch.id,
             watchLabel: watch.label,
+            watchKind: watch.kind,
             watchIds,
             watchLabels,
             isNew: seen >= currentTime - DAY && seen <= currentTime,

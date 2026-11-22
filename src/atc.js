@@ -41,6 +41,7 @@ export function buildSearchCreativesReq({ watch, pageToken = null, pageSize = 40
   const selector = watch.type === 'domain'
     ? { 12: { 1: watch.value, 2: true } }
     : { 13: { 1: [watch.value] } };
+  selector[14] = [3];
   if (watch.region != null) selector[8] = [watch.region];
 
   const request = { 2: pageSize, 3: selector, 7: { 1: 1, 2: 30, 3: 2840 } };

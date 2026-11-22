@@ -3,12 +3,16 @@ import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import { BlockedError, buildSearchCreativesReq, parseCreatives } from './atc.js';
 
+const RUNNING_WINDOW = 2 * 24 * 60 * 60 * 1000;
+
 export async function runScan({
   store, client, now = () => new Date(), log = console.log,
   record = entry => store.appendScanLog(entry), waitForCapture = delay,
 }) {
   const scannedAt = now();
   const result = { status: 'ok', watched: 0, newAds: 0 };
+  const changes = [];
+  const runningSince = scannedAt.getTime() - RUNNING_WINDOW;
 
   let retries = 0;
   let captures = 0;
@@ -16,7 +20,11 @@ export async function runScan({
   try {
     for (const watch of await store.allWatches()) {
       const previous = await store.getAds(watch.id);
-      const seen = new Set(Object.keys(previous?.ads ?? {}));
+      const seen = new Set(Object.entries(previous?.ads ?? {})
+        .filter(([, ad]) => ad.platform === 'search').map(([id]) => id));
+      const previouslyRunning = [...seen].filter(
+        id => Date.parse(previous.ads[id].lastShown) >= Date.parse(previous.lastScanAt) - RUNNING_WINDOW,
+      );
       const ads = new Map();
       const tokens = new Set();
       let pageToken = null;
@@ -27,16 +35,16 @@ export async function runScan({
         const response = await client.rpc('SearchService/SearchCreatives', request);
         const { ads: pageAds, nextToken } = parseCreatives(response);
         pages++;
-        let hasNewAds = false;
+        let hasUnconfirmedAds = false;
         for (const ad of pageAds) {
           ads.set(ad.creativeId, ad);
           if (!seen.has(ad.creativeId)) {
             seen.add(ad.creativeId);
-            hasNewAds = true;
+            hasUnconfirmedAds = true;
           }
         }
 
-        if (previous ? !hasNewAds : pages >= 5) break;
+        if (previous ? !hasUnconfirmedAds : pages >= 5) break;
         if (!nextToken || tokens.has(nextToken)) break;
         tokens.add(nextToken);
         pageToken = nextToken;
@@ -50,6 +58,17 @@ export async function runScan({
       })), scannedAt);
       result.watched++;
       result.newAds += newIds.length;
+
+      const searchAds = Object.values(file.ads).filter(ad => ad.platform === 'search');
+      changes.push({
+        watchId: watch.id,
+        label: file.watch?.label ?? watch.label,
+        kind: watch.kind ?? 'competitor',
+        newIds,
+        stoppedIds: previouslyRunning.filter(id => Date.parse(file.ads[id].lastShown) < runningSince),
+        running: searchAds.filter(ad => Date.parse(ad.lastShown) >= runningSince).length,
+        total: searchAds.length,
+      });
 
       const fresh = new Set(newIds);
       for (const id of [...newIds, ...Object.keys(file.ads).filter(id => !fresh.has(id))]) {
@@ -81,6 +100,6 @@ export async function runScan({
     log(result.error);
   }
 
-  await record({ at: scannedAt.toISOString(), ...result });
+  await record({ at: scannedAt.toISOString(), ...result, changes });
   return result;
 }
