@@ -667,8 +667,10 @@ function previewScriptUrl(raw) {
 
 function previewDocument(url) {
   const src = url.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;');
-  return `<!doctype html><html lang="vi"><meta charset="utf-8">
+  return `<!doctype html><html lang="vi"><head><meta charset="utf-8">
+<base href="https://displayads-formats.googleusercontent.com/">
 <style>html,body{margin:0;overflow:hidden}</style>
+</head><body>
 <div id="atc-preview"></div>
 <script>
   (() => {
@@ -690,7 +692,7 @@ function previewDocument(url) {
     };
   })();
 </script>
-<script src="${src}"></script></html>`;
+<script src="${src}"></script></body></html>`;
 }
 
 function fitLivePreview(entry, width) {
@@ -725,7 +727,7 @@ function drainPreviews() {
     entry.timer = setTimeout(() => {
       releasePreviewLoad(entry);
       livePreviews.delete(entry.box);
-      entry.box.replaceWith(previewFallback(entry.ad));
+      entry.box.replaceWith(preview({ ...entry.ad, image: null, previewUrl: null }, false, entry.large));
       drainPreviews();
     }, previewTimeout);
   }
@@ -1191,6 +1193,15 @@ async function loadGroupAds(request, name, message) {
   await graph;
 }
 
+function domainLabel(ad, tag) {
+  const label = element(tag, ad.domain || 'Chưa rõ tên miền');
+  if (!ad.domain) label.className = 'domain-unknown';
+  else if (tag === 'dd' && ad.domainSource === 'ocr') {
+    label.append(element('small', ' (đọc từ ảnh)'));
+  }
+  return label;
+}
+
 function renderGrid(grid, visible) {
   grid.replaceChildren(...visible.map((ad) => {
     const button = element('button');
@@ -1202,7 +1213,7 @@ function renderGrid(grid, visible) {
       + ' · Gần nhất ' + displayDate(ad.lastShown));
     dates.className = 'ad-dates';
     info.append(element('strong', ad.advertiserName || ad.domain || 'Chưa rõ'),
-      element('span', ad.domain || 'Chưa rõ tên miền'), dates);
+      domainLabel(ad, 'span'), dates);
     const badges = element('span');
     badges.className = 'ad-badges';
     if (isNewAd(ad)) badges.append(badge('Mới', 'new'));
@@ -1535,9 +1546,9 @@ function showDetail(ad) {
     : NaN;
   const fields = element('dl');
   const running = isRunningAd(ad);
+  fields.append(element('dt', 'Nhà quảng cáo'), element('dd', ad.advertiserName || 'Chưa rõ'),
+    element('dt', 'Website'), domainLabel(ad, 'dd'));
   for (const [label, value] of [
-    ['Nhà quảng cáo', ad.advertiserName || 'Chưa rõ'],
-    ['Website', ad.domain || 'Chưa rõ'],
     ['Định dạng', formats[ad.format] || 'Chưa rõ'],
     ['Bắt đầu chạy', displayDate(ad.firstShown)],
     ['Lần chạy gần nhất', displayDate(ad.lastShown)],
