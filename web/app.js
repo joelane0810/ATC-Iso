@@ -15,6 +15,8 @@ const formats = { image: 'Hình ảnh', text: 'Chữ', video: 'Video' };
 let watchId = '';
 let selectedAd;
 let ads = [];
+let allAds = [];
+let watches = [];
 let loadVersion = 0;
 let pollTimer;
 
@@ -69,8 +71,10 @@ async function loadProfiles(preferred) {
 async function selectProfile() {
   watchId = '';
   selectedAd = undefined;
-  byId('watches').replaceChildren();
+  watches = [];
   ads = [];
+  allAds = [];
+  renderWatches();
   renderAds();
   try { localStorage.setItem('atc-iso-profile', profile.value); } catch {}
   await loadProfileData();
@@ -82,61 +86,103 @@ async function loadProfileData() {
   if (!id) return;
   const filters = new URLSearchParams({ filter: filter.value, q: query.value, format: format.value });
   const path = profilePath(id);
-  const [watches, results, newest] = await Promise.all([
+  const unfiltered = api(path + '/ads');
+  const [watchlist, results, totals] = await Promise.all([
     api(path + '/watchlist'),
-    api(path + '/ads?' + filters),
-    api(path + '/ads?filter=new'),
+    filter.value === 'all' && !query.value.trim() && !format.value
+      ? unfiltered : api(path + '/ads?' + filters),
+    unfiltered,
   ]);
   if (version !== loadVersion) return;
-  if (!watches.some((watch) => watch.id === watchId)) watchId = '';
-  const counts = new Map();
-  for (const ad of newest) {
-    for (const id of ad.watchIds) counts.set(id, (counts.get(id) || 0) + 1);
-  }
+  watches = watchlist;
   ads = results;
-  const renderWatches = () => {
-    const buttons = watches.map((watch) => {
-      const item = element('li');
-      const choose = element('button', `${watch.label} · ${counts.get(watch.id) || 0} mới`);
-      choose.setAttribute('aria-pressed', String(watchId === watch.id));
-      choose.onclick = () => {
-        watchId = watchId === watch.id ? '' : watch.id;
-        renderWatches();
-        renderAds();
-      };
-      const remove = element('button', 'Xoá');
-      remove.setAttribute('aria-label', 'Xoá ' + watch.label);
-      remove.onclick = () => run(async () => {
-        await api(path + '/watchlist/' + encodeURIComponent(watch.id), 'DELETE');
-        if (profile.value === id) await loadProfileData();
-      });
-      item.append(choose, remove);
-      return item;
-    });
-    byId('watches').replaceChildren(...buttons);
-  };
+  allAds = totals;
+  if (!watches.some((watch) => watch.id === watchId)) watchId = '';
   renderWatches();
   renderAds();
 }
 
+function belongsTo(ad, id) {
+  return !id || ad.watchId === id || ad.watchIds?.includes(id);
+}
+
+function renderWatches() {
+  byId('watches').replaceChildren(...[{ id: '', label: 'Tất cả đối thủ' }, ...watches].map((watch) => {
+    const item = element('li');
+    const choose = element('button');
+    choose.className = 'watch-choice';
+    choose.setAttribute('aria-pressed', String(watchId === watch.id));
+    const matching = allAds.filter((ad) => belongsTo(ad, watch.id));
+    const newCount = matching.filter((ad) => ad.isNew).length;
+    const counts = element('span', matching.length + ' mẫu');
+    counts.className = 'watch-counts';
+    if (newCount) counts.append(badge(newCount + ' mới', true));
+    choose.append(element('strong', watch.label), counts);
+    choose.onclick = () => {
+      watchId = watch.id;
+      for (const row of byId('watches').children) {
+        row.children[0].setAttribute('aria-pressed', String(row === item));
+      }
+      renderAds();
+    };
+    item.append(choose);
+    if (watch.id) {
+      const remove = element('button', '×');
+      remove.className = 'remove-watch';
+      remove.setAttribute('aria-label', 'Xoá ' + watch.label);
+      remove.title = 'Xoá ' + watch.label;
+      remove.onclick = () => run(async () => {
+        const id = profile.value;
+        await api(profilePath(id) + '/watchlist/' + encodeURIComponent(watch.id), 'DELETE');
+        if (profile.value === id) await loadProfileData();
+      });
+      item.append(remove);
+    }
+    return item;
+  }));
+}
+
+function badge(label, highlighted = false) {
+  const node = element('span', label);
+  node.className = highlighted ? 'badge badge-new' : 'badge';
+  return node;
+}
+
+function previewFallback(ad) {
+  const placeholder = element('div');
+  placeholder.className = 'preview preview-empty';
+  const icon = element('span', { text: '≡', image: '▧', video: '▷' }[ad.format] || '▧');
+  icon.className = 'format-icon';
+  icon.setAttribute('aria-hidden', 'true');
+  placeholder.append(icon, element('span', 'Chưa có ảnh xem trước'));
+  return placeholder;
+}
+
 function preview(ad) {
-  const source = /^images\/[\w.-]+\.(png|jpe?g)$/i.test(ad.image || '') ? '/' + ad.image
-    : /^https?:\/\//i.test(ad.imageUrl || '') ? ad.imageUrl : null;
-  if (!source) {
-    const placeholder = element('div', 'Chưa có ảnh');
-    placeholder.className = 'preview';
-    return placeholder;
-  }
+  const filename = /^(?:images\/)?([\w.-]+\.(?:png|jpe?g|webp|gif|avif))$/i.exec(ad.image || '')?.[1];
+  const remote = /^https?:\/\//i.test(ad.imageUrl || '') ? ad.imageUrl : null;
+  const source = filename ? '/images/' + encodeURIComponent(filename) : remote;
+  if (!source) return previewFallback(ad);
+
   const image = element('img');
   image.className = 'preview';
   image.alt = 'Ảnh mẫu quảng cáo';
   image.loading = 'lazy';
+  image.onerror = () => image.replaceWith(previewFallback(ad));
   image.src = source;
   return image;
 }
 
 function renderAds() {
-  const visible = ads.filter((ad) => !watchId || ad.watchIds.includes(watchId));
+  const visible = ads.filter((ad) => belongsTo(ad, watchId));
+  const watch = watches.find(({ id }) => id === watchId);
+  const matching = allAds.filter((ad) => belongsTo(ad, watchId));
+  const domain = watch?.type === 'domain' ? watch.value : matching.find((ad) => ad.domain)?.domain;
+  byId('gallery-heading').textContent = watch?.label || 'Tất cả đối thủ';
+  byId('gallery-summary').textContent = [
+    watch && domain,
+    matching.length.toLocaleString('vi-VN') + ' mẫu quảng cáo',
+  ].filter(Boolean).join(' · ');
   const empty = byId('empty');
   empty.hidden = visible.length > 0;
   empty.textContent = profile.value ? 'Chưa có mẫu phù hợp.' : 'Thêm hồ sơ để bắt đầu theo dõi.';
@@ -145,12 +191,19 @@ function renderAds() {
     const button = element('button');
     button.className = 'ad';
     button.type = 'button';
-    button.append(preview(ad), element('span', ad.domain || ad.advertiserName || 'Chưa rõ'),
-      element('span', formats[ad.format] || 'Mẫu quảng cáo'),
-      element('span', 'Bắt đầu ' + displayDate(ad.firstShown)),
-      element('span', 'Gần nhất ' + displayDate(ad.lastShown)));
-    if (ad.isNew) button.append(element('span', 'Mới'));
-    if (!ad.isRunning) button.append(element('span', 'Đã dừng'));
+    const info = element('span');
+    info.className = 'ad-info';
+    const dates = element('span', 'Bắt đầu ' + displayDate(ad.firstShown)
+      + ' · Gần nhất ' + displayDate(ad.lastShown));
+    dates.className = 'ad-dates';
+    info.append(element('strong', ad.advertiserName || ad.domain || 'Chưa rõ'),
+      element('span', ad.domain || 'Chưa rõ tên miền'), dates);
+    const badges = element('span');
+    badges.className = 'ad-badges';
+    if (ad.isNew) badges.append(badge('Mới', true));
+    if (!ad.isRunning) badges.append(badge('Đã dừng'));
+    info.append(badges);
+    button.append(preview(ad), info);
     button.setAttribute('aria-pressed', String(ad === selectedAd));
     button.onclick = () => {
       adsGrid.querySelector('[aria-pressed="true"]')?.setAttribute('aria-pressed', 'false');
@@ -180,21 +233,53 @@ function showDetail(ad) {
     : NaN;
   const fields = element('dl');
   for (const [label, value] of [
-    ['Website', ad.domain || ad.advertiserName || 'Chưa rõ'],
     ['Nhà quảng cáo', ad.advertiserName || 'Chưa rõ'],
-    ['Ngày bắt đầu', displayDate(ad.firstShown)],
-    ['Ngày chạy gần nhất', displayDate(ad.lastShown)],
+    ['Website', ad.domain || 'Chưa rõ'],
+    ['Định dạng', formats[ad.format] || 'Chưa rõ'],
+    ['Bắt đầu chạy', displayDate(ad.firstShown)],
+    ['Lần chạy gần nhất', displayDate(ad.lastShown)],
     ['Số ngày chạy', duration > 0 ? String(duration) : 'Chưa rõ'],
+    ['Trạng thái', ad.isRunning ? 'Đang chạy' : 'Đã dừng'],
   ]) {
     fields.append(element('dt', label), element('dd', value));
   }
   detail.append(preview(ad), fields);
   if (/^https:\/\/adstransparency\.google\.com\/advertiser\//.test(ad.detailsUrl || '')) {
-    const link = element('a', 'Xem trên Google');
+    const actions = element('div');
+    actions.className = 'detail-actions';
+    const link = element('a', 'Mở trên ATC');
+    link.className = 'action';
     link.href = ad.detailsUrl;
     link.target = '_blank';
     link.rel = 'noopener noreferrer';
-    detail.append(link);
+    const copy = element('button', 'Sao chép link');
+    copy.className = 'action';
+    copy.setAttribute('aria-live', 'polite');
+    copy.onclick = async () => {
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(link.href);
+        } else {
+          // Clipboard access on the local network can be unavailable over HTTP.
+          const input = element('textarea');
+          input.className = 'copy-source';
+          input.value = link.href;
+          detail.append(input);
+          try {
+            input.select();
+            if (!document.execCommand('copy')) throw new Error();
+          } finally {
+            input.remove();
+            copy.focus();
+          }
+        }
+        copy.textContent = 'Đã sao chép';
+      } catch {
+        copy.textContent = 'Không sao chép được';
+      }
+    };
+    actions.append(link, copy);
+    detail.append(actions);
   }
 }
 
@@ -229,6 +314,7 @@ byId('profile-form').onsubmit = (event) => {
   run(async () => {
     const { id } = await api('profiles', 'POST', { name: form.elements.name.value });
     form.reset();
+    form.parentElement.open = false;
     await loadProfiles(id);
   });
 };

@@ -10,48 +10,59 @@
 <body>
   <div class="workspace">
     <header class="topbar">
-      <h1>Theo dõi quảng cáo</h1>
-      <div id="status" role="status">Đang tải trạng thái…</div>
-      <button id="scan" type="button">Quét ngay</button>
+      <h1>ATC Iso</h1>
+      <form id="watch-form">
+        <span class="search-icon" aria-hidden="true"></span>
+        <input name="input" aria-label="Thêm đối thủ: dán tên miền hoặc link nhà quảng cáo"
+          placeholder="Thêm đối thủ: dán tên miền hoặc link nhà quảng cáo" required disabled>
+        <button type="submit" aria-label="Thêm đối thủ" title="Thêm đối thủ" disabled>↵</button>
+      </form>
+      <div class="toolbar">
+        <select id="profile" aria-label="Hồ sơ" disabled></select>
+        <details class="profile-menu">
+          <summary>Thêm hồ sơ</summary>
+          <form id="profile-form">
+            <label for="profile-name">Tên hồ sơ mới</label>
+            <input id="profile-name" name="name" required>
+            <button class="action">Thêm hồ sơ</button>
+          </form>
+        </details>
+        <div id="status" role="status">Đang tải trạng thái…</div>
+        <button id="scan" class="action" type="button">Quét ngay</button>
+      </div>
     </header>
     <p id="error" role="alert" hidden></p>
     <main>
-      <aside class="panel">
-        <label for="profile">Hồ sơ</label>
-        <select id="profile"></select>
-        <form id="profile-form">
-          <input name="name" aria-label="Tên hồ sơ mới" placeholder="Tên hồ sơ mới" required>
-          <button>Thêm hồ sơ</button>
-        </form>
-        <h2>Đối thủ</h2>
-        <form id="watch-form">
-          <input name="input" aria-label="Tên miền hoặc link nhà quảng cáo"
-            placeholder="Tên miền hoặc link nhà quảng cáo" required>
-          <button>Thêm đối thủ</button>
-        </form>
+      <aside class="watch-panel" aria-labelledby="watch-heading">
+        <h2 id="watch-heading">Đối thủ</h2>
         <ul id="watches"></ul>
       </aside>
-      <section class="panel">
-        <h2>Mẫu quảng cáo</h2>
+      <section class="gallery" aria-labelledby="gallery-heading">
+        <h2 id="gallery-heading">Tất cả đối thủ</h2>
+        <p id="gallery-summary"></p>
         <div class="filters">
-          <select id="filter" aria-label="Lọc mẫu quảng cáo">
-            <option value="new">Mới hôm nay</option>
-            <option value="running">Đang chạy</option>
-            <option value="stopped">Đã dừng</option>
-            <option value="all" selected>Tất cả</option>
-          </select>
-          <input id="query" type="search" aria-label="Tìm mẫu quảng cáo" placeholder="Tìm mẫu quảng cáo">
-          <select id="format" aria-label="Định dạng">
-            <option value="">Mọi định dạng</option>
-            <option value="image">Hình ảnh</option>
-            <option value="text">Chữ</option>
-            <option value="video">Video</option>
-          </select>
+          <label class="chip">Trạng thái
+            <select id="filter">
+              <option value="all" selected>Tất cả</option>
+              <option value="new">Mới hôm nay</option>
+              <option value="running">Đang chạy</option>
+              <option value="stopped">Đã dừng</option>
+            </select>
+          </label>
+          <label class="chip">Định dạng
+            <select id="format">
+              <option value="">Tất cả</option>
+              <option value="text">Chữ</option>
+              <option value="image">Hình ảnh</option>
+              <option value="video">Video</option>
+            </select>
+          </label>
+          <input id="query" type="search" aria-label="Tìm theo chữ" placeholder="Tìm theo chữ">
         </div>
-        <p id="empty" hidden></p>
+        <p id="empty" role="status" hidden></p>
         <div id="ads" class="ads"></div>
       </section>
-      <section class="panel" aria-labelledby="detail-heading">
+      <section class="detail-panel" aria-labelledby="detail-heading">
         <h2 id="detail-heading">Chi tiết mẫu</h2>
         <div id="detail">Chọn một mẫu quảng cáo để xem chi tiết.</div>
       </section>
