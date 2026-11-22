@@ -15,7 +15,7 @@ body { margin: 0; }
 
 .topbar {
   display: grid;
-  grid-template-columns: 156px minmax(380px, 640px) auto;
+  grid-template-columns: 100px minmax(500px, 680px) auto;
   justify-content: space-between;
   align-items: center;
   gap: 24px;
@@ -81,11 +81,14 @@ button:disabled { cursor: default; opacity: .55; }
   background: var(--surface);
 }
 #watch-form:focus-within { border-color: var(--accent); background: white; }
-#watch-form input { flex: 1; height: 44px; padding-inline: 0; }
+#watch-form input { width: 0; flex: 1; height: 44px; padding-inline: 0; }
 #watch-form input, #watch-form button { border: 0; background: transparent; }
 #watch-form input:focus { outline: none; }
 #watch-form button { border-radius: 50%; color: var(--accent); }
 #watch-form button:hover:not(:disabled) { background: var(--selected); }
+.watch-kinds { display: flex; gap: 2px; white-space: nowrap; }
+#watch-form .watch-kinds button { padding: 4px 8px; border-radius: 20px; color: var(--muted); font-size: 12px; }
+#watch-form .watch-kinds [aria-pressed="true"] { background: var(--selected); color: #185abc; }
 .search-icon {
   position: relative;
   width: 13px;
@@ -110,9 +113,27 @@ main {
   min-height: calc(100vh - 80px);
 }
 .watch-panel { border-right: 1px solid var(--line); padding: 28px 16px; }
-.watch-panel h2 { margin: 0 12px 14px; font-size: 16px; }
-#watches { list-style: none; margin: 0; padding: 0; }
-#watches li { position: relative; margin-bottom: 4px; }
+#home { min-height: 40px; align-items: center; font-weight: 600; }
+.watch-group { position: relative; margin-top: 16px; }
+.watch-group summary {
+  padding: 8px 72px 8px 12px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+.watch-group > button {
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  padding: 4px 8px;
+  border: 0;
+  color: #185abc;
+  font-size: 12px;
+}
+.watch-group > button:hover:not(:disabled) { background: var(--selected); }
+.watch-group ul { list-style: none; margin: 0; padding: 0; }
+.watch-group li { position: relative; margin-bottom: 4px; }
 .watch-choice {
   display: grid;
   gap: 2px;
@@ -139,12 +160,28 @@ main {
   line-height: 1;
   color: var(--muted);
 }
-#watches li:hover .remove-watch, #watches li:focus-within .remove-watch { opacity: 1; }
+.watch-group li:hover .remove-watch, .watch-group li:focus-within .remove-watch { opacity: 1; }
 @media (hover: none) { .remove-watch { opacity: 1; } }
 
 .gallery { padding: 28px; }
 .gallery h2 { margin: 0; font-size: 30px; line-height: 1.2; font-weight: 500; overflow-wrap: anywhere; }
-#gallery-summary { margin: 8px 0 22px; color: var(--muted); }
+#gallery-summary { margin: 8px 0 2px; color: var(--muted); }
+.search-only { margin: 0 0 22px; color: var(--muted); font-size: 12px; }
+.totals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 0 0 24px; }
+.totals div { padding: 12px 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.totals dt { color: var(--muted); }
+.totals dd { margin: 2px 0 0; font-size: 30px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.changes { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.changes caption, .change-gallery h3 { margin: 0 0 8px; text-align: left; font-size: 16px; font-weight: 600; }
+.changes th, .changes td { padding: 8px; border-bottom: 1px solid var(--line); text-align: left; }
+.changes thead { background: var(--surface); color: var(--muted); font-size: 12px; }
+.changes tbody tr:has(button) { cursor: pointer; }
+.changes tbody tr:has(button):hover { background: var(--surface); }
+.changes th:nth-child(n+3), .changes td:nth-child(n+3) { text-align: right; white-space: nowrap; }
+.changes button { padding: 0; border: 0; background: transparent; color: #185abc; text-align: left; overflow-wrap: anywhere; }
+.change-gallery { margin-top: 24px; }
+.change-gallery p { color: var(--muted); }
+.change-gallery .ads { margin-top: 10px; }
 .filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .chip {
   display: inline-flex;

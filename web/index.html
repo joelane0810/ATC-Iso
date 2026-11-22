@@ -13,9 +13,13 @@
       <h1>ATC Iso</h1>
       <form id="watch-form">
         <span class="search-icon" aria-hidden="true"></span>
-        <input name="input" aria-label="Thêm đối thủ: dán tên miền hoặc link nhà quảng cáo"
-          placeholder="Thêm đối thủ: dán tên miền hoặc link nhà quảng cáo" required disabled>
-        <button type="submit" aria-label="Thêm đối thủ" title="Thêm đối thủ" disabled>↵</button>
+        <input name="input" aria-label="Dán tên miền hoặc đường dẫn nhà quảng cáo"
+          placeholder="Dán tên miền hoặc đường dẫn nhà quảng cáo" required disabled>
+        <div class="watch-kinds" role="group" aria-label="Loại theo dõi">
+          <button id="kind-competitor" type="button" aria-pressed="true" disabled>Đối thủ</button>
+          <button id="kind-project" type="button" aria-pressed="false" disabled>Dự án</button>
+        </div>
+        <button type="submit" aria-label="Thêm theo dõi" title="Thêm theo dõi" disabled>↵</button>
       </form>
       <div class="toolbar">
         <select id="profile" aria-label="Hồ sơ" disabled></select>
@@ -33,34 +37,74 @@
     </header>
     <p id="error" role="alert" hidden></p>
     <main>
-      <aside class="watch-panel" aria-labelledby="watch-heading">
-        <h2 id="watch-heading">Đối thủ</h2>
-        <ul id="watches"></ul>
-      </aside>
-      <section class="gallery" aria-labelledby="gallery-heading">
-        <h2 id="gallery-heading">Tất cả đối thủ</h2>
-        <p id="gallery-summary"></p>
-        <div class="filters">
-          <label class="chip">Trạng thái
-            <select id="filter">
-              <option value="all" selected>Tất cả</option>
-              <option value="new">Mới hôm nay</option>
-              <option value="running">Đang chạy</option>
-              <option value="stopped">Đã dừng</option>
-            </select>
-          </label>
-          <label class="chip">Định dạng
-            <select id="format">
-              <option value="">Tất cả</option>
-              <option value="text">Chữ</option>
-              <option value="image">Hình ảnh</option>
-              <option value="video">Video</option>
-            </select>
-          </label>
-          <input id="query" type="search" aria-label="Tìm theo chữ" placeholder="Tìm theo chữ">
+      <aside class="watch-panel" aria-label="Danh sách theo dõi">
+        <button id="home" class="watch-choice" type="button" aria-pressed="true">Trang chủ</button>
+        <div class="watch-group">
+          <details id="group-competitor" open>
+            <summary>Đối thủ</summary>
+            <ul id="watches-competitor"></ul>
+          </details>
+          <button id="add-competitor" type="button" aria-label="Thêm đối thủ" disabled>+ Thêm</button>
         </div>
-        <p id="empty" role="status" hidden></p>
-        <div id="ads" class="ads"></div>
+        <div class="watch-group">
+          <details id="group-project" open>
+            <summary>Dự án</summary>
+            <ul id="watches-project"></ul>
+          </details>
+          <button id="add-project" type="button" aria-label="Thêm dự án" disabled>+ Thêm</button>
+        </div>
+      </aside>
+      <section id="gallery" class="gallery" aria-labelledby="gallery-heading">
+        <h2 id="gallery-heading" tabindex="-1">Tổng quan thay đổi</h2>
+        <p id="gallery-summary"></p>
+        <p class="search-only">Chỉ quảng cáo Google Tìm kiếm</p>
+        <div id="overview">
+          <dl class="totals">
+            <div><dt>Mẫu mới</dt><dd id="total-new">—</dd></div>
+            <div><dt>Vừa dừng</dt><dd id="total-stopped">—</dd></div>
+            <div><dt>Đang chạy</dt><dd id="total-running">—</dd></div>
+          </dl>
+          <table class="changes">
+            <caption>Thay đổi theo từng mục theo dõi</caption>
+            <thead>
+              <tr><th scope="col">Tên</th><th scope="col">Loại</th><th scope="col">Mới</th><th scope="col">Vừa dừng</th><th scope="col">Đang chạy</th><th scope="col">Tổng</th></tr>
+            </thead>
+            <tbody id="changes"></tbody>
+          </table>
+          <section class="change-gallery" aria-labelledby="new-heading">
+            <h3 id="new-heading">Mẫu mới</h3>
+            <p id="new-empty" hidden>Chưa có mẫu mới.</p>
+            <div id="new-ads" class="ads"></div>
+          </section>
+          <section class="change-gallery" aria-labelledby="stopped-heading">
+            <h3 id="stopped-heading">Mẫu vừa dừng</h3>
+            <p id="stopped-empty" hidden>Chưa có mẫu vừa dừng.</p>
+            <div id="stopped-ads" class="ads"></div>
+          </section>
+        </div>
+        <div id="watch-view" hidden>
+          <div class="filters">
+            <label class="chip">Trạng thái
+              <select id="filter">
+                <option value="all" selected>Tất cả</option>
+                <option value="new">Mới hôm nay</option>
+                <option value="running">Đang chạy</option>
+                <option value="stopped">Đã dừng</option>
+              </select>
+            </label>
+            <label class="chip">Định dạng
+              <select id="format">
+                <option value="">Tất cả</option>
+                <option value="text">Chữ</option>
+                <option value="image">Hình ảnh</option>
+                <option value="video">Video</option>
+              </select>
+            </label>
+            <input id="query" type="search" aria-label="Tìm theo chữ" placeholder="Tìm theo chữ">
+          </div>
+          <p id="empty" role="status" hidden></p>
+          <div id="ads" class="ads"></div>
+        </div>
       </section>
       <section class="detail-panel" aria-labelledby="detail-heading">
         <h2 id="detail-heading">Chi tiết mẫu</h2>
