@@ -87,15 +87,11 @@ test('image download propagates 429, HTML and /sorry redirects without another r
   }
 });
 
-function previewPage({ block = false, format, url = previewUrl }) {
+function previewPage({ block = false, format, url = previewUrl, iframe = false }) {
   const page = new EventEmitter();
   const parent = { style: {}, innerHTML: '' };
   const window = {};
   const video = { readyState: 0, videoWidth: 0, videoHeight: 0, getClientRects: () => [{ width: 30, height: 10 }] };
-  const callback = JSON.stringify(new URL(url).searchParams.get('responseCallback'));
-  const script = format === 'video'
-    ? `window[${callback}]({html:"<video></video>"});`
-    : `window[${callback}]("<span>Quảng cáo mẫu</span>");`;
   let checks = 0;
   const fixture = {
     page, screenshots: 0, closed: false,
@@ -112,9 +108,26 @@ function previewPage({ block = false, format, url = previewUrl }) {
     createRange: () => ({ selectNodeContents() {}, getClientRects: () => [{ width: 30, height: 10 }] }),
   };
   parent.querySelectorAll = tag => tag === 'video' && parent.innerHTML.includes('<video>') ? [video] : [];
+  const mainFrame = {};
+  const childFrame = {
+    parentFrame: () => mainFrame,
+    url: () => 'https://example.com/ad',
+    async frameElement() {
+      const element = { getBoundingClientRect: () => ({ width: checks > 1 ? 30 : 0, height: 10 }) };
+      return {
+        evaluate: (fn, id) => Function('document', 'getComputedStyle', 'element', 'id',
+          'return (' + fn.toString() + ')(element, id)')(
+          { getElementById: () => ({ contains: node => node === element }) },
+          () => ({ visibility: 'visible' }), element, id,
+        ),
+        dispose: async () => {},
+      };
+    },
+  };
   Object.assign(page, {
     goto: async () => {},
-    frames: () => [],
+    mainFrame: () => mainFrame,
+    frames: () => iframe ? [mainFrame, childFrame] : [],
     close: async () => { fixture.closed = true; },
     locator: () => ({ screenshot: async () => {
       assert.equal(checks, 2);
@@ -122,14 +135,29 @@ function previewPage({ block = false, format, url = previewUrl }) {
     } }),
     async evaluate(fn, args) {
       if (fn === installPreview) {
+        fixture.scriptUrl = new URL(args.src);
+        assert.equal(args.parentId, fixture.scriptUrl.searchParams.get('htmlParentId'));
+        assert.equal(args.callback, fixture.scriptUrl.searchParams.get('responseCallback'));
+        assert.ok(args.parentId);
+        assert.ok(args.callback);
+        const scriptUrl = new URL(url);
+        scriptUrl.searchParams.set('htmlParentId', args.parentId);
+        scriptUrl.searchParams.set('responseCallback', args.callback);
+        assert.deepEqual([...fixture.scriptUrl.searchParams], [...scriptUrl.searchParams]);
+        const callback = JSON.stringify(args.callback);
+        const script = format === 'video'
+          ? `window[${callback}]({html:"<video></video>"});`
+          : `window[${callback}]("<span>Quảng cáo mẫu</span>");`;
         Function('document', 'window', 'args', '(' + fn.toString() + ')(args)')(document, window, args);
         parent.innerHTML = '<iframe></iframe>';
-        page.emit('response', response({ url, body: block ? '<html>Blocked</html>' : script }));
+        page.emit('response', response({ url: args.src, body: block ? '<html>Blocked</html>' : script }));
         if (!block) Function('window', script)(window);
         return;
       }
       assert.equal(fn, hasVisiblePreview);
-      if (++checks > 1) Object.assign(video, { readyState: 2, videoWidth: 100, videoHeight: 60 });
+      checks++;
+      if (iframe) return false;
+      if (checks > 1) Object.assign(video, { readyState: 2, videoWidth: 100, videoHeight: 60 });
       return Function('document', 'NodeFilter', 'getComputedStyle', 'args', 'return (' + fn.toString() + ')(args)')(
         document, { SHOW_TEXT: 4 }, () => ({ visibility: 'visible' }), args,
       );
@@ -161,4 +189,48 @@ test('content.js text and video callbacks wait for visible text or a video frame
     assert.equal(preview.screenshots, 1);
     assert.equal(preview.closed, true);
   }
+});
+
+test('archive image is downloaded directly for text, image and video ads', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'atc-direct-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const imageUrl = 'https://tpc.googlesyndication.com/archive/simgad/12345';
+  const body = 'RIFF image bytes';
+  const fake = chrome({ direct: response({ url: imageUrl, headers: {
+    'content-type': 'IMAGE/WEBP; charset=binary',
+  }, body }) });
+  const client = await fake.open();
+  const ad = { imageUrl, previewUrl };
+  for (const format of ['text', 'image', 'video']) {
+    const dest = join(dir, format);
+    assert.equal(await client.captureImage({ ...ad, format }, dest), dest + '.webp');
+    assert.deepEqual(await readFile(dest + '.webp'), Buffer.from(body));
+  }
+  assert.deepEqual(fake.calls, [imageUrl, imageUrl, imageUrl]);
+});
+
+test('content.js receives missing parameters and preserves existing query values', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'atc-preview-params-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  for (const query of ['creativeId=123&uiFeatures=12,54', 'creativeId=123&htmlParentId=existing']) {
+    const url = new URL('?' + query, previewUrl);
+    const preview = previewPage({ format: 'text', url });
+    const client = await chrome({ preview: preview.page }).open();
+    const dest = join(dir, 'CR');
+    assert.equal(await client.captureImage({ format: 'text', previewUrl: url.href }, dest), dest + '.png');
+    for (const [key, value] of url.searchParams) {
+      assert.equal(preview.scriptUrl.searchParams.get(key), value);
+    }
+    assert.equal(preview.screenshots, 1);
+  }
+});
+
+test('preview waits for a nonzero iframe without requiring a video element', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'atc-preview-frame-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const preview = previewPage({ format: 'video', iframe: true });
+  const client = await chrome({ preview: preview.page }).open();
+  const dest = join(dir, 'CR');
+  assert.equal(await client.captureImage({ format: 'video', previewUrl }, dest), dest + '.png');
+  assert.equal(preview.screenshots, 1);
 });
