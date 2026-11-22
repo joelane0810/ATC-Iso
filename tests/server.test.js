@@ -122,9 +122,9 @@ test('Task 3 HTTP API and static files', async (t) => {
   assert.deepEqual(await (await get(watchlist)).json(), []);
   assert.deepEqual(await (await get('/api/profiles/dai/ads?filter=new&q=%C3%A1o&format=image')).json(),
     [{ filter: 'new', q: 'áo', format: 'image' }]);
-  assert.deepEqual(await (await get('/api/status')).json(), { scanning: false, scanningWatchId: null, last });
+  assert.deepEqual(await (await get('/api/status')).json(), { scanning: false, scanningWatchId: null, last, lanUrls: [] });
   await withLock(lockPath, async () => {
-    assert.deepEqual(await (await get('/api/status')).json(), { scanning: true, scanningWatchId: null, last });
+    assert.deepEqual(await (await get('/api/status')).json(), { scanning: true, scanningWatchId: null, last, lanUrls: [] });
     assert.equal((await post('/api/scan')).status, 409);
   });
   scheduledWins = true;

@@ -1910,6 +1910,14 @@ function renderScanStatus() {
   }
 }
 
+function renderLanUrls(urls = []) {
+  const box = document.getElementById?.('lan-urls');
+  if (!box) return;
+  const local = /^(127\.|localhost$|\[::1\]$)/.test(globalThis.location?.hostname ?? '');
+  box.hidden = !local || !urls.length;
+  box.textContent = urls.length ? 'Máy khác cùng wifi mở: ' + urls.join('  ·  ') : '';
+}
+
 async function refreshStatus(reload = false) {
   clearTimeout(pollTimer);
   const version = ++statusVersion;
@@ -1918,6 +1926,7 @@ async function refreshStatus(reload = false) {
     if (version !== statusVersion) return;
     scanStatus = result;
     scanning = result.scanning;
+    renderLanUrls(result.lanUrls);
     if (reload) startingScan = false;
     renderScanStatus();
     if (reload && !scanning) {

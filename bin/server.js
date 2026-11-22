@@ -37,6 +37,8 @@ const server = await startServer({
   triggerScan,
   waitForAcquisition: true,
   isScanning: () => isScanLocked(join(root, 'data', '.scan.lock')),
+  lanUrls: () => host === '0.0.0.0' ? Object.values(networkInterfaces()).flat()
+    .filter((a) => a && a.family === 'IPv4' && !a.internal).map((a) => `http://${a.address}:${server.address().port}`) : [],
 });
 const lan = Object.values(networkInterfaces()).flat().filter((a) => a && a.family === 'IPv4' && !a.internal).map((a) => a.address);
 console.log(`Mở http://127.0.0.1:${server.address().port}` + (host === '0.0.0.0' ? ` · máy cùng wifi: ${lan.map((ip) => `http://${ip}:${server.address().port}`).join(' ')}` : ''));
