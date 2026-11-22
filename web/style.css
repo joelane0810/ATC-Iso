@@ -987,3 +987,7 @@ button.is-scanning::after {
   overflow-wrap: break-word; word-break: normal; flex: 1 1 auto; min-width: 0;
 }
 .overview-card .watch-toggle .watch-name { flex: 1 1 auto; min-width: 0; }
+@media (width < 1280px) {
+  .overview-table .overview-card { grid-template-columns: auto auto minmax(0, 1fr) auto 36px; }
+  .overview-card .overview-new-cell, .overview-card .overview-total-cell { padding-inline-start: 4px; }
+}
