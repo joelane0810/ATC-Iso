@@ -92,3 +92,9 @@ Thư viện cụ thể, cấu trúc mã, kiểu dáng giao diện (theo bố c�
 - **Tổng quan gọn:** bảng tóm tắt mỗi mục một dòng (có biểu đồ nhỏ 30 ngày); bấm mới xổ danh sách nhóm (5 dòng đầu, "xem thêm").
 - **Trang mục theo dõi:** thêm chế độ "Theo nhà quảng cáo/dự án" bên cạnh lưới kiểu ATC; bấm nhóm xem mẫu; biểu đồ số mẫu đang chạy + mẫu mới theo ngày (90 ngày) cho mục và cho từng nhóm.
 - **Thêm theo dõi tiện hơn:** ô tìm gợi ý từ nhà QC/tên miền đã thấy trong dữ liệu; nút "Theo dõi" ngay trên mỗi nhà QC/dự án trong danh sách; nhận mọi dạng link ATC.
+
+## Bổ sung 22/11 (anh Dai, 21:36) — nhóm, thùng rác, xác nhận xoá
+- Xoá mục theo dõi phải xác nhận; có chế độ chọn nhiều để xoá; xoá = vào THÙNG RÁC (khôi phục được), tự xoá hẳn sau 60 ngày. Biểu tượng thùng rác ở góc dưới cột trái.
+- NHÓM: trong Đối thủ và trong Dự án đều tạo được nhóm để gom mục liên quan; mỗi mục thuộc tối đa một nhóm.
+- Khung "Chi tiết quảng cáo" (đổi tên từ "Chi tiết mẫu") có nút thêm dự án (tên miền của quảng cáo) / thêm đối thủ (nhà QC); có nhóm thì chọn nhóm.
+- Biểu đồ vẽ theo đúng điểm ảnh của khung (chữ cố định 12px), không phóng theo bề ngang.
