@@ -23,6 +23,9 @@ const trashError = byId('trash-error');
 const gallery = byId('gallery');
 const watchForm = byId('watch-form');
 const detail = byId('detail');
+const mobileLayout = typeof matchMedia === 'function' ? matchMedia('(width < 900px)') : null;
+let mobilePanel;
+let mobilePanelTrigger;
 const dateFormat = new Intl.DateTimeFormat('vi-VN', {
   day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'Asia/Ho_Chi_Minh',
 });
@@ -30,6 +33,7 @@ const formats = { image: 'Hình ảnh', text: 'Chữ', video: 'Video' };
 let watchId = '';
 let selectedAd;
 let ads = [];
+let rangeAds = [];
 const kindLabels = { competitor: 'Nhà quảng cáo', project: 'Dự án' };
 const groupLabels = { increase: 'Tăng', decrease: 'Giảm', stopped: 'Đã dừng', steady: 'Ổn định' };
 const overviewTotals = [
@@ -83,6 +87,31 @@ function element(tag, value) {
   if (value !== undefined) node.textContent = value;
   return node;
 }
+
+function setMobilePanel(panel, trigger) {
+  if (!panel && !mobilePanel) return;
+  const drawer = panel === 'watch';
+  const detailOpen = panel === 'detail';
+  const previousTrigger = mobilePanelTrigger;
+  mobilePanel = panel;
+  mobilePanelTrigger = trigger;
+  byId('watch-menu').setAttribute('aria-expanded', String(drawer));
+  byId('watch-panel').setAttribute('data-open', String(drawer));
+  byId('detail-panel').setAttribute('data-open', String(detailOpen));
+  byId('watch-backdrop').hidden = !drawer;
+  byId('topbar').inert = gallery.inert = Boolean(panel);
+  document.body.classList.toggle('mobile-panel-open', Boolean(panel));
+  if (panel) byId(drawer ? 'watch-menu-close' : 'detail-close').focus();
+  else previousTrigger?.focus({ preventScroll: true });
+}
+
+byId('watch-menu').onclick = (event) => setMobilePanel('watch', event.currentTarget);
+byId('watch-menu-close').onclick = byId('watch-backdrop').onclick =
+  byId('detail-close').onclick = () => setMobilePanel();
+mobileLayout?.addEventListener('change', () => setMobilePanel());
+document.addEventListener?.('keydown', (event) => {
+  if (mobilePanel && event.key === 'Escape' && !event.defaultPrevented) setMobilePanel();
+});
 
 async function api(path, method = 'GET', data) {
   const options = { method };
@@ -138,6 +167,7 @@ async function loadProfiles(preferred) {
 }
 
 async function selectProfile() {
+  setMobilePanel();
   watchId = '';
   overviewFilter = '';
   expandedWatches.clear();
@@ -160,6 +190,7 @@ async function selectProfile() {
   if (byId('trash-dialog').open) byId('trash-dialog').close();
   clearUndo();
   ads = [];
+  rangeAds = [];
   summary = undefined;
   watchCounts = new Map();
   renderWatches();
@@ -175,9 +206,7 @@ async function loadProfileData({ refreshChart = true, reopenGroup = false } = {}
   const currentWatch = watchId;
   const currentGroup = reopenGroup && openGroup;
   const path = profilePath(id);
-  const filters = new URLSearchParams({
-    filter: filter.value || 'all', q: query.value || '', format: format.value || '', watchId: currentWatch,
-  });
+  const filters = { filter: filter.value || 'all', q: query.value || '', format: format.value || '' };
   const series = currentWatch && (refreshChart || chartPending || !watchBounds)
     ? loadSeries(path, currentWatch, undefined, rangeChoice?.from ? rangeChoice : null).then(
       (data) => ({ data }), () => ({ error: true }),
@@ -193,16 +222,18 @@ async function loadProfileData({ refreshChart = true, reopenGroup = false } = {}
   const range = rangeChoice?.from ? rangeChoice : null;
   // With no explicit range, the summary reports activity on the latest day
   // and still includes historical totals for each group.
-  const [list, data, groups, trash] = await Promise.all([
+  const adParams = withRange(new URLSearchParams({ watchId: currentWatch }), range);
+  const hasGridFilters = mode === 'grid' && (filters.filter !== 'all' || filters.q.trim() || filters.format);
+  const [list, data, groups, trash, rangeResults, gridResults] = await Promise.all([
     api(path + '/watchlist'), api(path + '/summary?' + withRange(new URLSearchParams(), range)),
     optionalList(path + '/groups'), optionalList(path + '/trash'),
+    currentWatch ? api(path + '/ads?' + adParams) : [],
+    currentWatch && hasGridFilters
+      ? api(path + '/ads?' + new URLSearchParams({ ...Object.fromEntries(adParams), ...filters }))
+      : null,
   ]);
   if (version !== loadVersion) return;
   summary = data;
-  const results = currentWatch && mode === 'grid'
-    ? await api(path + '/ads?' + withRange(filters, range))
-    : [];
-  if (version !== loadVersion) return;
   watches = list;
   watchGroups = groups ?? [];
   trashedWatches = trash ?? [];
@@ -215,7 +246,8 @@ async function loadProfileData({ refreshChart = true, reopenGroup = false } = {}
   for (const id of trashSelection) {
     if (!trashedWatches.some((watch) => watch.watchId === id)) trashSelection.delete(id);
   }
-  ads = results.filter((ad) => ad.platform === 'search');
+  rangeAds = rangeResults.filter((ad) => ad.platform === 'search');
+  ads = gridResults ? gridResults.filter((ad) => ad.platform === 'search') : rangeAds;
   watchCounts = new Map(summary.watches.map((watch) => [watch.watchId, watch]));
   if (watchId && !watches.some((watch) => watch.id === watchId)) return chooseWatch('');
   renderWatches();
@@ -231,13 +263,16 @@ async function loadProfileData({ refreshChart = true, reopenGroup = false } = {}
 }
 
 function chooseWatch(id) {
+  setMobilePanel();
   ++loadVersion;
   watchBounds = undefined;
   if (rangeDialog.open) rangeDialog.close();
   mode = 'groups';
   watchId = id;
   ads = [];
+  rangeAds = [];
   selectedAd = undefined;
+  byId('watch-stats').hidden = true;
   if (id) {
     const watch = watches.find((watch) => watch.id === id);
     if (watch) byId('group-' + kindOf(watch)).open = true;
@@ -825,11 +860,45 @@ function preview(ad, thumbnail = false, large = false) {
   return image;
 }
 
+function renderWatchStats(watch) {
+  const stats = byId('watch-stats');
+  stats.hidden = !watch;
+  if (!watch) return;
+  const kind = kindOf(watch);
+  const project = kind === 'project';
+  const identities = new Set();
+  const range = isAllTime() ? null : activeRange();
+  let unknownDomains = 0;
+  let newAds = 0;
+  for (const ad of rangeAds) {
+    const identity = project ? ad.advertiserId || ad.advertiserName?.trim()
+      : ad.domain?.trim().toLowerCase().replace(/^www\./, '').replace(/\.$/, '');
+    if (identity) identities.add(identity);
+    else if (!project) unknownDomains++;
+    const first = dateInVietnam(ad.firstShown);
+    if (first && (!range || (first >= range.from && first <= range.to))) newAds++;
+  }
+  byId('watch-stats-cards').replaceChildren(...[
+    [project ? 'Nhà quảng cáo' : 'Dự án', identities.size],
+    ['Ads', rangeAds.length],
+    ['Ads mới', newAds],
+  ].map(([label, count]) => {
+    const card = element('div');
+    card.className = 'total tone-' + kind;
+    card.append(element('span', label), element('strong', formatCount.format(count)));
+    return card;
+  }));
+  const note = byId('watch-stats-unknown');
+  note.hidden = !unknownDomains;
+  note.textContent = '+' + formatCount.format(unknownDomains) + ' ads chưa rõ tên miền';
+}
+
 function renderAds() {
   closeGroup();
   renderedGroups.clear();
   renderRangeControl();
   const watch = watches.find(({ id }) => id === watchId);
+  renderWatchStats(watch);
   byId('overview').hidden = Boolean(watch);
   byId('watch-view').hidden = !watch;
   if (watch) {
@@ -841,14 +910,10 @@ function renderAds() {
     }
     if (mode === 'groups') renderWatchGroups();
     const visible = mode === 'grid' ? ads : [];
-    const status = watchCounts.get(watchId);
     selectedAd = visible.find((ad) => ad.creativeId === selectedAd?.creativeId);
     const domain = watch.type === 'domain' ? watch.value : visible.find((ad) => ad.domain)?.domain;
     byId('gallery-heading').textContent = watch.label;
-    byId('gallery-summary').textContent = [
-      domain,
-      formatCount.format(status?.runningNow ?? 0) + ' ads đang chạy',
-    ].filter(Boolean).join(' · ');
+    byId('gallery-summary').textContent = domain || '';
     byId('empty').hidden = visible.length > 0;
     byId('empty').textContent = 'Chưa có mẫu phù hợp.';
     renderGrid(byId('ads'), visible);
@@ -1227,7 +1292,8 @@ function renderGrid(grid, visible) {
       button.setAttribute('aria-pressed', 'true');
       selectedAd = ad;
       showDetail(ad);
-      detail.parentElement.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      if (mobileLayout?.matches) setMobilePanel('detail', button);
+      else detail.parentElement.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     };
     return button;
   }));
@@ -1538,6 +1604,7 @@ function isRunningAd(ad) {
 function showDetail(ad) {
   detail.replaceChildren();
   if (!ad) {
+    if (mobilePanel === 'detail') setMobilePanel();
     detail.textContent = 'Chọn một mẫu quảng cáo để xem chi tiết.';
     return;
   }
@@ -1748,8 +1815,14 @@ if (chartSizes && typeof MutationObserver === 'function') {
   }).observe(document.body, { childList: true, subtree: true });
 }
 
+let pinnedChart;
+document.addEventListener?.('pointerdown', (event) => {
+  if (pinnedChart && !event.composedPath().includes(pinnedChart.plot)) pinnedChart.clear();
+}, true);
+
 function drawChart(plot, points, bucket, range, labels, width) {
   if (width <= 0) return;
+  if (pinnedChart?.plot === plot) pinnedChart.clear();
   const runningHeight = 180;
   const newHeight = 90;
   const runningBottom = runningHeight - 8;
@@ -1814,6 +1887,7 @@ function drawChart(plot, points, bucket, range, labels, width) {
   tooltip.setAttribute('role', 'status');
   tooltip.hidden = true;
   let dragStart;
+  let contact;
   let cursor = 0;
   const read = (index) => {
     cursor = index;
@@ -1822,8 +1896,8 @@ function drawChart(plot, points, bucket, range, labels, width) {
       + '\n' + labels[0] + ': ' + formatCount.format(point.running)
       + '\n' + labels[1] + ': ' + formatCount.format(point.newAds);
     tooltip.style.left = x(index) + 'px';
-    tooltip.className = 'chart-tooltip' + (x(index) > width * .65 ? ' tooltip-left' : '');
     tooltip.hidden = false;
+    tooltip.className = 'chart-tooltip' + (x(index) + tooltip.offsetWidth + 10 > width ? ' tooltip-left' : '');
     highlight.setAttribute('x1', x(index));
     highlight.setAttribute('x2', x(index));
     highlight.setAttribute('visibility', 'visible');
@@ -1833,6 +1907,8 @@ function drawChart(plot, points, bucket, range, labels, width) {
     highlight.setAttribute('visibility', 'hidden');
     selection.setAttribute('visibility', 'hidden');
     dragStart = undefined;
+    contact = undefined;
+    if (pinnedChart?.clear === clear) pinnedChart = undefined;
   };
   const indexAt = (event) => {
     const box = svg.getBoundingClientRect();
@@ -1840,21 +1916,45 @@ function drawChart(plot, points, bucket, range, labels, width) {
     return Math.max(0, Math.min(points.length - 1, Math.floor((position - left) / step)));
   };
   hit.onpointermove = (event) => {
+    if (event.pointerType && event.pointerType !== 'mouse' && event.pointerId !== contact) return;
     const index = indexAt(event);
     read(index);
-    if (dragStart === undefined) return;
+    if (event.pointerType !== 'mouse' || dragStart === undefined || index === dragStart) {
+      selection.setAttribute('visibility', 'hidden');
+      return;
+    }
     selection.setAttribute('x', x(Math.min(index, dragStart)) - step / 2);
     selection.setAttribute('width', (Math.abs(index - dragStart) + 1) * step);
     selection.setAttribute('visibility', 'visible');
   };
   hit.onpointerdown = (event) => {
-    if (event.button !== 0 || dragStart !== undefined) return;
-    dragStart = indexAt(event);
+    if (event.button !== 0) return;
+    pinnedChart?.clear();
+    const index = indexAt(event);
+    read(index);
+    if (event.pointerType !== 'mouse') {
+      contact = event.pointerId;
+      pinnedChart = { plot, clear };
+      return;
+    }
+    dragStart = index;
     hit.setPointerCapture(event.pointerId);
   };
   hit.onpointerup = (event) => {
+    if (event.pointerType !== 'mouse') {
+      if (contact !== undefined && event.pointerId === contact) {
+        read(indexAt(event));
+        contact = undefined;
+      }
+      return;
+    }
+    if (dragStart === undefined) return;
     const end = indexAt(event);
-    if (dragStart === undefined || end === dragStart) return clear();
+    if (end === dragStart) {
+      dragStart = undefined;
+      selection.setAttribute('visibility', 'hidden');
+      return read(end);
+    }
     const start = Math.min(dragStart, end);
     const finish = Math.max(dragStart, end);
     const first = points[start].date;
@@ -1863,10 +1963,15 @@ function drawChart(plot, points, bucket, range, labels, width) {
     clear();
     return applyRange({ from: first < range.from ? range.from : first, to: last > range.to ? range.to : last });
   };
-  hit.onpointerleave = () => { if (dragStart === undefined) clear(); };
+  hit.onpointerleave = () => {
+    if (dragStart === undefined && pinnedChart?.clear !== clear) clear();
+  };
   hit.onfocus = () => read(cursor);
-  hit.onblur = clear;
-  hit.onpointercancel = hit.onlostpointercapture = clear;
+  hit.onblur = () => { if (pinnedChart?.clear !== clear) clear(); };
+  hit.onpointercancel = hit.onlostpointercapture = (event) => {
+    if (event.pointerType === 'mouse' && dragStart !== undefined) clear();
+    else if (event.pointerId === contact) contact = undefined;
+  };
   hit.onkeydown = (event) => {
     if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
     event.preventDefault();
@@ -2110,6 +2215,7 @@ byId('profile-form').onsubmit = (event) => {
 };
 
 byId('trash-open').onclick = () => run(async () => {
+  setMobilePanel();
   const id = profile.value;
   const items = await api(profilePath(id) + '/trash');
   if (profile.value !== id || byId('trash-dialog').open) return;

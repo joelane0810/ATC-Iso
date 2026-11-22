@@ -27,7 +27,12 @@ class Element {
   querySelectorAll() { return []; }
   replaceWith(node) { this.replacement = node; }
   get firstElementChild() { return this.children[0]; }
-  get classList() { return { add: (name) => { this.className += ' ' + name; } }; }
+  get classList() {
+    return {
+      add: (name) => { this.className += ' ' + name; },
+      toggle: (name, active) => { this.className = active ? name : ''; },
+    };
+  }
   clientWidth = 240;
   focus() { this.focused = true; }
   querySelector(selector) {
@@ -70,13 +75,15 @@ const projectGroup = {
   runningNow: 2, runningPrev: 1, delta: 1, regions: [], sampleAds: [],
 };
 
-async function loadGrid(results, groupResponse, storage = new Map(), browser = {}) {
+async function loadGrid(results, groupResponse, storage = new Map(), { rangeResponse, ...browser } = {}) {
   const posts = [];
   const requests = [];
   const calls = [];
   let timer;
   const nodes = new Map();
+  const documentEvents = new Map();
   const document = {
+    addEventListener: (name, callback) => documentEvents.set(name, callback),
     body: new Element('body'),
     createElement(tag) {
       const node = new Element(tag);
@@ -163,6 +170,7 @@ async function loadGrid(results, groupResponse, storage = new Map(), browser = {
         const params = url.searchParams;
         requests.push(params);
         if (params.has('group') && groupResponse) return groupResponse(params);
+        if (rangeResponse) return rangeResponse(params);
         return results.filter((ad) => ad.watchId === params.get('watchId'));
       };
       return { ok: true, json };
@@ -180,7 +188,8 @@ async function loadGrid(results, groupResponse, storage = new Map(), browser = {
     await controls.children[0].onclick();
     return panel.children[1].children;
   };
-  return { open, rows, expand, detail: nodes.get('detail'), nodes, clipboard, posts, requests, calls, suggest: () => timer() };
+  return { open, rows, expand, detail: nodes.get('detail'), nodes, clipboard, posts, requests, calls,
+    documentEvents, suggest: () => timer() };
 }
 
 test('grid prefers a local image, then a remote image, then the placeholder', async () => {
@@ -630,15 +639,106 @@ test('the chart shares a tooltip, switches to a table and applies a dragged rang
   assert.equal(table.hidden, false);
   assert.equal(table.children[1].children.length, 3);
   toggle.onclick();
-  hit.onpointerdown({ clientX: 130, button: 0, pointerId: 1 });
-  hit.onpointermove({ clientX: 365 });
-  await hit.onpointerup({ clientX: 365 });
+  const mouse = { button: 0, pointerId: 1, pointerType: 'mouse' };
+  hit.onpointerdown({ ...mouse, clientX: 130 });
+  await hit.onpointerup({ ...mouse, clientX: 130 });
+  assert.match(tooltip.textContent, /^09\/11\/2026/);
+  assert.equal(tooltip.hidden, false);
+  assert.equal(nodes.get('range-value').textContent, 'Mọi lúc');
+  hit.onpointerdown({ ...mouse, clientX: 130 });
+  hit.onpointermove({ ...mouse, clientX: 365 });
+  await hit.onpointerup({ ...mouse, clientX: 365 });
   assert.equal(nodes.get('range-value').textContent, '9 thg 11 – 10 thg 11, 2026');
   assert.equal(calls.findLast(({ url }) => url.pathname.endsWith('/series')).url.searchParams.get('to'), '2026-11-10');
   await nodes.get('watch-chart').children[0].children[1].onclick();
   assert.equal(nodes.get('range-value').textContent, 'Mọi lúc');
 });
 
+test('touch and pen read the chart without applying a date range', async () => {
+  const storage = new Map();
+  const { nodes, calls, documentEvents } = await loadGrid([creative], undefined, storage);
+  await sidebarRow((id) => nodes.get(id), 'competitor').children[0].onclick();
+  const [, plot] = nodes.get('watch-chart').children;
+  const [svg, tooltip] = plot.children;
+  const hit = svg.children.at(-1);
+  const requestCount = calls.length;
+  for (const pointerType of ['touch', 'pen']) {
+    const contact = { button: 0, pointerId: 2, pointerType };
+    hit.onpointerdown({ ...contact, clientX: 130 });
+    hit.onpointermove({ ...contact, clientX: 365 });
+    assert.equal(tooltip.textContent, '10/11/2026\nAds đang chạy: 5\nAds mới: 1');
+    await hit.onpointerup({ ...contact, clientX: 365 });
+    hit.onlostpointercapture(contact);
+    hit.onpointerleave(contact);
+    assert.equal(tooltip.hidden, false);
+    documentEvents.get('pointerdown')({ composedPath: () => [nodes.get('gallery')] });
+    assert.equal(tooltip.hidden, true);
+  }
+  assert.equal(calls.length, requestCount);
+  assert.equal(storage.has('atc-iso-date-range'), false);
+  assert.equal(nodes.get('range-value').textContent, 'Mọi lúc');
+});
+
+test('the mobile drawer closes on selection and ad details restore focus on close', async () => {
+  const { nodes } = await loadGrid([creative], undefined, new Map(), {
+    matchMedia: () => ({ matches: true, addEventListener() {} }),
+  });
+  const menu = nodes.get('watch-menu');
+  menu.onclick({ currentTarget: menu });
+  assert.equal(menu.attributes.get('aria-expanded'), 'true');
+  assert.equal(nodes.get('watch-menu-close').focused, true);
+  assert.equal(nodes.get('gallery').inert, true);
+  await sidebarRow((id) => nodes.get(id), 'competitor').children[0].onclick();
+  assert.equal(menu.attributes.get('aria-expanded'), 'false');
+  assert.equal(nodes.get('gallery').inert, false);
+
+  await nodes.get('mode-grid').onclick();
+  const [ad] = nodes.get('ads').children;
+  ad.onclick();
+  assert.equal(nodes.get('detail-panel').attributes.get('data-open'), 'true');
+  assert.equal(nodes.get('detail-close').focused, true);
+  nodes.get('detail-close').onclick();
+  assert.equal(nodes.get('detail-panel').attributes.get('data-open'), 'false');
+  assert.equal(ad.focused, true);
+});
+
+test('each watch shows date-filtered totals from the same ads as the grid', async () => {
+  const other = { ...creative, creativeId: 'CR2', advertiserId: 'AR2', domain: 'other.com',
+    firstShown: '2026-11-09T17:00:00Z', lastShown: '2026-11-10T17:00:00Z' };
+  const unknown = { ...creative, creativeId: 'CR3', domain: null,
+    firstShown: '2026-11-09T16:59:59Z', lastShown: '2026-11-09T16:59:59Z' };
+  const fixtures = [creative, other, unknown];
+  const localDay = (value) => new Date(Date.parse(value) + 7 * 3_600_000).toISOString().slice(0, 10);
+  const { nodes } = await loadGrid(fixtures, undefined, new Map(), {
+    rangeResponse: (params) => fixtures.filter(({ firstShown, lastShown }) => !params.has('from')
+      || (localDay(firstShown) <= params.get('to') && localDay(lastShown) >= params.get('from'))),
+  });
+  const stats = () => nodes.get('watch-stats-cards').children.map((card) => card.children.map((node) => node.textContent));
+  const select = (kind) => sidebarRow((id) => nodes.get(id), kind).children[0].onclick();
+  const setDate = async (day) => {
+    nodes.get('range-open').onclick();
+    nodes.get('range-from').value = nodes.get('range-to').value = day + ' thg 11, 2026';
+    await nodes.get('range-form').onsubmit({ preventDefault() {} });
+  };
+  await select('competitor');
+  const note = nodes.get('watch-stats-unknown');
+  assert.deepEqual(stats(), [['Dự án', '2'], ['Ads', '3'], ['Ads mới', '3']]);
+  assert.equal(note.hidden, false);
+  assert.equal(note.textContent, '+1 ads chưa rõ tên miền');
+  await nodes.get('mode-grid').onclick();
+  await setDate(10);
+  assert.deepEqual(stats(), [['Dự án', '2'], ['Ads', '2'], ['Ads mới', '1']]);
+  assert.equal(note.hidden, true);
+  assert.equal(nodes.get('ads').children.length, 2);
+
+  await select('project');
+  assert.deepEqual(stats(), [['Nhà quảng cáo', '2'], ['Ads', '2'], ['Ads mới', '1']]);
+  await nodes.get('mode-grid').onclick();
+  await setDate(9);
+  assert.deepEqual(stats(), [['Nhà quảng cáo', '1'], ['Ads', '2'], ['Ads mới', '1']]);
+  assert.equal(nodes.get('ads').children.length, 2);
+  assert.equal(note.hidden, true);
+});
 
 test('reset to all time persists and the calendar still starts at the profile minimum', async () => {
   const storage = new Map();
