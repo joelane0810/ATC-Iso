@@ -255,7 +255,10 @@ function preview(ad, thumbnail = false) {
   image.className = 'preview';
   image.alt = thumbnail ? '' : 'Ảnh mẫu quảng cáo';
   image.loading = 'lazy';
-  image.onerror = () => image.replaceWith(fallback());
+  image.onerror = () => {
+    if (remote && image.src !== remote) { image.src = remote; return; }
+    image.replaceWith(fallback());
+  };
   image.src = source;
   return image;
 }

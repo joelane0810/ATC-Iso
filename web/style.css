@@ -302,3 +302,5 @@ main {
 
 #detail h3 { margin-bottom: 6px; color: #202124; font-size: 14px; }
 .detail-regions { display: grid; gap: 4px; margin: 0 0 20px; padding: 0; list-style: none; }
+.group-samples > img.preview { width: 72px; height: 54px; max-height: 54px; object-fit: cover; object-position: top; padding: 0; }
+.group-samples { flex-wrap: nowrap; min-width: 312px; }
