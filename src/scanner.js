@@ -100,6 +100,7 @@ export async function runScan({
           if (regionFailures >= 3) break;
           const regions = await client.lookupRegions({ advertiserId, creativeId });
           regionFailures = regions === null ? regionFailures + 1 : 0;
+          log(`Quốc gia ${creativeId}: ${regions === null ? 'chưa lấy được' : regions.length + ' nước'}`);
           await store.setCreativeRegions(creative.creativeId, regions, scannedAt);
         }
       }

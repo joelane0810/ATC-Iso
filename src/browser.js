@@ -363,6 +363,7 @@ export async function openChromeClient({
       return parseCreativeRegions(parseJson(text));
     } catch (error) {
       if (!(error instanceof errors.TimeoutError)) throw error;
+      log(`Trang chi tiết ${creativeId}: hết thời gian chờ (${detailPage.url()})`);
       if (isSorry() || await detailPage.evaluate(hasCaptcha)) throw new BlockedError(blockedMessage);
       if (debugDir && !debugSaved) {
         debugSaved = true;
