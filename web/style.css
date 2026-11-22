@@ -965,3 +965,19 @@ button.is-scanning::after {
 #status.is-scanning { background: linear-gradient(90deg, transparent 0%, #1a73e81f 50%, transparent 100%) 0 0 / 200% 100% no-repeat;
   animation: atc-sweep 1.6s linear infinite; border-radius: 6px; padding: 2px 6px; }
 @media (prefers-reduced-motion: reduce) { button.is-scanning::after, #status.is-scanning, #status.is-scanning::before, .row-scanning { animation-duration: 3s; } }
+
+/* Thẻ mục theo dõi trên điện thoại: tên chiếm hết chỗ trống, chỉ xuống dòng khi thật sự không vừa */
+@media (width < 1280px) {
+  .overview-table .overview-card {
+    grid-template-columns: minmax(0, 1fr) auto auto auto 36px;
+    grid-template-areas: "name name name kind scan" "run new trend trend trend";
+  }
+  .overview-card .overview-name-cell { grid-area: name; }
+  .overview-card .overview-kind-cell { grid-area: kind; }
+  .overview-card .overview-scan-cell { grid-area: scan; }
+  .overview-card .overview-running-cell { grid-area: run; white-space: nowrap; }
+  .overview-card .overview-new-cell { grid-area: new; white-space: nowrap; }
+  .overview-card .overview-total-cell { grid-area: new; white-space: nowrap; }
+  .overview-card .overview-trend-cell { grid-area: trend; min-width: 48px; }
+  .overview-card .watch-name { overflow-wrap: break-word; word-break: normal; }
+}
