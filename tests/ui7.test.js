@@ -52,7 +52,11 @@ const watches = [
   })),
 }));
 
-async function boot({ reply, initialStatus = { scanning: false, scanningWatchId: null, last: null } } = {}) {
+class TestDate extends Date {
+  constructor(...args) { super(...(args.length ? args : ['2026-11-21T18:00:00Z'])); }
+}
+
+async function boot({ reply, storage = new Map(), initialStatus = { scanning: false, scanningWatchId: null, last: null } } = {}) {
   const nodes = new Map();
   const timers = new Map();
   const requests = [];
@@ -68,7 +72,11 @@ async function boot({ reply, initialStatus = { scanning: false, scanningWatchId:
   get('filter').value = 'all';
   get('query').value = get('format').value = '';
   await runInNewContext(script, {
-    URLSearchParams, Option: class {},
+    URLSearchParams, Option: class {}, Date: TestDate,
+    localStorage: {
+      getItem: (key) => storage.get(key) ?? null,
+      setItem: (key, value) => storage.set(key, value),
+    },
     document: { getElementById: get, createElement: (tag) => new Node(tag),
       createElementNS: (_, tag) => new Node(tag), querySelectorAll: () => [] },
     setTimeout(callback, delay) {
@@ -117,14 +125,14 @@ async function boot({ reply, initialStatus = { scanning: false, scanningWatchId:
 const toggle = (row) => row.children[0].children[0];
 const groupToggle = (wrapper) => wrapper.children[0].children[0];
 
-test('overview selects the period, displays the six totals and expands only five groups initially', async () => {
+test('overview selects the period, displays the seven totals and expands only five groups initially', async () => {
   const { get, rows, requests } = await boot();
   assert.equal(get('gallery-summary').textContent, dataNote);
   assert.equal(requests.find(({ url }) => url.pathname.endsWith('/summary')).url.searchParams.get('window'), 'day');
   await get('period').onchange({ currentTarget: { value: '30d' } });
   assert.equal(requests.at(-1).url.searchParams.get('window'), '30d');
   assert.deepEqual(get('totals').children.map((card) => card.children[0].textContent),
-    ['Dự án mới', 'Nhà QC mới', 'Ads mới', 'Tăng', 'Giảm', 'Đã dừng']);
+    ['Dự án mới', 'Nhà QC mới', 'Ads mới', 'Tăng', 'Giảm', 'Đã dừng', 'Ads đang chạy']);
   assert.equal(rows()[1].hidden, true);
   assert.equal(rows()[0].children[2].textContent, '2 (+1)');
   assert.equal(rows()[0].children[4].children[0].children[0].attributes.get('points').split(' ').length, 30);
@@ -149,10 +157,10 @@ test('watch page sorts groups, plots running and new ads, and preserves the filt
   assert.equal(get('grid-view').hidden, true);
   assert.equal(get('watch-groups').children.length, 7);
   const [legend, chart, readout] = get('watch-chart').children;
-  assert.deepEqual(legend.children.map((entry) => entry.textContent), ['Đang chạy', 'Mẫu mới']);
+  assert.deepEqual(legend.children.map((entry) => entry.textContent), ['Đang chạy', 'Ads mới']);
   assert.equal(chart.children.filter((node) => node.attributes.get('class') === 'chart-bar').length, 2);
   chart.children.at(-1).onmouseenter();
-  assert.equal(readout.textContent, '22/11 · 1 đang chạy · 1 mẫu mới');
+  assert.equal(readout.textContent, '22/11 · 1 đang chạy · 1 ads mới');
   get('group-sort').value = 'name';
   get('group-sort').onchange();
   const first = get('watch-groups').children[0];
@@ -274,4 +282,59 @@ test('the grid still shows dates and opens advertisement details', async () => {
   assert.equal(get('detail').children[1].children[1].textContent, 'Example');
   remote.onclick();
   assert.equal(local.attributes.get('aria-pressed'), 'false');
+});
+
+test('Vietnamese date ranges filter grids and groups by overlap and survive reload', async () => {
+  const storage = new Map();
+  const spanning = {
+    ...ad, domain: 'WWW.EXAMPLE.COM.', firstShown: '2026-11-10',
+    lastShown: '2026-11-21T17:00:00Z',
+  };
+  const older = {
+    ...ad, creativeId: 'CR2', domain: 'example1.com',
+    firstShown: '2026-11-01', lastShown: '2026-11-21T16:59:59Z',
+  };
+  const recent = { ...ad, creativeId: 'CR3', domain: 'example1.com', firstShown: '2026-11-16', lastShown: '2026-11-16' };
+  const earliest = { ...ad, creativeId: 'CR4', domain: 'example1.com', firstShown: '2026-10-24', lastShown: '2026-10-24' };
+  const undated = { ...ad, creativeId: 'CR5', firstShown: null };
+  const reply = ({ url }) => {
+    if (!url.pathname.endsWith('/ads')) return;
+    assert.equal(url.searchParams.get('watchId'), 'rival');
+    assert.deepEqual([...url.searchParams.keys()].filter((key) => ['from', 'to', 'window'].includes(key)), []);
+    const all = [spanning, older, recent, earliest, undated];
+    return { ok: true, json: async () => url.searchParams.has('group') ? [spanning, undated] : all };
+  };
+  const { get } = await boot({ storage, reply });
+  const choose = (page) => page('watches-competitor').children[0].children[0].onclick();
+  await choose(get);
+  const period = get('ad-period');
+  const select = async (value) => {
+    period.value = value;
+    await period.onchange();
+  };
+  assert.equal(get('watch-groups').children.length, 7);
+  await select('today');
+  assert.equal(get('watch-groups').children.length, 1);
+  const wrapper = get('watch-groups').children[0];
+  await groupToggle(wrapper).onclick();
+  assert.equal(wrapper.children[1].children[1].children.length, 1);
+  await get('mode-grid').onclick();
+  assert.equal(get('ads').children.length, 1);
+  await select('7d');
+  assert.equal(get('ads').children.length, 3);
+  await select('30d');
+  assert.equal(get('ads').children.length, 4);
+  await select('all');
+  assert.equal(get('ads').children.length, 5);
+  await select('custom');
+  assert.equal(get('ad-dates').hidden, false);
+  get('ad-from').value = get('ad-to').value = '2026-11-22';
+  await get('ad-to').onchange();
+  assert.equal(get('ads').children.length, 1);
+  const reloaded = await boot({ storage, reply });
+  await choose(reloaded.get);
+  assert.equal(reloaded.get('ad-period').value, 'custom');
+  assert.equal(reloaded.get('ad-from').value, '2026-11-22');
+  assert.equal(reloaded.get('ad-to').value, '2026-11-22');
+  assert.equal(reloaded.get('watch-groups').children.length, 1);
 });

@@ -15,6 +15,7 @@ class Element {
   replaceChildren(...children) { this.children = children; }
   setAttribute(name, value) { this.attributes.set(name, value); }
   querySelectorAll() { return []; }
+  replaceWith(node) { this.replacement = node; }
   focus() { this.focused = true; }
   querySelector(selector) {
     assert.equal(selector, '.ad[aria-pressed="true"]');
@@ -40,25 +41,32 @@ const creative = {
   ],
 };
 
-const groupKey = 'domain:example.com';
+const refDate = '2026-11-21';
+const dataNote = 'Ngày tham chiếu đổi lúc 20:00 theo giờ Việt Nam.';
+const spark = [{ date: refDate, running: 3 }];
+const groupKey = 'example.com';
 const group = {
   key: groupKey, name: 'example.com', groupType: 'domain', status: 'new',
-  runningNow: 3, runningBefore: 0, delta: 3, newAds: 3, totalAds: 3, firstSeen: scanAt,
+  runningNow: 3, runningPrev: 0, delta: 3, newAds: 3, totalAds: 3, firstShown: refDate, followed: true,
   regions: ['US', 'VN', 'JP', 'DE', 'GB', 'FR', 'AU'].map((iso, index) => ({
     regionId: [2840, 2704, 2392, 2276, 2826, 2250, 2036][index], iso, running: index === 0 ? 3 : 1,
   })),
 };
 const projectGroup = {
-  ...group, key: 'advertiser:AR1', name: 'Example', groupType: 'advertiser', status: 'increase',
-  runningNow: 2, runningBefore: 1, delta: 1, regions: [], sampleAds: [],
+  ...group, key: 'AR1', followed: false, name: 'Example', groupType: 'advertiser', status: 'increase',
+  runningNow: 2, runningPrev: 1, delta: 1, regions: [], sampleAds: [],
 };
 
-async function loadGrid(results, overview = {}, groupResponse) {
+async function loadGrid(results, groupResponse) {
   const posts = [];
   const requests = [];
+  const calls = [];
+  let timer;
   const nodes = new Map();
   const document = {
     createElement: (tag) => new Element(tag),
+    createElementNS: (_, tag) => new Element(tag),
+    querySelectorAll: () => [],
     getElementById(id) {
       if (!nodes.has(id)) nodes.set(id, new Element(id));
       return nodes.get(id);
@@ -71,13 +79,22 @@ async function loadGrid(results, overview = {}, groupResponse) {
   form.elements = { input: new Element('input') };
   document.getElementById('gallery').children = ['ads', 'overview-watches'].map(document.getElementById);
   await runInNewContext(script, {
-    document, URLSearchParams, clearTimeout,
+    document, URLSearchParams,
+    setTimeout: (callback, delay) => {
+      if (delay === 250) timer = callback;
+    },
+    clearTimeout: () => {},
     navigator: { clipboard: { writeText: async (value) => clipboard.push(value) } },
     Option: class {},
-    fetch: async (path, options) => ({
-      ok: true,
-      json: async () => {
-        if (path === '/api/status') return { scanning: false };
+    fetch: async (path, options) => {
+      const url = new URL(path, 'http://localhost');
+      const { pathname, searchParams } = url;
+      calls.push({ url, method: options.method, body: options.body && JSON.parse(options.body) });
+      if (pathname === '/api/scan') return { ok: true, status: 202 };
+      const json = async () => {
+        if (path === '/api/status') return { scanning: false, scanningWatchId: null, last: null };
+        if (pathname === '/api/suggest') return [{ type: 'advertiser', value: 'AR1', name: 'Example', ads: 1 }];
+        if (pathname.endsWith('/series')) return { refDate, points: [{ ...spark[0], newAds: 1 }] };
         if (path === '/api/profiles') return [{ id: 'dai', name: 'Dai' }];
         if (path.endsWith('/watchlist')) {
           if (options.method === 'POST') posts.push(JSON.parse(options.body));
@@ -86,44 +103,48 @@ async function loadGrid(results, overview = {}, groupResponse) {
             { id: 'project', label: 'Dự án A', kind: 'project' },
           ];
         }
-        if (path.endsWith('/summary')) {
+        if (pathname.endsWith('/summary')) {
           return {
-            lastScan: { at: scanAt, status: 'ok' }, previousScanAt: null,
-            totals: { newGroups: 1, increased: 1, decreased: 1, stopped: 1, runningAds: 7 },
+            window: searchParams.get('window'), refDate, prevDate: '2026-11-20', dataNote,
+            lastScan: { at: scanAt, status: 'ok' },
+            totals: { newProjects: 1, newAdvertisers: 0, newAds: 4, increased: 1, decreased: 1, stopped: 1, runningAds: 7 },
             watches: [
-              { watchId: 'example-com', label: 'example.com', kind: 'competitor', runningNow: 5, runningBefore: 7,
+              { watchId: 'example-com', label: 'example.com', kind: 'competitor', groupType: 'domain', runningNow: 5, runningPrev: 7, delta: -2, newAds: 3, spark,
                 groups: [
                   { ...group, sampleAds: results.slice(0, 4) },
-                  { ...group, key: 'domain:fewer.example', name: 'fewer.example', status: 'decrease',
-                    runningNow: 1, runningBefore: 3, delta: -2, regions: [], sampleAds: [] },
-                  { ...group, key: 'domain:stopped.example', name: 'stopped.example', status: 'stopped',
-                    runningNow: 0, runningBefore: 3, delta: -3, regions: [], sampleAds: [] },
-                  { ...group, key: 'domain:steady.example', name: 'steady.example', status: 'steady',
-                    runningNow: 1, runningBefore: 1, delta: 0, regions: [], sampleAds: [] },
+                  { ...group, key: 'fewer.example', name: 'fewer.example', status: 'decrease',
+                    runningNow: 1, runningPrev: 3, delta: -2, regions: [], sampleAds: [] },
+                  { ...group, key: 'stopped.example', name: 'stopped.example', status: 'stopped',
+                    runningNow: 0, runningPrev: 3, delta: -3, regions: [], sampleAds: [] },
+                  { ...group, key: 'steady.example', name: 'steady.example', status: 'steady',
+                    runningNow: 1, runningPrev: 1, delta: 0, regions: [], sampleAds: [] },
                 ] },
-              { watchId: 'project', label: 'Dự án A', kind: 'project', runningNow: 2, runningBefore: 1,
+              { watchId: 'project', label: 'Dự án A', kind: 'project', groupType: 'advertiser', runningNow: 2, runningPrev: 1, delta: 1, newAds: 1, spark,
                 groups: [projectGroup] },
             ],
-            ...overview,
           };
         }
-        const url = new URL(path, 'http://localhost');
-        assert.equal(url.pathname, '/api/profiles/dai/ads');
+        assert.equal(pathname, '/api/profiles/dai/ads');
         const params = url.searchParams;
         requests.push(params);
         if (params.has('group') && groupResponse) return groupResponse(params);
         return results.filter((ad) => ad.watchId === params.get('watchId'));
-      },
-    }),
+      };
+      return { ok: true, json };
+    },
   });
   assert.equal(nodes.get('error').hidden, true);
-  const blocks = () => nodes.get('overview-watches').children;
-  const open = async () => {
-    const [row, panel] = blocks()[0].children[2].children;
-    await row.onclick();
-    return panel.children[0].children;
+  const rows = () => nodes.get('overview-watches').children[0].children[1].children;
+  const expand = (index = 0) => {
+    rows()[index * 2].children[0].children[0].onclick();
+    return rows()[index * 2 + 1].children[0].children;
   };
-  return { open, blocks, detail: nodes.get('detail'), nodes, clipboard, posts, requests };
+  const open = async () => {
+    const [controls, panel] = expand()[0].children;
+    await controls.children[0].onclick();
+    return panel.children[1].children;
+  };
+  return { open, rows, expand, detail: nodes.get('detail'), nodes, clipboard, posts, requests, calls, suggest: () => timer() };
 }
 
 test('grid prefers a local image, then a remote image, then the placeholder', async () => {
@@ -134,15 +155,20 @@ test('grid prefers a local image, then a remote image, then the placeholder', as
     { ...creative, creativeId: 'CR3' },
   ]);
   const cards = await open();
-  assert.equal(cards[0].children[0].src, '/images/CR1.png');
+  const local = cards[0].children[0];
+  assert.equal(local.src, '/images/CR1.png');
+  local.onerror();
+  assert.equal(local.src, imageUrl);
+  local.onerror();
+  assert.equal(local.replacement.children[1].textContent, 'Chưa có ảnh xem trước');
   assert.equal(cards[1].children[0].src, imageUrl);
   assert.equal(cards[2].children[0].children[1].textContent, 'Chưa có ảnh xem trước');
 });
 
 test('cards show advertiser, website, Vietnamese dates and applicable badges', async () => {
   const { open } = await loadGrid([
-    creative,
-    { ...creative, creativeId: 'CR2', domain: null, format: 'video', firstSeenByUs: '2026-11-10', lastShown: scanAt },
+    { ...creative, isNew: true, isRunning: false },
+    { ...creative, creativeId: 'CR2', domain: null, format: 'video', firstShown: '2026-11-20', lastShown: scanAt },
   ]);
   const cards = await open();
   const [name, domain, dates, badges, flags] = cards[0].children[1].children;
@@ -155,88 +181,8 @@ test('cards show advertiser, website, Vietnamese dates and applicable badges', a
   assert.equal(cards[1].children[1].children[3].children.length, 0);
 });
 
-test('overview shows grouped changes, stable watch colors, and filters with all five totals', async () => {
-  const { blocks, nodes, requests } = await loadGrid([
-    { ...creative, image: 'images/CR1.png' },
-    { ...creative, creativeId: 'CR2', imageUrl: 'https://example.com/remote.png' },
-  ], { previousScanAt: '2026-11-21T19:05:00Z' });
-  assert.equal(requests.length, 0);
-  assert.equal(nodes.get('gallery-summary').textContent, 'So với lượt quét trước lúc 02:05 22/11');
-  const [competitor, project] = blocks();
-  const [heading, category, firstGroup] = competitor.children;
-  assert.equal(heading.children[1].textContent, 'Đang chạy 5 mẫu (−2 so với lượt trước)');
-  assert.equal(category.textContent, 'Dự án');
-  assert.equal(project.children[1].textContent, 'Nhà quảng cáo');
-  assert.equal(project.children[2].children[0].children[0].children[1].textContent, 'Example');
-  const sidebar = nodes.get('watches-competitor').children[0].children[0];
-  const dotStyle = (name) => name.children[0].attributes.get('style');
-  assert.match(dotStyle(sidebar.children[0]), /^--watch-color: #[a-f0-9]{6}$/);
-  assert.equal(dotStyle(sidebar.children[0]), dotStyle(heading.children[0]));
-  const [name, counts, flags, thumbs] = firstGroup.children[0].children;
-  assert.deepEqual(name.children.map((node) => node.textContent), ['Dự án mới', 'example.com']);
-  assert.deepEqual(counts.children.map((node) => node.textContent), ['0 → 3', '+3', '3 mẫu mới']);
-  assert.deepEqual(flags.children.map((node) => node.textContent), ['🇺🇸 3', '🇻🇳 1', '🇯🇵 1', '🇩🇪 1', '🇬🇧 1', '🇫🇷 1', '+1']);
-  assert.deepEqual(thumbs.children.map((node) => node.src), ['/images/CR1.png', 'https://example.com/remote.png']);
-  const totals = nodes.get('totals').children;
-  assert.deepEqual(totals.map((card) => card.children.map((node) => node.textContent)), [
-    ['Dự án mới', '1'], ['Chạy thêm ads', '1'], ['Giảm ads', '1'], ['Đã dừng', '1'], ['Mẫu đang chạy', '7'],
-  ]);
-  const visibleStatuses = () => blocks().flatMap((block) => block.children.slice(2)
-    .map((row) => row.children[0].children[0].children[0].textContent));
-  for (const card of totals.slice(0, 4)) {
-    card.onclick();
-    assert.equal(card.attributes.get('aria-pressed'), 'true');
-    assert.deepEqual(visibleStatuses(), [card.children[0].textContent]);
-  }
-  totals[4].onclick();
-  assert.deepEqual(visibleStatuses(), ['Dự án mới', 'Giảm ads', 'Ổn định', 'Chạy thêm ads']);
-  totals[4].onclick();
-  assert.deepEqual(visibleStatuses(), ['Dự án mới', 'Giảm ads', 'Đã dừng', 'Ổn định', 'Chạy thêm ads']);
-});
-
-test('group opens inline and loads only the selected watch and group', async () => {
-  const { blocks, nodes, requests } = await loadGrid([creative,
-    { ...creative, creativeId: 'CR2', platform: 'display' },
-  ]);
-  assert.equal(nodes.get('gallery-summary').textContent, 'Lượt quét đầu tiên — chưa có so sánh');
-  const [row, panel] = blocks()[0].children[2].children;
-  await row.onclick();
-  assert.equal(row.attributes.get('aria-expanded'), 'true');
-  assert.equal(panel.hidden, false);
-  assert.equal(panel.children[0].children.length, 1);
-  assert.equal(requests[0].get('watchId'), 'example-com');
-  assert.equal(requests[0].get('group'), groupKey);
-  row.onclick();
-  assert.equal(row.attributes.get('aria-expanded'), 'false');
-  assert.equal(panel.hidden, true);
-  const [projectRow, projectPanel] = blocks()[1].children[2].children;
-  await projectRow.onclick();
-  assert.equal(requests[1].get('watchId'), 'project');
-  assert.equal(requests[1].get('group'), projectGroup.key);
-  assert.equal(projectPanel.children[0].textContent, 'Chưa có mẫu phù hợp.');
-  await nodes.get('watches-competitor').children[0].children[0].onclick();
-  assert.equal(nodes.get('overview').hidden, true);
-  assert.equal(nodes.get('ads').children.length, 1);
-  nodes.get('home').onclick();
-  assert.equal(nodes.get('overview').hidden, false);
-  assert.equal(nodes.get('watch-view').hidden, true);
-});
-
-test('an ads response arriving after the group is closed cannot reopen it', async () => {
-  let finish;
-  const delayed = new Promise((resolve) => { finish = resolve; });
-  const { blocks, nodes } = await loadGrid([creative], {}, () => delayed);
-  const [row, panel] = blocks()[0].children[2].children;
-  const loading = row.onclick();
-  nodes.get('totals').children[1].onclick();
-  finish([creative]);
-  await loading;
-  assert.equal(panel.hidden, true);
-  assert.equal(panel.children.length, 0);
-});
-
 test('the add buttons choose a kind and the form sends the active chip', async () => {
-  const { nodes, posts } = await loadGrid([]);
+  const { nodes, posts, suggest, calls } = await loadGrid([]);
   const form = nodes.get('watch-form');
   const submit = async (input) => {
     form.elements.input.value = input;
@@ -249,10 +195,16 @@ test('the add buttons choose a kind and the form sends the active chip', async (
   await submit('project.example');
   nodes.get('kind-competitor').onclick();
   await submit('another.example');
+  form.elements.input.value = 'Example';
+  form.elements.input.oninput();
+  await suggest();
+  assert.equal(calls.at(-1).url.searchParams.get('q'), 'Example');
+  await nodes.get('suggestions').children[0].onclick();
   assert.deepEqual(posts, [
     { input: 'competitor.example', region: null, kind: 'competitor' },
     { input: 'project.example', region: null, kind: 'project' },
     { input: 'another.example', region: null, kind: 'competitor' },
+    { input: 'AR1', region: null, kind: 'competitor' },
   ]);
 });
 
@@ -289,4 +241,97 @@ test('clicking a card opens and updates the right-hand detail panel', async () =
   assert.equal(cards[0].attributes.get('aria-pressed'), 'false');
   assert.equal(cards[1].attributes.get('aria-pressed'), 'true');
   assert.equal(detail.children[1].children[3].textContent, 'other.com');
+});
+
+test('overview shows grouped changes, stable watch colors and all seven totals', async () => {
+  const { rows, expand, nodes, requests, calls } = await loadGrid([
+    { ...creative, image: 'images/CR1.png' },
+    { ...creative, creativeId: 'CR2', imageUrl: 'https://example.com/remote.png' },
+  ]);
+  assert.equal(requests.length, 0);
+  assert.equal(nodes.get('gallery-summary').textContent, dataNote);
+  assert.equal(calls.find(({ url }) => url.pathname.endsWith('/summary')).url.searchParams.get('window'), 'day');
+  const [competitor, , project] = rows();
+  assert.equal(competitor.children[2].textContent, '5 (−2)');
+  assert.equal(competitor.children[4].children[0].attributes.get('role'), 'img');
+  assert.equal(project.children[1].textContent, 'Dự án');
+  const sidebar = nodes.get('watches-competitor').children[0].children[0];
+  const dotStyle = (name) => name.children[0].attributes.get('style');
+  assert.match(dotStyle(sidebar.children[0]), /^--watch-color: #[a-f0-9]{6}$/);
+  assert.equal(dotStyle(sidebar.children[0]), dotStyle(competitor.children[0].children[0].children[1]));
+  const first = expand()[0].children[0];
+  const [name, counts, flags, thumbs] = first.children[0].children;
+  assert.equal(first.children.length, 1);
+  assert.deepEqual(name.children.map((node) => node.textContent), ['Dự án mới', 'example.com']);
+  assert.deepEqual(counts.children.map((node) => node.textContent), ['0 → 3', '+3', '3 ads mới']);
+  assert.deepEqual(flags.children.map((node) => node.textContent), ['🇺🇸 3', '🇻🇳 1', '🇯🇵 1', '🇩🇪 1', '🇬🇧 1', '🇫🇷 1', '+1']);
+  assert.deepEqual(thumbs.children.map((node) => node.src), ['/images/CR1.png', 'https://example.com/remote.png']);
+  assert.equal(expand(1)[0].children[0].children[1].textContent, 'Theo dõi');
+  const totals = nodes.get('totals').children;
+  assert.deepEqual(totals.map((card) => card.children.map((node) => node.textContent)), [
+    ['Dự án mới', '1'], ['Nhà QC mới', '0'], ['Ads mới', '4'], ['Tăng', '1'],
+    ['Giảm', '1'], ['Đã dừng', '1'], ['Ads đang chạy', '7'],
+  ]);
+  assert.equal(totals[6].title, 'Số mẫu quảng cáo có hiển thị trong ngày dữ liệu mới nhất');
+  const visibleStatuses = () => rows().filter((_, index) => index % 2).flatMap((row) =>
+    row.children[0].children.map((group) => group.children[0].children[0].children[0].children[0].textContent));
+  for (const card of [totals[0], ...totals.slice(3, 6)]) {
+    card.onclick();
+    assert.equal(card.attributes.get('aria-pressed'), 'true');
+    assert.deepEqual(visibleStatuses(), [card.children[0].textContent]);
+  }
+  totals[6].onclick();
+  assert.deepEqual(visibleStatuses(), ['Dự án mới', 'Giảm', 'Ổn định', 'Tăng']);
+  totals[6].onclick();
+  assert.deepEqual(visibleStatuses(), ['Dự án mới', 'Giảm', 'Đã dừng', 'Ổn định', 'Tăng']);
+});
+
+test('group opens inline and loads only the selected watch and group', async () => {
+  const { expand, nodes, requests, calls } = await loadGrid([creative,
+    { ...creative, creativeId: 'CR2', platform: 'display' },
+  ]);
+  const [controls, panel] = expand()[0].children;
+  const [row] = controls.children;
+  await row.onclick();
+  assert.equal(row.attributes.get('aria-expanded'), 'true');
+  assert.equal(panel.hidden, false);
+  assert.equal(panel.children[1].children.length, 1);
+  assert.equal(requests[0].get('watchId'), 'example-com');
+  assert.equal(requests[0].get('group'), groupKey);
+  const series = calls.find(({ url }) => url.pathname.endsWith('/series')).url.searchParams;
+  assert.equal(series.get('watchId'), 'example-com');
+  assert.equal(series.get('group'), groupKey);
+  assert.equal(series.get('days'), '90');
+  row.onclick();
+  assert.equal(row.attributes.get('aria-expanded'), 'false');
+  assert.equal(panel.hidden, true);
+  const [projectControls, projectPanel] = expand(1)[0].children;
+  await projectControls.children[0].onclick();
+  assert.equal(requests[1].get('watchId'), 'project');
+  assert.equal(requests[1].get('group'), projectGroup.key);
+  assert.equal(projectPanel.children[1].textContent, 'Chưa có mẫu phù hợp.');
+  await nodes.get('watches-competitor').children[0].children[0].onclick();
+  assert.equal(nodes.get('overview').hidden, true);
+  assert.equal(nodes.get('home').attributes.get('aria-pressed'), 'false');
+  await nodes.get('mode-grid').onclick();
+  assert.equal(nodes.get('ads').children.length, 1);
+  await nodes.get('home').onclick();
+  assert.equal(nodes.get('overview').hidden, false);
+  assert.equal(nodes.get('watch-view').hidden, true);
+  assert.equal(nodes.get('home').attributes.get('aria-pressed'), 'true');
+  await nodes.get('watches-competitor').children[0].children[1].onclick();
+  assert.deepEqual(calls.find(({ url }) => url.pathname === '/api/scan').body, { watchId: 'example-com' });
+});
+
+test('an ads response arriving after the group is closed cannot reopen it', async () => {
+  let finish;
+  const delayed = new Promise((resolve) => { finish = resolve; });
+  const { expand, nodes } = await loadGrid([creative], () => delayed);
+  const [controls, panel] = expand()[0].children;
+  const loading = controls.children[0].onclick();
+  nodes.get('totals').children[3].onclick();
+  finish([creative]);
+  await loading;
+  assert.equal(panel.hidden, true);
+  assert.equal(panel.children.length, 0);
 });

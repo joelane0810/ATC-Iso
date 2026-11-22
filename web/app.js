@@ -2,6 +2,9 @@ const byId = (id) => document.getElementById(id);
 const profile = byId('profile');
 const filter = byId('filter');
 const query = byId('query');
+const adPeriod = byId('ad-period');
+const adFrom = byId('ad-from');
+const adTo = byId('ad-to');
 const format = byId('format');
 const scan = byId('scan');
 const errorMessage = byId('error');
@@ -21,6 +24,7 @@ const overviewTotals = [
   ['newProjects', 'Dự án mới', 'new'], ['newAdvertisers', 'Nhà QC mới', 'new'],
   ['newAds', 'Ads mới', 'new'], ['increased', 'Tăng', 'increase'],
   ['decreased', 'Giảm', 'decrease'], ['stopped', 'Đã dừng', 'stopped'],
+  ['runningAds', 'Ads đang chạy', 'steady'],
 ];
 const watchColors = [
   '#00796b', '#3949ab', '#ad1457', '#8d6e00', '#6a1b9a',
@@ -128,10 +132,12 @@ async function loadProfileData() {
   if (!id) return;
   const currentWatch = watchId;
   const filters = new URLSearchParams({ filter: filter.value, q: query.value, format: format.value, watchId: currentWatch });
+  const grouped = mode === 'groups';
   const path = profilePath(id);
+  const groupFilters = new URLSearchParams({ filter: 'all', watchId: currentWatch });
   const [watchlist, results, overview] = await Promise.all([
     api(path + '/watchlist'),
-    currentWatch && mode === 'grid' ? api(path + '/ads?' + filters) : [],
+    currentWatch && (!grouped || adDateRange()) ? api(path + '/ads?' + (grouped ? groupFilters : filters)) : [],
     api(path + '/summary?' + new URLSearchParams({ window: period })),
   ]);
   if (version !== loadVersion) return;
@@ -159,7 +165,9 @@ function chooseWatch(id) {
   renderWatches();
   renderAds();
   byId('gallery-heading').focus({ preventScroll: true });
-  if (id) return run(() => loadWatchSeries(id));
+  if (id) return run(() => Promise.all([
+    loadWatchSeries(id), adDateRange() && loadProfileData(),
+  ]));
   return run(loadProfileData);
 }
 
@@ -183,7 +191,7 @@ function renderWatches() {
       choose.className = 'watch-choice';
       choose.setAttribute('aria-pressed', String(watchId === watch.id));
       const { runningNow = 0 } = watchCounts.get(watch.id) ?? {};
-      const counts = element('span', formatCount.format(runningNow) + ' mẫu đang chạy');
+      const counts = element('span', formatCount.format(runningNow) + ' ads đang chạy');
       counts.className = 'watch-counts';
       choose.append(watchName('strong', watch.label, watch.id), counts);
       choose.onclick = () => chooseWatch(watch.id);
@@ -295,14 +303,14 @@ function renderAds() {
       byId('mode-' + view).setAttribute('aria-pressed', String(mode === view));
     }
     if (mode === 'groups') renderWatchGroups();
-    const visible = ads;
+    const visible = mode === 'grid' ? filterAdDates(ads, adDateRange()) : [];
     const status = watchCounts.get(watchId);
     selectedAd = visible.find((ad) => ad.creativeId === selectedAd?.creativeId);
     const domain = watch.type === 'domain' ? watch.value : visible.find((ad) => ad.domain)?.domain;
     byId('gallery-heading').textContent = watch.label;
     byId('gallery-summary').textContent = [
       domain,
-      formatCount.format(status?.runningNow ?? 0) + ' mẫu đang chạy',
+      formatCount.format(status?.runningNow ?? 0) + ' ads đang chạy',
     ].filter(Boolean).join(' · ');
     byId('empty').hidden = visible.length > 0;
     byId('empty').textContent = 'Chưa có mẫu phù hợp.';
@@ -323,6 +331,9 @@ function renderOverview() {
     button.className = 'total tone-' + tone;
     button.append(element('span', label),
       element('strong', summary?.totals[key] != null ? formatCount.format(summary.totals[key]) : '—'));
+    if (key === 'runningAds') {
+      button.title = 'Số mẫu quảng cáo có hiển thị trong ngày dữ liệu mới nhất';
+    }
     button.setAttribute('aria-pressed', String(overviewFilter === key));
     button.onclick = () => {
       overviewFilter = overviewFilter === key ? '' : key;
@@ -346,6 +357,7 @@ function matchesTotal(watch, group) {
     case 'increased': return group.status === 'increase';
     case 'decreased': return group.status === 'decrease';
     case 'stopped': return group.status === 'stopped';
+    case 'runningAds': return group.runningNow > 0;
     default: return true;
   }
 }
@@ -432,7 +444,21 @@ function fillOverviewGroups(panel, watch, groups) {
 function renderWatchGroups() {
   const watch = watchCounts.get(watchId);
   const key = byId('group-sort').value || 'runningNow';
-  const groups = [...(watch?.groups ?? [])].sort((a, b) =>
+  const range = adDateRange();
+  let groups = [...(watch?.groups ?? [])];
+  if (watch && range) {
+    const byGroup = new Map();
+    for (const ad of filterAdDates(ads, range)) {
+      const key = watch.groupType === 'advertiser' ? ad.advertiserId || ''
+        : ad.domain?.trim().toLowerCase().replace(/^www\./, '').replace(/\.$/, '') || '';
+      if (!byGroup.has(key)) byGroup.set(key, []);
+      const samples = byGroup.get(key);
+      if (samples.length < 4) samples.push(ad);
+    }
+    groups = groups.filter(({ key }) => byGroup.has(key))
+      .map((group) => ({ ...group, sampleAds: byGroup.get(group.key) }));
+  }
+  groups.sort((a, b) =>
     (key === 'name' ? 0 : b[key] - a[key]) || a.name.localeCompare(b.name, 'vi'));
   byId('watch-groups').replaceChildren(...(groups.length
     ? groups.map((group) => groupRow(watch, group))
@@ -451,7 +477,7 @@ function groupRow(watch, group) {
   counts.className = 'group-counts';
   counts.append(element('span', formatCount.format(group.runningPrev) + ' → ' + formatCount.format(group.runningNow)),
     badge(signed(group.delta), group.delta > 0 ? 'increase' : group.delta < 0 ? group.status : 'steady'),
-    element('span', formatCount.format(group.newAds) + ' mẫu mới'));
+    element('span', formatCount.format(group.newAds) + ' ads mới'));
   const samples = element('span');
   samples.className = 'group-samples';
   samples.setAttribute('aria-hidden', 'true');
@@ -519,7 +545,7 @@ async function loadGroupAds(request, id, key, message) {
   try {
     const results = await api(path + '/ads?' + params);
     if (openGroup !== request) return;
-    const visible = results.filter((ad) => ad.platform === 'search');
+    const visible = filterAdDates(results.filter((ad) => ad.platform === 'search'), watchId ? adDateRange() : null);
     if (!visible.length) {
       message.textContent = 'Chưa có mẫu phù hợp.';
     } else {
@@ -576,10 +602,40 @@ function isNewAd(ad) {
 }
 
 function dateInVietnam(value) {
-  if (!value || !Number.isFinite(Date.parse(value))) return '';
-  const parts = dateFormat.formatToParts(new Date(value));
+  const date = new Date(value);
+  if (!value || !Number.isFinite(+date)) return '';
+  const parts = dateFormat.formatToParts(date);
   const part = (type) => parts.find((entry) => entry.type === type).value;
   return [part('year'), part('month'), part('day')].join('-');
+}
+
+function adDateRange() {
+  if (adPeriod.value === 'custom') {
+    const from = adFrom.value;
+    const to = adTo.value;
+    return (from || to) && !(from && to && from > to) ? { from, to } : null;
+  }
+  const days = { today: 1, '7d': 7, '30d': 30 }[adPeriod.value];
+  if (!days) return null;
+  const to = dateInVietnam(new Date());
+  const from = new Date(Date.parse(to) - (days - 1) * dayMs).toISOString().slice(0, 10);
+  return { from, to };
+}
+
+function filterAdDates(results, range) {
+  if (!range) return results;
+  return results.filter((ad) => {
+    const first = dateInVietnam(ad.firstShown);
+    const last = dateInVietnam(ad.lastShown);
+    return first && last && first <= last
+      && (!range.from || last >= range.from) && (!range.to || first <= range.to);
+  });
+}
+
+function renderDateControls() {
+  const custom = adPeriod.value === 'custom';
+  byId('ad-dates').hidden = !custom;
+  byId('ad-date-error').hidden = !custom || !adFrom.value || !adTo.value || adFrom.value <= adTo.value;
 }
 
 function isRunningAd(ad) {
@@ -673,7 +729,7 @@ function svgElement(tag, attributes = {}, label) {
 
 function sparkline(points) {
   const svg = svgElement('svg', { viewBox: '0 0 96 24', class: 'sparkline', role: 'img',
-    'aria-label': 'Số mẫu đang chạy trong 30 ngày' });
+    'aria-label': 'Số ads đang chạy trong 30 ngày' });
   const max = Math.max(1, ...points.map(({ running }) => running));
   svg.append(svgElement('polyline', {
     points: points.map(({ running }, index) =>
@@ -689,7 +745,7 @@ function renderChart(container, points) {
     return;
   }
   const chart = svgElement('svg', { viewBox: '0 0 600 166', class: 'series-chart',
-    role: 'group', 'aria-label': 'Số mẫu đang chạy và mẫu mới theo ngày trong 90 ngày' });
+    role: 'group', 'aria-label': 'Số ads đang chạy và ads mới theo ngày trong 90 ngày' });
   const readout = element('div');
   readout.className = 'chart-readout';
   const baseline = 140;
@@ -718,7 +774,7 @@ function renderChart(container, points) {
   chart.append(highlight);
   for (const [index, point] of points.entries()) {
     const label = displayDate(point.date, shortDate) + ' · ' + formatCount.format(point.running)
-      + ' đang chạy · ' + formatCount.format(point.newAds) + ' mẫu mới';
+      + ' đang chạy · ' + formatCount.format(point.newAds) + ' ads mới';
     const hit = svgElement('rect', { x: x(index) - step / 2, y: 16, width: step, height: 126,
       class: 'chart-hit', tabindex: 0, 'aria-label': label });
     hit.onmouseenter = hit.onfocus = () => {
@@ -730,7 +786,7 @@ function renderChart(container, points) {
   }
   const legend = element('div');
   legend.className = 'chart-legend';
-  legend.append(element('span', 'Đang chạy'), element('span', 'Mẫu mới'));
+  legend.append(element('span', 'Đang chạy'), element('span', 'Ads mới'));
   container.replaceChildren(legend, chart, readout);
 }
 
@@ -893,6 +949,20 @@ byId('period').onchange = (event) => {
   return run(loadProfileData);
 };
 filter.onchange = format.onchange = query.oninput = () => run(loadProfileData);
+adPeriod.onchange = adFrom.onchange = adTo.onchange = () => {
+  try {
+    localStorage.setItem('atc-iso-ad-period', JSON.stringify({
+      period: adPeriod.value, from: adFrom.value, to: adTo.value,
+    }));
+  } catch {}
+  renderDateControls();
+  if (mode === 'groups' && adDateRange()) {
+    closeGroup();
+    showDetail();
+    return run(loadProfileData);
+  }
+  renderAds();
+};
 byId('group-sort').onchange = () => {
   closeGroup();
   showDetail();
@@ -902,10 +972,11 @@ for (const view of ['groups', 'grid']) {
   byId('mode-' + view).onclick = () => {
     if (mode === view) return;
     mode = view;
+    ads = [];
     ++loadVersion;
     selectedAd = undefined;
     renderAds();
-    if (view === 'grid') return run(loadProfileData);
+    if (view === 'grid' || adDateRange()) return run(loadProfileData);
   };
 }
 
@@ -941,6 +1012,18 @@ watchForm.onsubmit = (event) => {
 };
 
 scan.onclick = () => startScan();
+
+adPeriod.value = 'all';
+adFrom.value = adTo.value = '';
+try {
+  const saved = JSON.parse(localStorage.getItem('atc-iso-ad-period'));
+  if (['all', 'today', '7d', '30d', 'custom'].includes(saved?.period)) {
+    adPeriod.value = saved.period;
+    adFrom.value = saved.from || '';
+    adTo.value = saved.to || '';
+  }
+} catch {}
+renderDateControls();
 
 let preferred;
 try { preferred = localStorage.getItem('atc-iso-profile'); } catch {}
