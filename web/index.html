@@ -2,7 +2,7 @@
 <html lang="vi">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>ATC Iso · Theo dõi quảng cáo</title>
   <link rel="stylesheet" href="/style.css">
   <script type="module" src="/app.js"></script>
@@ -92,11 +92,13 @@
         </div>
         <p class="search-only">Chỉ quảng cáo Google Tìm kiếm</p>
         <div class="range-toolbar">
-          <button id="range-open" class="chip range-chip" type="button" aria-haspopup="dialog"
-            aria-controls="range-dialog" disabled>
-            <span>Phạm vi ngày</span><strong id="range-value">Mọi lúc</strong><span aria-hidden="true">▾</span>
-          </button>
-          <div id="range-chips" role="group" aria-label="Chọn nhanh phạm vi ngày"></div>
+          <div class="range-options">
+            <button id="range-open" class="chip range-chip" type="button" aria-haspopup="dialog"
+              aria-controls="range-dialog" disabled>
+              <span>Phạm vi ngày</span><strong id="range-value">Mọi lúc</strong><span aria-hidden="true">▾</span>
+            </button>
+            <div id="range-chips" role="group" aria-label="Chọn nhanh phạm vi ngày"></div>
+          </div>
           <span id="comparison"></span>
         </div>
         <dialog id="range-dialog" aria-label="Phạm vi ngày">
@@ -131,6 +133,7 @@
         <div id="overview">
           <p id="comparison-note" hidden><span aria-hidden="true">ⓘ</span> Chọn khoảng ngày để so sánh</p>
           <div id="totals" class="totals" role="group" aria-label="Lọc theo thay đổi"></div>
+          <h3 class="overview-title">Mục theo dõi</h3>
           <div id="overview-watches"></div>
         </div>
         <div id="watch-view" hidden>

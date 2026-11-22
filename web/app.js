@@ -621,7 +621,9 @@ function watchName(tag, label, id) {
   dot.setAttribute('style', '--watch-color: ' + watchColors[(hash >>> 0) % watchColors.length]);
   const name = element(tag);
   name.className = 'watch-name';
-  name.append(dot, element('span', label));
+  const text = element('span', label);
+  text.className = /\s/.test(label) ? 'item-name' : 'item-name unspaced-name';
+  name.append(dot, text);
   return name;
 }
 
@@ -885,6 +887,7 @@ function renderWatchStats(watch) {
   ].map(([label, count]) => {
     const card = element('div');
     card.className = 'total tone-' + kind;
+    card.setAttribute('data-label', label);
     card.append(element('span', label), element('strong', formatCount.format(count)));
     return card;
   }));
@@ -941,6 +944,7 @@ function renderOverview() {
       const card = element('div');
       card.className = 'total tone-' + tone;
       if (tone === 'new') card.title = 'Ads đang chạy trong ngày dữ liệu mới nhất';
+      card.setAttribute('data-label', label);
       card.append(element('span', label), element('strong', formatCount.format(count)));
       return card;
     }));
@@ -951,6 +955,7 @@ function renderOverview() {
     const button = element('button');
     button.type = 'button';
     button.className = 'total tone-' + tone;
+    button.setAttribute('data-label', label);
     button.append(element('span', label),
       element('strong', summary?.totals[key] != null ? formatCount.format(summary.totals[key]) : '—'));
     if (key === 'runningAds') {
@@ -1057,7 +1062,9 @@ function renderOverviewWatches() {
 
 function overviewWatchRows(watch, groups, columns, allTime) {
   const row = element('tr');
+  row.className = 'overview-card';
   const expansion = element('tr');
+  expansion.className = 'overview-expansion';
   const panel = element('td');
   panel.setAttribute('colspan', columns);
   expansion.append(panel);
@@ -1087,6 +1094,7 @@ function overviewWatchRows(watch, groups, columns, allTime) {
   const type = element('span', kindLabels[kind]);
   type.className = 'kind-chip kind-' + kind;
   const running = element('strong', formatCount.format(watch.runningNow));
+  running.setAttribute('data-label', 'đang chạy');
   const counts = element('span');
   counts.className = 'overview-counts';
   counts.append(running);
@@ -1094,18 +1102,27 @@ function overviewWatchRows(watch, groups, columns, allTime) {
     const arrow = watch.delta > 0 ? '▲ ' : watch.delta < 0 ? '▼ ' : '';
     const delta = element('span', arrow + signed(watch.delta));
     delta.className = watch.delta > 0 ? 'delta-up' : watch.delta < 0 ? 'delta-down' : 'delta-steady';
+    delta.setAttribute('data-label', watch.delta === 0 ? ' (±' : ' (');
     counts.append(delta);
   }
   const scan = scanButton('⟳ Quét', watch.watchId, 'Quét ' + watch.label);
   scan.className = 'overview-scan';
+  scan.setAttribute('data-label', '⟳');
   const values = [
     toggle, type,
     ...(allTime ? [formatCount.format(totalWatchAds(watch)), counts]
       : [counts, formatCount.format(watch.newAds), sparkline(watch.spark)]),
     scan,
   ];
-  for (const value of values) {
+  const fields = allTime
+    ? ['name', 'kind', 'total', 'running', 'scan']
+    : ['name', 'kind', 'running', 'new', 'trend', 'scan'];
+  const mobileLabels = { total: 'ads trong dữ liệu', new: 'mới' };
+  for (const [index, value] of values.entries()) {
     const cell = element('td');
+    const field = fields[index];
+    cell.className = 'overview-' + field + '-cell';
+    if (mobileLabels[field]) cell.setAttribute('data-label', mobileLabels[field]);
     if (typeof value === 'string') cell.textContent = value;
     else cell.append(value);
     row.append(cell);
@@ -1163,7 +1180,9 @@ function groupRow(watch, group) {
   const heading = element('span');
   heading.className = 'group-heading';
   if (!isAllTime()) heading.append(badge(group.status === 'new' ? (group.groupType === 'advertiser' ? 'Nhà quảng cáo mới' : 'Dự án mới') : groupLabels[group.status], group.status));
-  heading.append(element('strong', group.name));
+  const name = element('strong', group.name);
+  name.className = /\s/.test(group.name) ? 'item-name' : 'item-name unspaced-name';
+  heading.append(name);
   const counts = element('span');
   counts.className = 'group-counts';
   if (isAllTime()) {
