@@ -282,6 +282,19 @@ test('cards and detail prefer images before live preview, with only images or fo
   live.ready(frame.contentWindow, 120, 160);
   assert.equal(frame.style.transform, 'scale(1)');
   assert.equal(box.style.height, '160px');
+
+  const timedOut = local.replacement;
+  timedOut.isConnected = true;
+  live.visibility([timedOut], true);
+  const pending = [...live.timers.values()].filter(({ delay }) => delay === 12_000);
+  assert.equal(pending.length, 1);
+  pending[0].callback();
+  const retry = timedOut.replacement;
+  assert.equal(retry.tag, 'img');
+  assert.equal(retry.src, imageUrl);
+  retry.onerror();
+  assert.equal(retry.replacement.children[1].textContent, 'Chưa có ảnh xem trước');
+  assert.ok([...live.timers.values()].every(({ delay }) => delay !== 12_000));
 });
 
 test('live previews preserve URL parameters and load at most four visible frames, with a 12-second fallback', async () => {
@@ -300,6 +313,7 @@ test('live previews preserve URL parameters and load at most four visible frames
   assert.equal(frames().filter(Boolean).length, 4);
   const [first, second] = frames();
   assert.equal(first.attributes.get('sandbox'), 'allow-scripts allow-popups allow-popups-to-escape-sandbox');
+  assert.match(first.srcdoc, /<head>[^]*?<base href="https:\/\/displayads-formats\.googleusercontent\.com\/">[^]*?<\/head>/);
   const src = first.srcdoc.match(/<script src="([^"]+)"/)[1].replaceAll('&amp;', '&');
   const url = new URL(src);
   assert.ok(src.startsWith(liveUrl + '&'));
@@ -353,8 +367,8 @@ test('live previews preserve URL parameters and load at most four visible frames
 });
 
 test('cards show advertiser, website, Vietnamese dates and applicable badges', async () => {
-  const { open } = await loadGrid([
-    { ...creative, isNew: true, isRunning: false },
+  const { open, detail } = await loadGrid([
+    { ...creative, domainSource: 'ocr', isNew: true, isRunning: false },
     { ...creative, creativeId: 'CR2', domain: null, format: 'video', firstShown: '2026-11-20', lastShown: scanAt },
   ]);
   const cards = await open();
@@ -366,6 +380,16 @@ test('cards show advertiser, website, Vietnamese dates and applicable badges', a
   assert.deepEqual(badges.children.map((node) => node.className), ['badge tone-new', 'badge tone-stopped']);
   assert.deepEqual(flags.children.map((node) => node.textContent), ['🇺🇸', '🇻🇳']);
   assert.equal(cards[1].children[1].children[3].children.length, 0);
+  assert.equal(domain.children.length, 0);
+  cards[0].onclick();
+  const [note] = detail.children[1].children[3].children;
+  assert.equal(note.tag, 'small');
+  assert.equal(note.textContent.trim(), '(đọc từ ảnh)');
+  cards[1].onclick();
+  for (const label of [cards[1].children[1].children[1], detail.children[1].children[3]]) {
+    assert.equal(label.textContent, 'Chưa rõ tên miền');
+    assert.equal(label.className, 'domain-unknown');
+  }
 });
 
 test('search suggests both types and sidebar buttons filter suggestions only', async () => {
