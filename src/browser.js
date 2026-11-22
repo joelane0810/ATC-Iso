@@ -346,7 +346,18 @@ export async function openChromeClient({
     try {
       const [response] = await Promise.all([detail, navigation]);
       if (blocked || isSorry()) throw new BlockedError(blockedMessage);
-      if (!response.ok()) return null;
+      if (!response.ok()) {
+        if (debugDir && !debugSaved) {
+          debugSaved = true;
+          try {
+            mkdirSync(debugDir, { recursive: true });
+            const body = await response.text().catch(() => '');
+            writeFileSync(joinPath(debugDir, 'quoc-gia-loi.txt'), [`status ${response.status()}`, body.slice(0, 500), detailPage.url(), ...seenUrls.slice(-60)].join('\n'));
+            await detailPage.screenshot({ path: joinPath(debugDir, 'quoc-gia-loi.png'), fullPage: true });
+          } catch {}
+        }
+        return null;
+      }
       const text = await response.text();
       assertUnblocked({ text });
       return parseCreativeRegions(parseJson(text));
