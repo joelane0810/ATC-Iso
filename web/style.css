@@ -942,3 +942,6 @@ main {
   .overview-competitors .overview-total-rows { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .overview-total .overview-total-number { font-size: 28px; }
 }
+.overview-total { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 6px; align-items: baseline; align-content: start; }
+.overview-total .overview-total-label, .overview-total .overview-total-note { grid-column: 1 / -1; }
+.overview-total .overview-total-label { margin-bottom: 2px; }
