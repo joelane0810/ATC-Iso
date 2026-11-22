@@ -5,6 +5,7 @@ import { dirname } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium, errors } from 'playwright-core';
+import { isAtcUrl } from './tab-guard.js';
 import { BlockedError, isBlockedResponse, parseCreativeRegions, RPC_BASE } from './atc.js';
 
 const landingUrl = 'https://adstransparency.google.com/?region=anywhere';
@@ -84,12 +85,13 @@ async function captureDirectImage(context, imageUrl, destNoExt) {
 }
 
 export async function openChromeClient({
-  profileDir, minDelayMs = 8000, jitterMs = 4000, headless = false, debugDir = null,
+  profileDir, minDelayMs = 8000, jitterMs = 4000, headless = false, debugDir = null, maxTabs = 2,
   launch = (dir, options) => chromium.launchPersistentContext(dir, options), log = console.error,
 }) {
   const context = await launch(profileDir, { channel: 'chrome', headless });
   let page;
   let detailPage;
+  let openingTab = true;
   let blocked = false;
   let nextAt = 0;
   const markRequest = () => { nextAt = performance.now() + minDelayMs + Math.random() * jitterMs; };
@@ -97,7 +99,15 @@ export async function openChromeClient({
     || isBlockedResponse({ url: detailPage?.url() });
 
   try {
-    page = context.pages()[0] ?? await context.newPage();
+    // Hồ sơ trình duyệt có thể tự mở lại tab cũ: chỉ giữ một tab, đóng hết phần còn lại.
+    const existing = context.pages?.() ?? [];
+    page = existing[0] ?? await context.newPage();
+    for (const extra of existing.slice(1)) await extra.close().catch(() => {});
+    openingTab = false;
+    // Tab bật ra ngoài ý muốn (cửa sổ mới) cũng đóng ngay để không vượt số tab ATC cho phép.
+    context.on?.('page', opened => {
+      if (!openingTab && opened !== page && opened !== detailPage) opened.close().catch(() => {});
+    });
     page.on('response', response => {
       const request = response.request();
       if (!request.isNavigationRequest() || request.resourceType() !== 'document') return;
@@ -180,8 +190,10 @@ export async function openChromeClient({
   let debugSaved = false;
   const seenUrls = [];
   async function lookupRegions({ advertiserId, creativeId }) {
+    if (!detailPage && maxTabs < 2) detailPage = page;
     if (!detailPage) {
-      detailPage = await context.newPage();
+      openingTab = true;
+      try { detailPage = await context.newPage(); } finally { openingTab = false; }
       detailPage.on?.('response', r => { try { seenUrls.push(r.status() + ' ' + r.url().slice(0, 160)); } catch {} });
     }
     const url = new URL(
@@ -278,6 +290,10 @@ export async function openChromeClient({
         log(`Không tải được ảnh xem trước ${ad.creativeId ?? ''}: ${error.message}`);
         return null;
       }
+    },
+
+    atcTabCount() {
+      return (context.pages?.() ?? []).filter(open => isAtcUrl(open.url())).length;
     },
 
     close: () => context.close(),

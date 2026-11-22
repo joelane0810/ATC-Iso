@@ -9,6 +9,7 @@ import { openChromeClient } from '../src/browser.js';
 import { ScanBusyError, withLock } from '../src/lock.js';
 import { REST_MS, scanResumeAt } from '../src/scan-rest.js';
 import { runScan } from '../src/scanner.js';
+import { acquireTabBudget, TabLimitError } from '../src/tab-guard.js';
 import { createStore } from '../src/store.js';
 import { syncToGitHub } from '../src/sync.js';
 
@@ -27,6 +28,7 @@ const projectRoot = fileURLToPath(new URL('../', import.meta.url));
 export async function scanOnce({
   root = projectRoot, store = createStore(root), open = openChromeClient,
   sync = syncData, log = console.error, onAcquired = () => {}, watchId = null,
+  tabBudget = () => acquireTabBudget({ log }),
 } = {}) {
   return withLock(join(root, 'data', '.scan.lock'), async () => {
     await store.purgeExpiredTrash?.();
@@ -63,13 +65,16 @@ export async function scanOnce({
     try {
       let showWindow = false;
       try { showWindow = JSON.parse(readFileSync(join(root, 'config.json'), 'utf8'))?.showBrowser === true; } catch {}
-      client = await open({ profileDir: join(root, 'chrome-profile'), headless: !showWindow, debugDir: join(root, 'logs') });
+      // Trước khi quét: đếm tab ATC đang mở trên máy; cả máy tối đa 2 tab ATC cùng lúc.
+      const maxTabs = await tabBudget();
+      client = await open({ profileDir: join(root, 'chrome-profile'), headless: !showWindow, debugDir: join(root, 'logs'), maxTabs });
     } catch (error) {
       log(error);
       entry = {
         at: scannedAt.toISOString(), watched: 0, newAds: 0, scanId,
         status: error instanceof BlockedError ? 'blocked' : 'error',
-        error: error instanceof BlockedError ? 'Google đã chặn lượt quét' : 'Không mở được trình duyệt.',
+        error: error instanceof BlockedError ? 'Google đã chặn lượt quét'
+          : error instanceof TabLimitError ? error.message : 'Không mở được trình duyệt.',
       };
       scanId = await store.appendScanLog(withRest(entry));
     }

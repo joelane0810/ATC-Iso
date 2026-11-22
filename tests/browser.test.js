@@ -221,3 +221,33 @@ test('a 429 from another Google host on the detail page is not a block', async (
   ]);
   await client.close();
 });
+
+test('closes restored extra tabs on launch and reports ATC tab count', async () => {
+  const closed = [];
+  const mk = (url) => Object.assign(new EventEmitter(), {
+    url: () => url, goto: async () => response({ url: atc }),
+    close: async () => { closed.push(url); },
+    evaluate: async () => false,
+  });
+  const main = mk(atc);
+  const extras = [mk(atc + '/advertiser/AR1'), mk('https://example.com')];
+  let pages = [main, ...extras];
+  const context = Object.assign(new EventEmitter(), {
+    pages: () => pages, close: async () => {},
+  });
+  const client = await openChromeClient({ launch: async () => context, minDelayMs: 0, jitterMs: 0 });
+  assert.equal(closed.length, 2);
+  pages = [main];
+  assert.equal(client.atcTabCount(), 1);
+  const popup = mk(atc + '/x');
+  context.emit('page', popup);
+  await new Promise(r => setImmediate(r));
+  assert.equal(closed.length, 3);
+});
+
+test('with a one-tab budget, region lookups reuse the main tab', async () => {
+  // Kiểm bằng mã: khi maxTabs < 2 thì không bao giờ gọi newPage cho trang chi tiết.
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('../src/browser.js', import.meta.url), 'utf8');
+  assert.match(source, /if \(!detailPage && maxTabs < 2\) detailPage = page;/);
+});

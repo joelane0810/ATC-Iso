@@ -98,3 +98,8 @@ Thư viện cụ thể, cấu trúc mã, kiểu dáng giao diện (theo bố c�
 - NHÓM: trong Đối thủ và trong Dự án đều tạo được nhóm để gom mục liên quan; mỗi mục thuộc tối đa một nhóm.
 - Khung "Chi tiết quảng cáo" (đổi tên từ "Chi tiết mẫu") có nút thêm dự án (tên miền của quảng cáo) / thêm đối thủ (nhà QC); có nhóm thì chọn nhóm.
 - Biểu đồ vẽ theo đúng điểm ảnh của khung (chữ cố định 12px), không phóng theo bề ngang.
+
+## Bổ sung 22/11 22:49 — Giới hạn tab ATC
+- Cả máy tối đa 2 tab ATC cùng lúc (mở nhiều tab là nguyên nhân lớn bị Google khoá).
+- Trước mỗi lượt quét: đếm tab ATC đang mở ở Chrome/Brave/Edge/Arc của người dùng (macOS). Còn 2 chỗ → quét dùng 2 tab; còn 1 → dùng 1 tab (tra quốc gia trên chính tab chính); hết chỗ → chờ tối đa 10 phút (kiểm lại mỗi 30 giây), quá thì hoãn lượt, ghi lý do.
+- Trình duyệt quét tự đóng tab cũ được khôi phục và mọi tab bật ra ngoài ý muốn. Không đóng tab ở trình duyệt riêng của người dùng.
