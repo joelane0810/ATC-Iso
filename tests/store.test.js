@@ -101,3 +101,55 @@ test('scan log retains the latest 30 entries', (t) => {
   assert.equal(log.some(({ watched }) => watched === 0), false);
   assert.ok(log.some(({ watched }) => watched === 30));
 });
+
+test('listAdsForProfile groups creative matches before filtering and keeps the earliest copy', (t) => {
+  const { store } = setup(t);
+  const { id } = store.addProfile('Dai');
+  const laterWatch = store.addWatch(id, 'later.com');
+  const earlierWatch = store.addWatch(id, 'earlier.com');
+  store.mergeAds(laterWatch, [{ creativeId: 'CR1', format: 'image' }], second);
+  store.mergeAds(earlierWatch, [{ creativeId: 'CR1', format: 'text' }], first);
+
+  const results = store.listAdsForProfile(id, { q: 'later.com' }, second);
+  assert.equal(results.length, 1);
+  const [ad] = results;
+  assert.equal(ad.firstSeenByUs, first.toISOString());
+  assert.equal(ad.format, 'text');
+  assert.equal(ad.watchId, earlierWatch.id);
+  assert.deepEqual(ad.watchIds, [laterWatch.id, earlierWatch.id]);
+  assert.deepEqual(ad.watchLabels, ['later.com', 'earlier.com']);
+  assert.deepEqual(store.listAdsForProfile(id, { filter: 'new' }, second), []);
+});
+
+test('mergeAds saves the remote image URL and keeps it if a later scan omits it', (t) => {
+  const { store } = setup(t);
+  const { id } = store.addProfile('Dai');
+  const watch = store.addWatch(id, 'nike.com');
+  const imageUrl = 'https://example.com/creative.png';
+  store.mergeAds(watch, [{ creativeId: 'CR1', imageUrl }], first);
+  assert.equal(store.getAds(watch.id).ads.CR1.imageUrl, imageUrl);
+  store.mergeAds(watch, [{ creativeId: 'CR1' }], second);
+  assert.equal(store.getAds(watch.id).ads.CR1.imageUrl, imageUrl);
+});
+
+test('mergeAds names a shared advertiser watch from the first creative and preserves its value', (t) => {
+  const { store } = setup(t);
+  const dai = store.addProfile('Dai');
+  const lan = store.addProfile('Lan');
+  const watch = store.addWatch(dai.id, 'AR123');
+  store.addWatch(lan.id, 'AR123');
+  const regional = store.addWatch(lan.id, 'AR123', 2840);
+  const { file } = store.mergeAds(watch, [
+    { creativeId: 'CR1', advertiserName: 'Nike' },
+    { creativeId: 'CR2', advertiserName: 'Another advertiser' },
+  ], first);
+
+  assert.equal(file.watch.label, 'Nike');
+  assert.deepEqual(store.getWatchlist(dai.id), [{ ...watch, label: 'Nike' }]);
+  assert.deepEqual(store.getWatchlist(lan.id).map(({ value, label }) => [value, label]), [
+    ['AR123', 'Nike'], ['AR123', regional.label],
+  ]);
+  store.mergeAds(store.getWatchlist(dai.id)[0], [{ creativeId: 'CR3', advertiserName: 'New name' }], second);
+  assert.equal(store.getAds(watch.id).watch.label, 'Nike');
+  assert.equal(store.getWatchlist(dai.id)[0].label, 'Nike');
+});

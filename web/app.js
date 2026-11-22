@@ -7,7 +7,9 @@ const scan = byId('scan');
 const errorMessage = byId('error');
 const adsGrid = byId('ads');
 const detail = byId('detail');
-const dateFormat = new Intl.DateTimeFormat('vi-VN', { dateStyle: 'medium' });
+const dateFormat = new Intl.DateTimeFormat('vi-VN', {
+  day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'Asia/Ho_Chi_Minh',
+});
 const timeFormat = new Intl.DateTimeFormat('vi-VN', { dateStyle: 'medium', timeStyle: 'short' });
 const formats = { image: 'Hình ảnh', text: 'Chữ', video: 'Video' };
 let watchId = '';
@@ -88,7 +90,9 @@ async function loadProfileData() {
   if (version !== loadVersion) return;
   if (!watches.some((watch) => watch.id === watchId)) watchId = '';
   const counts = new Map();
-  for (const ad of newest) counts.set(ad.watchId, (counts.get(ad.watchId) || 0) + 1);
+  for (const ad of newest) {
+    for (const id of ad.watchIds) counts.set(id, (counts.get(id) || 0) + 1);
+  }
   ads = results;
   const renderWatches = () => {
     const buttons = watches.map((watch) => {
@@ -116,7 +120,9 @@ async function loadProfileData() {
 }
 
 function preview(ad) {
-  if (!ad.image || !/^images\/[\w.-]+\.(png|jpe?g)$/i.test(ad.image)) {
+  const source = /^images\/[\w.-]+\.(png|jpe?g)$/i.test(ad.image || '') ? '/' + ad.image
+    : /^https?:\/\//i.test(ad.imageUrl || '') ? ad.imageUrl : null;
+  if (!source) {
     const placeholder = element('div', 'Chưa có ảnh');
     placeholder.className = 'preview';
     return placeholder;
@@ -125,28 +131,33 @@ function preview(ad) {
   image.className = 'preview';
   image.alt = 'Ảnh mẫu quảng cáo';
   image.loading = 'lazy';
-  image.src = '/' + ad.image;
+  image.src = source;
   return image;
 }
 
 function renderAds() {
-  const visible = ads.filter((ad) => !watchId || ad.watchId === watchId);
+  const visible = ads.filter((ad) => !watchId || ad.watchIds.includes(watchId));
   const empty = byId('empty');
   empty.hidden = visible.length > 0;
   empty.textContent = profile.value ? 'Chưa có mẫu phù hợp.' : 'Thêm hồ sơ để bắt đầu theo dõi.';
-  selectedAd = visible.find((ad) =>
-    ad.creativeId === selectedAd?.creativeId && ad.watchId === selectedAd?.watchId);
+  selectedAd = visible.find((ad) => ad.creativeId === selectedAd?.creativeId);
   adsGrid.replaceChildren(...visible.map((ad) => {
     const button = element('button');
     button.className = 'ad';
-    button.append(preview(ad), element('span', ad.domain || ad.advertiserName || ad.watchLabel),
-      element('span', formats[ad.format] || 'Mẫu quảng cáo'));
+    button.type = 'button';
+    button.append(preview(ad), element('span', ad.domain || ad.advertiserName || 'Chưa rõ'),
+      element('span', formats[ad.format] || 'Mẫu quảng cáo'),
+      element('span', 'Bắt đầu ' + displayDate(ad.firstShown)),
+      element('span', 'Gần nhất ' + displayDate(ad.lastShown)));
+    if (ad.isNew) button.append(element('span', 'Mới'));
+    if (!ad.isRunning) button.append(element('span', 'Đã dừng'));
     button.setAttribute('aria-pressed', String(ad === selectedAd));
     button.onclick = () => {
       adsGrid.querySelector('[aria-pressed="true"]')?.setAttribute('aria-pressed', 'false');
       button.setAttribute('aria-pressed', 'true');
       selectedAd = ad;
       showDetail(ad);
+      detail.parentElement.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     };
     return button;
   }));
@@ -169,7 +180,7 @@ function showDetail(ad) {
     : NaN;
   const fields = element('dl');
   for (const [label, value] of [
-    ['Website', ad.domain || 'Chưa rõ'],
+    ['Website', ad.domain || ad.advertiserName || 'Chưa rõ'],
     ['Nhà quảng cáo', ad.advertiserName || 'Chưa rõ'],
     ['Ngày bắt đầu', displayDate(ad.firstShown)],
     ['Ngày chạy gần nhất', displayDate(ad.lastShown)],

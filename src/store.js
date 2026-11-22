@@ -88,20 +88,37 @@ export function createStore(root) {
     getAds,
     mergeAds(watch, rawAds, now) {
       const lastScanAt = new Date(now).toISOString();
-      const ads = Object.assign(Object.create(null), getAds(watch.id)?.ads);
+      const previousFile = getAds(watch.id);
+      const ads = Object.assign(Object.create(null), previousFile?.ads);
       const newIds = [];
-      for (const { imageUrl, ...raw } of rawAds) {
+      for (const raw of rawAds) {
         const previous = ads[raw.creativeId];
         if (!previous) newIds.push(raw.creativeId);
         ads[raw.creativeId] = {
           ...raw,
           lastShown: raw.lastShown ?? previous?.lastShown ?? null,
+          imageUrl: raw.imageUrl ?? previous?.imageUrl ?? null,
           image: previous?.image ?? null,
           firstSeenByUs: previous?.firstSeenByUs ?? lastScanAt,
         };
       }
-      const file = { watch, lastScanAt, ads: { ...ads } };
+      const savedLabel = previousFile?.watch.label;
+      const advertiserName = savedLabel && savedLabel !== watch.value
+        ? savedLabel : rawAds[0]?.advertiserName?.trim();
+      const label = watch.type === 'advertiser' && watch.label === watch.value && advertiserName
+        ? advertiserName : watch.label;
+      const file = { watch: { ...watch, label }, lastScanAt, ads: { ...ads } };
       writeJson(adsPath(watch.id), file);
+      if (watch.type === 'advertiser' && label !== watch.value) {
+        for (const { id } of listProfiles()) {
+          const watches = getWatchlist(id);
+          const match = watches.find((entry) => entry.id === watch.id && entry.type === watch.type
+            && entry.value === watch.value && entry.label === entry.value);
+          if (!match) continue;
+          match.label = label;
+          writeJson(watchlistPath(id), watches);
+        }
+      }
       return { file, newIds };
     },
     setAdImage(wid, cr, relPath) {
@@ -117,25 +134,39 @@ export function createStore(root) {
     listAdsForProfile(pid, { filter = 'all', q = '', format = '' } = {}, now = new Date()) {
       const currentTime = new Date(now).getTime();
       const query = q.trim().toLowerCase();
-      const result = [];
+      const creatives = new Map();
       for (const watch of getWatchlist(pid)) {
         const file = getAds(watch.id);
         if (!file) continue;
         const runningSince = Date.parse(file.lastScanAt) - 2 * DAY;
         for (const ad of Object.values(file.ads)) {
+          const existing = creatives.get(ad.creativeId);
+          const watchIds = existing?.watchIds ?? [];
+          const watchLabels = existing?.watchLabels ?? [];
+          watchIds.push(watch.id);
+          if (!watchLabels.includes(watch.label)) watchLabels.push(watch.label);
           const seen = Date.parse(ad.firstSeenByUs);
-          const running = Date.parse(ad.lastShown) >= runningSince;
-          if (filter === 'new' && (seen < currentTime - DAY || seen > currentTime)) continue;
-          if (filter === 'running' && !running) continue;
-          if (filter === 'stopped' && running) continue;
-          if (format && ad.format !== format) continue;
-          if (query && ![ad.domain, ad.advertiserName, watch.label].some(
-            (value) => value?.toLowerCase().includes(query),
-          )) continue;
-          result.push({ ...ad, watchId: watch.id, watchLabel: watch.label });
+          if (existing && seen >= Date.parse(existing.firstSeenByUs)) continue;
+          creatives.set(ad.creativeId, {
+            ...ad,
+            watchId: watch.id,
+            watchLabel: watch.label,
+            watchIds,
+            watchLabels,
+            isNew: seen >= currentTime - DAY && seen <= currentTime,
+            isRunning: Date.parse(ad.lastShown) >= runningSince,
+          });
         }
       }
-      return result.sort((a, b) => Date.parse(b.firstSeenByUs) - Date.parse(a.firstSeenByUs));
+      return [...creatives.values()].filter((ad) => {
+        if (filter === 'new' && !ad.isNew) return false;
+        if (filter === 'running' && !ad.isRunning) return false;
+        if (filter === 'stopped' && ad.isRunning) return false;
+        if (format && ad.format !== format) return false;
+        return !query || [ad.domain, ad.advertiserName, ...ad.watchLabels].some(
+          (value) => value?.toLowerCase().includes(query),
+        );
+      }).sort((a, b) => Date.parse(b.firstSeenByUs) - Date.parse(a.firstSeenByUs));
     },
     imagesDir() {
       const directory = resolve(data, 'images');
