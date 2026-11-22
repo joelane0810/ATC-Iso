@@ -1626,9 +1626,9 @@ function sparkline(points) {
   return svg;
 }
 
-function axisScale(points, key) {
+function axisScale(points, key, divisions = 4) {
   const max = Math.max(1, ...points.map((point) => point[key]));
-  const rawStep = Math.max(1, max / 4);
+  const rawStep = Math.max(1, max / divisions);
   const magnitude = 10 ** Math.floor(Math.log10(rawStep));
   const step = [1, 2, 5, 10].map((value) => value * magnitude).find((value) => value >= rawStep);
   const ticks = Array.from({ length: Math.ceil(max / step) + 1 }, (_, index) => index * step);
@@ -1729,7 +1729,7 @@ function drawChart(plot, points, bucket, range, labels, width) {
   const svg = svgElement('svg', { width, height: runningHeight + newHeight, class: 'series-chart',
     role: 'group', 'aria-label': labels.join(' và ') });
   const drawAxis = (key, label, top, bottom) => {
-    const scale = axisScale(points, key);
+    const scale = axisScale(points, key, bottom - top < 80 ? 2 : 4);
     const y = (value) => bottom - value / scale.max * (bottom - top);
     svg.append(svgElement('text', { x: left, y: top - 12, class: 'chart-label' }, label));
     for (const tick of scale.ticks) {
