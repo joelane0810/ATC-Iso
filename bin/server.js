@@ -5,6 +5,7 @@ import { isScanLocked, ScanBusyError } from '../src/lock.js';
 import { startServer } from '../src/server.js';
 import { backfillDomains } from '../src/domain-backfill.js';
 import { createStore } from '../src/store.js';
+import { createAccess, readAccessConfig } from '../src/access/index.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const scanScript = fileURLToPath(new URL('./scan.js', import.meta.url));
@@ -31,20 +32,19 @@ function triggerScan(acquired, watchId) {
   });
 }
 
-import { networkInterfaces } from 'node:os';
 const host = process.env.ATC_HOST || '0.0.0.0';
 const store = createStore(root);
+const access = createAccess(readAccessConfig(root));
 const server = await startServer({
   host,
   store,
   triggerScan,
   waitForAcquisition: true,
   isScanning: () => isScanLocked(join(root, 'data', '.scan.lock')),
-  lanUrls: () => host === '0.0.0.0' ? Object.values(networkInterfaces()).flat()
-    .filter((a) => a && a.family === 'IPv4' && !a.internal).map((a) => `http://${a.address}:${server.address().port}`) : [],
+  access,
+  lanUrls: () => host === '0.0.0.0' ? access.urls(server.address().port) : [],
 });
-const lan = Object.values(networkInterfaces()).flat().filter((a) => a && a.family === 'IPv4' && !a.internal).map((a) => a.address);
-console.log(`Mở http://127.0.0.1:${server.address().port}` + (host === '0.0.0.0' ? ` · máy cùng wifi: ${lan.map((ip) => `http://${ip}:${server.address().port}`).join(' ')}` : ''));
+console.log(`Mở http://127.0.0.1:${server.address().port} · máy khác qua ${access.name}: ${access.urls(server.address().port).join(' ')}`);
 // Đọc bù tên miền: lúc bật máy chủ, sau mỗi lượt quét và cứ 30 phút một lần.
 const runBackfill = () => void backfillDomains({ store }).catch(error => console.error(`Đọc bù tên miền: ${error.message}`));
 setImmediate(runBackfill);

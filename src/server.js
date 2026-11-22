@@ -63,7 +63,7 @@ async function serveFile(res, dir, name, headers = {}) {
 }
 
 export async function startServer({
-  store, port = 4317, host = '127.0.0.1', triggerScan, isScanning, waitForAcquisition = false, lanUrls = () => [],
+  store, port = 4317, host = '127.0.0.1', triggerScan, isScanning, waitForAcquisition = false, lanUrls = () => [], access = null,
 }) {
   const webStore = store.forWeb?.();
   store = webStore ?? store;
@@ -73,6 +73,10 @@ export async function startServer({
 
   const server = createServer(async (req, res) => {
     const method = req.method;
+    if (access && !access.allows(req.socket.remoteAddress)) {
+      res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end(`ATC Iso chỉ mở cho máy trong mạng ${access.name}.`);
+    }
     try {
       const [path] = req.url.split('?');
       const params = new URL(req.url, 'http://localhost').searchParams;

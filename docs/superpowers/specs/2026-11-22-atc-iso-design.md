@@ -108,3 +108,8 @@ Thư viện cụ thể, cấu trúc mã, kiểu dáng giao diện (theo bố c�
 - Mẫu chữ/video không có ảnh: tải tệp xem trước của Google (content.js) và đọc tên miền hiển thị (visible_url → destination_url → máy chủ được liên kết nhiều nhất, ≥2 lần, bỏ máy chủ hạ tầng/Google). Nguồn ghi 'preview'.
 - Đọc bù chạy lúc bật máy chủ, sau mỗi lượt quét, và mỗi 30 phút; tối đa 2000 ảnh + 1000 bản xem trước mỗi lượt, thử lại sau 7 ngày nếu chưa ra.
 - Còn sót: mẫu Google đã gỡ ảnh/bản xem trước (trả lỗi 404/500) — không còn dữ liệu để đọc.
+
+## Bổ sung 22/11 23:45 — Truy cập qua Tailscale, dạng cắm rút
+- Mặc định chỉ máy trong mạng Tailscale (100.64.0.0/10, fd7a:115c:a1e0::/48) và chính máy Mac được vào; máy cùng wifi bị từ chối (403).
+- Địa chỉ: http://norman:4317 (tên máy Mac trong Tailscale là norman).
+- Cách truy cập nằm trong src/access/ (tailscale · lan · cidr). Đổi bằng config.json "access" — vd. ZeroTier: {"provider":"cidr","name":"ZeroTier","cidrs":["10.147.17.0/24"]}; quay lại wifi: {"provider":"lan"}. Không sửa mã.

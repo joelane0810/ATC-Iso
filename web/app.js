@@ -2039,7 +2039,7 @@ function renderLanUrls(urls = []) {
   if (!box) return;
   const local = /^(127\.|localhost$|\[::1\]$)/.test(globalThis.location?.hostname ?? '');
   box.hidden = !local || !urls.length;
-  box.textContent = urls.length ? 'Máy khác cùng wifi mở: ' + urls.join('  ·  ') : '';
+  box.textContent = urls.length ? 'Máy khác mở: ' + urls.join('  ·  ') : '';
 }
 
 async function refreshStatus(reload = false) {
