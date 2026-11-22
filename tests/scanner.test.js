@@ -12,8 +12,6 @@ const atcStub = `
   export class BlockedError extends Error {}
   export const buildSearchCreativesReq = ({ watch, pageToken }) => ({ watch, pageToken });
   export const parseCreatives = response => response;
-  export const buildCreativeDetailReq = creative => creative;
-  export const parseCreativeRegions = response => response;
 `;
 const stubUrl = 'data:text/javascript,' + encodeURIComponent(atcStub);
 register('data:text/javascript,' + encodeURIComponent(`
@@ -241,7 +239,7 @@ test('later scans stop after 10 pages even when every page has new ads', async (
   assert.equal(client.calls, 10);
 });
 
-test('details prioritize new ads per watch and share a limit of 60 across watches', async t => {
+test('details prioritize new ads per watch and share a default limit of 30 across watches', async t => {
   const { createStore } = await import('../src/store.js');
   const root = await mkdtemp(join(tmpdir(), 'atc-detail-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -256,25 +254,25 @@ test('details prioritize new ads per watch and share a limit of 60 across watche
   const calls = [];
   const client = {
     async rpc(method, req) {
-      if (method === 'SearchService/SearchCreatives') {
-        calls.push(req.watch.id);
-        const count = req.watch.id === first.id ? 30 : 40;
-        return { ads: Array.from({ length: count }, (_, i) => ad(`${req.watch.id}-${i}`)) };
-      }
-      assert.equal(method, 'LookupService/GetCreativeById');
-      calls.push(req.creativeId);
+      assert.equal(method, 'SearchService/SearchCreatives');
+      calls.push(req.watch.id);
+      return { ads: Array.from({ length: 16 }, (_, i) => ad(`${req.watch.id}-${i}`)) };
+    },
+    async lookupRegions({ advertiserId, creativeId }) {
+      assert.equal(advertiserId, 'AR1');
+      calls.push(creativeId);
       return [{ regionId: 2840, firstShown: null, lastShown }];
     },
   };
 
-  assert.equal((await runScan({ store, client, now, log: () => {}, maxDetails: 60 })).status, 'ok');
-  assert.equal(calls.length, 62);
+  assert.equal((await runScan({ store, client, now, log: () => {} })).status, 'ok');
+  assert.equal(calls.length, 32);
   assert.equal(calls[0], first.id);
-  assert.ok(calls.slice(1, 31).every(id => id.startsWith(first.id + '-')));
-  assert.equal(calls[31], second.id);
-  assert.ok(calls.slice(32).every(id => id.startsWith(second.id + '-')));
+  assert.ok(calls.slice(1, 16).every(id => id.startsWith(first.id + '-')));
+  assert.equal(calls[16], second.id);
+  assert.ok(calls.slice(17).every(id => id.startsWith(second.id + '-')));
   const pending = store.creativesNeedingRegions(60, { now: now() });
-  assert.equal(pending.length, 11);
+  assert.equal(pending.length, 3);
   assert.equal(store.listAdsForProfile(id, { q: 'first.com' })[0].regions[0].iso, 'US');
 });
 
@@ -290,12 +288,16 @@ test('a creative detail block stops all further requests', async t => {
   const client = {
     async rpc(method) {
       calls.push(method);
-      if (method.startsWith('LookupService/')) throw new BlockedError('Bị chặn');
+      assert.equal(method, 'SearchService/SearchCreatives');
       return { ads: [{ creativeId: 'CR1', advertiserId: 'AR1', lastShown: now().toISOString() }] };
     },
+    async lookupRegions(ids) {
+      calls.push(ids);
+      throw new BlockedError('Bị chặn');
+    },
   };
-  assert.equal((await runScan({ store, client, now, log: () => {}, maxDetails: 60 })).status, 'blocked');
-  assert.deepEqual(calls, ['SearchService/SearchCreatives', 'LookupService/GetCreativeById']);
+  assert.equal((await runScan({ store, client, now, log: () => {} })).status, 'blocked');
+  assert.deepEqual(calls, ['SearchService/SearchCreatives', { advertiserId: 'AR1', creativeId: 'CR1' }]);
   assert.equal(store.getAds(first.id).ads.CR1.creativeId, 'CR1');
   assert.equal(store.getSummary(id, now()).lastScan.status, 'blocked');
 });
@@ -313,12 +315,14 @@ test('a missing country response is retried next scan while a confirmed empty re
   let date = 22;
   const client = {
     async rpc(method) {
-      if (method.startsWith('LookupService/')) return ++detailCalls === 1 ? null : [];
-      return { ads: [{ creativeId: 'CR1', advertiserId: 'AR1', lastShown: '2026-11-10T02:00:00Z' }] };
+      assert.equal(method, 'SearchService/SearchCreatives');
+      return { ads: [{ creativeId: date === 22 ? 'CR0' : 'CR1', advertiserId: 'AR1', lastShown: '2026-11-10T02:00:00Z' }] };
     },
   };
-  for (; date <= 24; date++) {
-    const result = await runScan({ store, client, now: () => new Date(`2026-11-${date}T02:00:00Z`), log: () => {}, maxDetails: 60 });
+  const lookupRegions = async () => ++detailCalls === 1 ? null : [];
+  for (; date <= 25; date++) {
+    if (date === 23) client.lookupRegions = lookupRegions;
+    const result = await runScan({ store, client, now: () => new Date(`2026-11-${date}T02:00:00Z`), log: () => {} });
     assert.equal(result.status, 'ok');
   }
   assert.equal(detailCalls, 2);

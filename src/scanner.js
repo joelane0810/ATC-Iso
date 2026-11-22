@@ -1,18 +1,16 @@
 import { basename, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
-import {
-  BlockedError, buildCreativeDetailReq, buildSearchCreativesReq, parseCreativeRegions, parseCreatives,
-} from './atc.js';
+import { BlockedError, buildSearchCreativesReq, parseCreatives } from './atc.js';
 
 const MAX_PAGES_FIRST = 5;
 const MAX_PAGES_LATER = 10;
-// Mặc định tắt: yêu cầu chi tiết (quốc gia) cần mã xác thực trang (22/11).
-const DEFAULT_MAX_DETAILS = 0;
+const DEFAULT_MAX_DETAILS = 30;
 const RUNNING_WINDOW = 2 * 24 * 60 * 60 * 1000;
 
 export async function runScan({
-  store, client, now = () => new Date(), log = console.log, maxDetails = DEFAULT_MAX_DETAILS,
+  store, client, now = () => new Date(), log = console.log,
+  maxDetails = typeof client.lookupRegions === 'function' ? DEFAULT_MAX_DETAILS : 0,
   record = entry => store.appendScanLog(entry), waitForCapture = delay,
 }) {
   const scannedAt = now();
@@ -91,14 +89,14 @@ export async function runScan({
         total: searchAds.length,
       });
 
-      if (quota > 0 && store.creativesNeedingRegions) {
+      if (quota > 0 && typeof client.lookupRegions === 'function' && store.creativesNeedingRegions) {
         const pending = await store.creativesNeedingRegions(quota + attemptedDetails.size, {
           watchId: watch.id, now: scannedAt,
         });
         for (const creative of pending.filter(ad => !attemptedDetails.has(ad.creativeId)).slice(0, quota)) {
           attemptedDetails.add(creative.creativeId);
-          const detail = await client.rpc('LookupService/GetCreativeById', buildCreativeDetailReq(creative));
-          const regions = parseCreativeRegions(detail);
+          const { advertiserId, creativeId } = creative;
+          const regions = await client.lookupRegions({ advertiserId, creativeId });
           await store.setCreativeRegions(creative.creativeId, regions, scannedAt);
         }
       }

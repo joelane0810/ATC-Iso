@@ -3,7 +3,9 @@ import { EventEmitter } from 'node:events';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { test } from 'node:test';
+import { errors } from 'playwright-core';
 import { BlockedError } from '../src/atc.js';
 import { hasVisiblePreview, installPreview, openChromeClient } from '../src/browser.js';
 
@@ -39,7 +41,7 @@ function chrome({ landingUrl = atc, challenge = false, fetchResponse, direct, pr
     } },
   };
   return {
-    calls, open: () => openChromeClient({ launch: async () => context, minDelayMs: 0, jitterMs: 0 }),
+    calls, open: (minDelayMs = 0) => openChromeClient({ launch: async () => context, minDelayMs, jitterMs: 0 }),
   };
 }
 
@@ -233,4 +235,91 @@ test('preview waits for a nonzero iframe without requiring a video element', asy
   const dest = join(dir, 'CR');
   assert.equal(await client.captureImage({ format: 'video', previewUrl }, dest), dest + '.png');
   assert.equal(preview.screenshots, 1);
+});
+
+function creativeTab(payloads) {
+  const visits = [];
+  let predicate;
+  let resolve;
+  let reject;
+  let captcha = false;
+  return {
+    visits,
+    url: () => visits.at(-1) ?? 'about:blank',
+    waitForResponse(match, { timeout }) {
+      assert.equal(timeout, 15_000);
+      predicate = match;
+      return new Promise((accept, fail) => { resolve = accept; reject = fail; });
+    },
+    async goto(url) {
+      visits.push(url);
+      const payload = payloads.shift();
+      captcha = Boolean(payload?.captcha);
+      try {
+        if (payload) {
+          const candidate = response({
+            url: atc + '/anji/_/rpc/LookupService/GetCreativeById',
+            ...payload,
+          });
+          if (predicate(candidate)) resolve(candidate);
+        } else {
+          reject(new errors.TimeoutError('Hết thời gian chờ'));
+        }
+      } catch (error) {
+        reject(error);
+      }
+      return response({ url, headers: { 'content-type': 'text/html' } });
+    },
+    async evaluate() { return captcha; },
+  };
+}
+
+test('the detail tab reads the page response, returns null on timeout and is reused', async () => {
+  const tab = creativeTab([{ body: ")]}'\n" + JSON.stringify({ 17: [{ 1: 2704, 5: 20261122 }] }) }, null]);
+  const client = await chrome({ preview: tab }).open();
+  assert.deepEqual(await client.lookupRegions({ advertiserId: 'AR1', creativeId: 'CR1' }), [
+    { regionId: 2704, firstShown: null, lastShown: '2026-11-22T00:00:00.000Z' },
+  ]);
+  assert.equal(await client.lookupRegions({ advertiserId: 'AR1', creativeId: 'CR2' }), null);
+  assert.deepEqual(tab.visits, ['CR1', 'CR2'].map(id =>
+    atc + '/advertiser/AR1/creative/' + id + '?region=anywhere&platform=SEARCH'));
+  await client.close();
+});
+
+test('detail blocking stops subsequent lookups and RPCs', async () => {
+  for (const payload of [
+    { status: 429 },
+    { status: 302, url: atc, headers: { location: 'https://www.google.com/sorry/index' } },
+    { captcha: true },
+  ]) {
+    const tab = creativeTab([payload]);
+    const client = await chrome({ preview: tab }).open();
+    const lookup = () => client.lookupRegions({ advertiserId: 'AR1', creativeId: 'CR1' });
+    await assert.rejects(lookup(), BlockedError);
+    await assert.rejects(lookup(), BlockedError);
+    await assert.rejects(client.rpc('SearchService/SearchCreatives', {}), BlockedError);
+    assert.equal(tab.visits.length, 1);
+    await client.close();
+  }
+});
+
+test('RPC and detail visits share the same pacing queue', async () => {
+  const times = [];
+  const interval = 30;
+  const tab = creativeTab([{ body: '{"17":[]}' }]);
+  const goto = tab.goto;
+  tab.goto = url => {
+    times.push(performance.now());
+    return goto(url);
+  };
+  const client = await chrome({ preview: tab, fetchResponse: async () => {
+    times.push(performance.now());
+    return new Response('{}', { headers: { 'content-type': 'application/json' } });
+  } }).open(interval);
+  const rpc = () => client.rpc('SearchService/SearchCreatives', {});
+  await Promise.all([rpc(), client.lookupRegions({ advertiserId: 'AR1', creativeId: 'CR1' }), rpc()]);
+  assert.equal(times.length, 3);
+  assert.equal(tab.visits.length, 1);
+  for (let i = 1; i < times.length; i++) assert.ok(times[i] - times[i - 1] >= interval - 1);
+  await client.close();
 });

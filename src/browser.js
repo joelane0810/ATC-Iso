@@ -2,8 +2,8 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
-import { chromium } from 'playwright-core';
-import { BlockedError, isBlockedResponse, RPC_BASE } from './atc.js';
+import { chromium, errors } from 'playwright-core';
+import { BlockedError, isBlockedResponse, parseCreativeRegions, RPC_BASE } from './atc.js';
 
 const landingUrl = 'https://adstransparency.google.com/?region=anywhere';
 const blockedMessage = 'Google đã chặn lượt quét';
@@ -20,6 +20,17 @@ const imageExtensions = new Map([
   ['image/tiff', '.tiff'],
 ]);
 const rpcTimeout = 30_000;
+const detailTimeout = 15_000;
+
+function parseJson(text) {
+  return JSON.parse(text.replace(/^\)\]\}'[^\S\n]*\r?\n/, ''));
+}
+
+function hasCaptcha() {
+  return Boolean(document.querySelector(
+    '#captcha-form, #recaptcha, .g-recaptcha, form[action*="/sorry/"], iframe[src*="/recaptcha/"]',
+  )) || /unusual traffic from your computer network/i.test(document.body?.innerText ?? '');
+}
 
 function responseMetadata(response) {
   const headers = response.headers();
@@ -210,8 +221,12 @@ export async function openChromeClient({
 }) {
   const context = await launch(profileDir, { channel: 'chrome', headless });
   let page;
+  let detailPage;
   let blocked = false;
-  const isSorry = () => isBlockedResponse({ url: page.url() });
+  let nextAt = 0;
+  const markRequest = () => { nextAt = performance.now() + minDelayMs + Math.random() * jitterMs; };
+  const isSorry = () => isBlockedResponse({ url: page.url() })
+    || isBlockedResponse({ url: detailPage?.url() });
 
   try {
     page = context.pages()[0] ?? await context.newPage();
@@ -224,12 +239,11 @@ export async function openChromeClient({
     page.on('framenavigated', frame => {
       if (frame === page.mainFrame() && isBlockedResponse({ url: frame.url() })) blocked = true;
     });
+    markRequest();
     const response = await page.goto(landingUrl, { waitUntil: 'domcontentloaded', timeout: rpcTimeout });
     blocked ||= isSorry() || response?.status() === 429;
     if (!blocked) {
-      blocked = await page.evaluate(() => Boolean(document.querySelector(
-        '#captcha-form, #recaptcha, .g-recaptcha, form[action*="/sorry/"], iframe[src*="/recaptcha/"]',
-      )) || /unusual traffic from your computer network/i.test(document.body?.innerText ?? ''));
+      blocked = await page.evaluate(hasCaptcha);
     }
     if (!blocked && response && !response.ok()) throw new Error(`Google trả về lỗi ${response.status()}`);
   } catch (error) {
@@ -244,38 +258,15 @@ export async function openChromeClient({
     throw new BlockedError(blockedMessage);
   }
 
-  let nextRpcAt = 0;
   let queue = Promise.resolve();
 
-  async function request(method, req) {
+  async function paced(operation) {
     if (blocked || isSorry()) throw new BlockedError(blockedMessage);
-    await delay(Math.max(0, nextRpcAt - performance.now()));
+    const waitMs = Math.ceil(nextAt - performance.now());
+    if (waitMs > 0) await delay(waitMs);
     if (blocked || isSorry()) throw new BlockedError(blockedMessage);
-    nextRpcAt = performance.now() + minDelayMs + Math.random() * jitterMs;
     try {
-      const response = await page.evaluate(async ({ url, req, timeout }) => {
-        const response = await fetch(url, {
-          method: 'POST',
-          body: new URLSearchParams({ 'f.req': JSON.stringify(req) }),
-          redirect: 'manual',
-          signal: AbortSignal.timeout(timeout),
-        });
-        const contentType = response.headers.get('content-type') ?? '';
-        const redirected = response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400);
-        const html = /^(?:text\/html|application\/xhtml\+xml)(?:[;\s]|$)/i.test(contentType);
-        return {
-          status: response.status, url: response.url, contentType, redirected,
-          text: response.ok && !redirected && !html && response.status !== 429
-            ? await response.text()
-            : '',
-        };
-      }, { url: `${RPC_BASE}/${method}?authuser=`, req, timeout: rpcTimeout });
-      if (response.redirected || blocked || isSorry()) throw new BlockedError(blockedMessage);
-      assertUnblocked(response);
-      if (response.status < 200 || response.status >= 300) {
-        throw new Error(`Google trả về lỗi ${response.status}`);
-      }
-      return JSON.parse(response.text.replace(/^\)\]\}'[^\S\n]*\r?\n/, ''));
+      return await operation();
     } catch (error) {
       if (error instanceof BlockedError || blocked || isSorry()) {
         blocked = true;
@@ -285,11 +276,79 @@ export async function openChromeClient({
     }
   }
 
+  function enqueue(operation) {
+    const pending = queue.then(() => paced(operation));
+    queue = pending.catch(() => {});
+    return pending;
+  }
+
+  async function request(method, req) {
+    markRequest();
+    const response = await page.evaluate(async ({ url, req, timeout }) => {
+      const response = await fetch(url, {
+        method: 'POST',
+        body: new URLSearchParams({ 'f.req': JSON.stringify(req) }),
+        redirect: 'manual',
+        signal: AbortSignal.timeout(timeout),
+      });
+      const contentType = response.headers.get('content-type') ?? '';
+      const redirected = response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400);
+      const html = /^(?:text\/html|application\/xhtml\+xml)(?:[;\s]|$)/i.test(contentType);
+      return {
+        status: response.status, url: response.url, contentType, redirected,
+        text: response.ok && !redirected && !html && response.status !== 429
+          ? await response.text()
+          : '',
+      };
+    }, { url: `${RPC_BASE}/${method}?authuser=`, req, timeout: rpcTimeout });
+    if (response.redirected || blocked || isSorry()) throw new BlockedError(blockedMessage);
+    assertUnblocked(response);
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`Google trả về lỗi ${response.status}`);
+    }
+    return parseJson(response.text);
+  }
+
+  async function lookupRegions({ advertiserId, creativeId }) {
+    detailPage ??= await context.newPage();
+    const url = new URL(
+      `/advertiser/${encodeURIComponent(advertiserId)}/creative/${encodeURIComponent(creativeId)}?region=anywhere&platform=SEARCH`,
+      landingUrl,
+    );
+    const detail = detailPage.waitForResponse(response => {
+      const { status, url, redirectedTo, contentType } = responseMetadata(response);
+      const matches = url.includes('LookupService/GetCreativeById');
+      assertUnblocked({ status, url, redirectedTo, contentType: matches ? contentType : '' });
+      return matches;
+    }, { timeout: detailTimeout });
+    markRequest();
+    const navigation = detailPage.goto(url.href, { waitUntil: 'domcontentloaded', timeout: detailTimeout })
+      .then(async response => {
+        if (isSorry() || response?.status() === 429 || await detailPage.evaluate(hasCaptcha)) {
+          throw new BlockedError(blockedMessage);
+        }
+      });
+    try {
+      const [response] = await Promise.all([detail, navigation]);
+      if (blocked || isSorry()) throw new BlockedError(blockedMessage);
+      if (!response.ok()) return null;
+      const text = await response.text();
+      assertUnblocked({ text });
+      return parseCreativeRegions(parseJson(text));
+    } catch (error) {
+      if (!(error instanceof errors.TimeoutError)) throw error;
+      if (isSorry() || await detailPage.evaluate(hasCaptcha)) throw new BlockedError(blockedMessage);
+      return null;
+    }
+  }
+
   return {
     rpc(method, req) {
-      const pending = queue.then(() => request(method, req));
-      queue = pending.catch(() => {});
-      return pending;
+      return enqueue(() => request(method, req));
+    },
+
+    lookupRegions(ids) {
+      return enqueue(() => lookupRegions(ids));
     },
 
     async captureImage(ad, destNoExt) {
