@@ -50,7 +50,7 @@ POST `https://adstransparency.google.com/anji/_/rpc/<Service>/<Method>?authuser=
 - Lần đầu: tối đa 5 trang (200 mẫu)/đối thủ. Các lần sau: dừng phân trang khi một trang không có mẫu mới nào.
 - Lịch: 02:00 hằng ngày (launchd) + nút "Quét ngay" trên web. Một lúc chỉ một lượt (khoá tệp).
 
-## Web (localhost:4317)
+## Web (cổng 4317, mở cho máy cùng wifi — anh Dai 22/11)
 - Bố cục ngang 3 cột: trái = hồ sơ + danh sách đối thủ (thêm/xoá, số mẫu mới); giữa = lưới mẫu (lọc: Mới hôm nay / Đang chạy / Đã dừng / Tất cả, tìm theo chữ, định dạng);
   phải = chi tiết mẫu (ảnh lớn, website, link ATC, ngày đầu, ngày cuối, số ngày chạy). Thanh trên: trạng thái lượt quét gần nhất, nút Quét ngay.
 - Thêm đối thủ: dán tên miền hoặc link ATC `…/advertiser/AR…`.
