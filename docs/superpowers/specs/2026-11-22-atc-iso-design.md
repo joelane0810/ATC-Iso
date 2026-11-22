@@ -79,3 +79,16 @@ Thư viện cụ thể, cấu trúc mã, kiểu dáng giao diện (theo bố c�
 - **"Dự án" trong tổng quan** = tên miền đích của quảng cáo. Với mục theo dõi loại Đối thủ: nhóm mẫu theo tên miền (đối thủ đang chạy dự án nào). Với mục loại Dự án: nhóm theo nhà quảng cáo (ai đang chạy dự án này).
   Trạng thái mỗi nhóm so với lượt quét trước: `new` (chưa từng thấy nhóm này ở mục này) · `increase` (số mẫu đang chạy tăng) · `decrease` (giảm, vẫn > 0) · `stopped` (trước > 0, nay 0) · `steady`. "Đang chạy" = lastShown ≥ lúc quét − 2 ngày.
 - **Tổng quan trọng tâm:** đối thủ chạy dự án gì mới; dự án đó mới hay chạy thêm ads; dự án nào dừng/giảm; tăng/giảm bao nhiêu mẫu; quốc gia đang chạy. Màu nhận diện rõ cho từng trạng thái và từng đối thủ.
+
+## Bổ sung 22/11 (anh Dai, 20:18) — so theo THỜI GIAN, gọn, quét từng mục, biểu đồ
+- **So theo ngày, không theo lượt quét.** Mọi "mới/tăng/giảm/dừng" tính từ ngày chạy ATC báo (firstShown/lastShown), không phụ thuộc đã quét mấy lần.
+  - Ngày tham chiếu (theo giờ Việt Nam): từ 20:00 trở đi = hôm nay; trước 20:00 = hôm qua (ATC chỉ cập nhật quảng cáo hôm nay vào buổi tối).
+  - Khoảng so: Hôm nay (so với ngày trước đó) · 7 ngày · 30 ngày (so với cùng mốc trước đó).
+  - Đang chạy ngày D = mẫu có firstShown ≤ cuối ngày D và lastShown ≥ đầu ngày D.
+  - Mẫu mới = firstShown trong khoảng. Nhóm mới (dự án mới của đối thủ / nhà QC mới vào dự án) = firstShown sớm nhất của nhóm trong khoảng.
+  - Trạng thái nhóm: new · stopped (trước >0, nay 0) · increase · decrease · steady.
+- **Tách 3 loại "mới":** Dự án mới (đối thủ chạy tên miền mới) · Nhà QC mới (người mới vào dự án theo dõi) · Ads mới.
+- **Quét:** nút "Quét tất cả" + nút quét riêng từng mục. Một lúc chỉ một lượt.
+- **Tổng quan gọn:** bảng tóm tắt mỗi mục một dòng (có biểu đồ nhỏ 30 ngày); bấm mới xổ danh sách nhóm (5 dòng đầu, "xem thêm").
+- **Trang mục theo dõi:** thêm chế độ "Theo nhà quảng cáo/dự án" bên cạnh lưới kiểu ATC; bấm nhóm xem mẫu; biểu đồ số mẫu đang chạy + mẫu mới theo ngày (90 ngày) cho mục và cho từng nhóm.
+- **Thêm theo dõi tiện hơn:** ô tìm gợi ý từ nhà QC/tên miền đã thấy trong dữ liệu; nút "Theo dõi" ngay trên mỗi nhà QC/dự án trong danh sách; nhận mọi dạng link ATC.
