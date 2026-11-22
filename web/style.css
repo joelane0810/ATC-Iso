@@ -399,7 +399,7 @@ main {
 .chart-bar { fill: #188038; }
 .chart-highlight { stroke: #5f6368; pointer-events: none; }
 .chart-selection { fill: #1a73e8; opacity: .13; pointer-events: none; }
-.chart-hit { fill: transparent; pointer-events: all; cursor: crosshair; touch-action: none; }
+.chart-hit { fill: transparent; pointer-events: all; cursor: crosshair; touch-action: pan-y; }
 .chart-hit:focus-visible { outline-offset: -1px; }
 .chart-header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .chart-header h3 { flex: 1; margin: 0; font-size: 13px; font-weight: 600; }
@@ -577,3 +577,122 @@ main {
 .undo-toast button { margin-left: 8px; }
 
 .lan-urls { margin: 8px 16px; font-size: 12px; color: var(--muted, #5f6368); user-select: all; word-break: break-all; }
+
+#watch-menu, #watch-menu-close, #watch-backdrop, #detail-close { display: none; }
+#gallery-summary:empty { display: none; }
+#watch-stats { margin: 12px 0 8px; }
+#watch-stats-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 100px), 1fr));
+  gap: 8px;
+}
+#watch-stats-cards .total { border-radius: 8px; border-top-style: solid; }
+#watch-stats-unknown { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
+
+@media (width < 900px) {
+  .workspace { min-width: 0; }
+  body.mobile-panel-open { overflow: hidden; }
+  .topbar {
+    grid-template-columns: auto minmax(0, 1fr);
+    justify-content: stretch;
+    gap: 8px 12px;
+    padding: 12px 16px;
+  }
+  #watch-form, .toolbar { grid-column: 1 / -1; }
+  .toolbar { position: relative; flex-wrap: wrap; gap: 8px; }
+  .profile-menu summary { display: flex; align-items: center; min-height: 40px; }
+  .profile-menu { position: static; }
+  #profile-form { left: 0; right: auto; z-index: 3; width: min(240px, calc(100vw - 32px)); }
+  #status { max-width: none; overflow-wrap: anywhere; }
+
+  main { display: block; }
+  .gallery { padding: 16px; overflow-wrap: anywhere; }
+  #watch-menu, #watch-menu-close, #detail-close { display: inline-block; }
+  #watch-menu { font-size: 18px; }
+  #watch-menu-close { align-self: start; margin-bottom: 12px; }
+  #watch-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 5;
+    background: #20212466;
+  }
+  .watch-panel, .detail-panel {
+    display: none;
+    position: fixed;
+    z-index: 6;
+    overflow: auto;
+    overscroll-behavior: contain;
+    background: var(--white);
+  }
+  .watch-panel[data-open="true"] {
+    display: flex;
+    inset: 0 auto 0 0;
+    width: min(340px, calc(100% - 40px));
+    padding-top: 16px;
+  }
+  .detail-panel[data-open="true"] {
+    display: block;
+    inset: 0;
+    min-height: 0;
+    padding: 16px;
+    border: 0;
+  }
+  .detail-heading {
+    position: sticky;
+    top: -16px;
+    z-index: 1;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+    padding: 8px 0;
+    background: var(--white);
+  }
+  .detail-heading h2 { margin-bottom: 0; }
+
+  button, select, input, .detail-actions .action { min-height: 40px; }
+  .watch-panel summary { min-height: 40px; align-content: center; }
+  .ads { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .ad-badges { flex-wrap: wrap; }
+  .totals { grid-template-columns: repeat(auto-fit, minmax(min(100%, 145px), 1fr)); }
+  #overview-watches, .chart-table { overflow-x: auto; }
+  .chart-table { display: block; }
+  .group-row { grid-template-columns: minmax(0, 1fr); }
+  .group-samples { justify-content: flex-start; }
+  #range-chips { max-width: 100%; }
+  .chart-header h3 { min-width: min(100%, 160px); }
+}
+
+@media (width < 520px) {
+  .ads { grid-template-columns: minmax(0, 1fr); }
+  .totals { grid-template-columns: minmax(0, 1fr); }
+  .totals .total { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+  #range-dialog {
+    inset: 0;
+    margin: 0;
+    width: 100%;
+    height: 100dvh;
+    max-width: none;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+  }
+  #range-form { display: flex; flex-direction: column; min-height: 100%; }
+  #range-presets {
+    flex-direction: row;
+    flex-shrink: 0;
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  #range-presets button { flex: 0 0 auto; white-space: nowrap; }
+  .range-calendar { display: flex; flex: 1; flex-direction: column; padding: 12px; }
+  #calendar-months { flex: 1 0 200px; }
+  .range-footer { flex-wrap: wrap; padding-top: 8px; }
+}
+
+@media (width >= 900px) and (any-pointer: coarse) {
+  button, select, .detail-actions .action { min-height: 40px; }
+}
