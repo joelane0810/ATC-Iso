@@ -532,3 +532,46 @@ test('version 1 upgrade keeps historical snapshots only for watches listed as co
     db.close();
   }
 });
+
+test('opening a version 2 DB backfills domain watches only once', async t => {
+  const { root, store } = setup(t);
+  const { openDb } = await import('../src/db.js');
+  const data = join(root, 'data');
+  const profile = store.addProfile('Dai');
+  const domainWatch = store.addWatch(profile.id, 'site.com');
+  const advertiserWatch = store.addWatch(profile.id, 'AR123');
+  const at = '2026-11-22T00:00:00Z';
+  store.mergeAds(domainWatch, [
+    { creativeId: 'shared', domain: '' },
+    { creativeId: 'known', domain: 'reported.com' },
+  ], at);
+  store.mergeAds(advertiserWatch, [
+    { creativeId: 'shared', domain: null },
+    { creativeId: 'advertiser-only' },
+  ], at);
+  store.close();
+
+  const legacy = openDb(data);
+  legacy.run('PRAGMA user_version = 2');
+  legacy.close();
+
+  const upgraded = createStore(root);
+  assert.equal(upgraded.getAds(domainWatch.id).ads.shared.domain, 'site.com');
+  assert.equal(upgraded.getAds(domainWatch.id).ads.known.domain, 'reported.com');
+  assert.equal(upgraded.getAds(advertiserWatch.id).ads.shared.domain, null);
+  assert.equal(upgraded.getAds(advertiserWatch.id).ads['advertiser-only'].domain, undefined);
+  upgraded.close();
+
+  const db = openDb(data);
+  assert.deepEqual(db.all('SELECT id, domain FROM creatives ORDER BY id').map(row => [row.id, row.domain]), [
+    ['advertiser-only', null], ['known', 'reported.com'], ['shared', 'site.com'],
+  ]);
+  db.run("UPDATE creatives SET domain = NULL WHERE id = 'shared'");
+  db.run("UPDATE watch_creatives SET observation = json_remove(observation, '$.domain') WHERE watch_id = ? AND creative_id = 'shared'", domainWatch.id);
+  db.close();
+
+  const reopened = openDb(data);
+  assert.equal(reopened.get("SELECT domain FROM creatives WHERE id = 'shared'").domain, null);
+  assert.equal(reopened.get("SELECT json_type(observation, '$.domain') AS type FROM watch_creatives WHERE watch_id = ? AND creative_id = 'shared'", domainWatch.id).type, null);
+  reopened.close();
+});

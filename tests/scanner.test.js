@@ -73,7 +73,27 @@ function setup(respond, { watches = [first], previous = [], capture, saved = {},
   };
 }
 
-const page = (ids, nextToken) => ({ ads: ids.map(creativeId => ({ creativeId, previewUrl: 'https://example.com/content.js' })), nextToken });
+const previewUrl = 'https://displayads-formats.googleusercontent.com/ads/preview/content.js';
+const imageUrl = 'https://tpc.googlesyndication.com/archive/simgad/12345';
+const page = (ids, nextToken) => ({
+  ads: ids.map(creativeId => ({ creativeId, previewUrl, imageUrl })),
+  nextToken,
+});
+
+test('scan fills missing domains only for domain watches and skips script-only previews', async () => {
+  const advertiser = { id: 'advertiser', type: 'advertiser', value: 'AR1' };
+  const run = setup(() => ({
+    ads: [
+      { creativeId: 'CR1', domain: null, format: 'text', previewUrl },
+      { creativeId: 'CR2', domain: 'reported.example', format: 'image', previewUrl },
+    ],
+  }), { watches: [first, advertiser] });
+  assert.equal((await run.scan()).status, 'ok');
+  assert.equal(run.files.get(first.id).ads.CR1.domain, first.value);
+  assert.equal(run.files.get(first.id).ads.CR2.domain, 'reported.example');
+  assert.equal(run.files.get(advertiser.id).ads.CR1.domain, null);
+  assert.deepEqual(run.captures, []);
+});
 
 test('first scan stops after five pages', async () => {
   const run = setup((req, n) => page(['CR' + n], String(n)));
@@ -135,7 +155,7 @@ test('a preview block stops subsequent captures and watches', async () => {
 test('a scan retries at most 20 old ads with missing images, even off the current page', async () => {
   const ids = Array.from({ length: 23 }, (_, i) => 'CR' + i);
   const saved = Object.fromEntries(ids.map(creativeId => [creativeId, {
-    creativeId, format: 'video', previewUrl: 'https://example.com/content.js',
+    creativeId, format: 'video', previewUrl, imageUrl,
   }]));
   saved.CR0.image = 'images/CR0.png';
   const run = setup(() => page([], null), { previous: ids, saved });

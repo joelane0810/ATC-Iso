@@ -72,9 +72,10 @@ export async function runScan({
       } while (pageToken);
 
       // A blocked page must leave this watch's existing data intact.
-      // Retain the preview URL for retries outside the current page.
+      // Keep the preview URL for the web interface and older image records.
       const { file, newIds } = await store.mergeAds(watch, [...ads.values()].map(ad => ({
         ...ad,
+        domain: ad.domain?.trim() ? ad.domain : watch.type === 'domain' ? watch.value : null,
         previewUrl: ad.previewUrl ?? ad.imageUrl ?? previous?.ads[ad.creativeId]?.previewUrl ?? null,
       })), scannedAt, scanId);
       result.watched++;
@@ -114,11 +115,10 @@ export async function runScan({
         const saved = file.ads[id];
         const ad = { ...saved };
         const previewUrl = ad.previewUrl ?? '';
-        if (/^https:\/\/tpc\.googlesyndication\.com\/archive\/simgad\//i.test(previewUrl)
-            || (ad.format === 'image' && previewUrl && !/\/content\.js(?:[?#]|$)/i.test(previewUrl))) {
+        if (/^https:\/\/tpc\.googlesyndication\.com\/archive\/simgad\//i.test(previewUrl)) {
           ad.imageUrl ??= previewUrl;
         }
-        if (ad.image || !(ad.imageUrl || ad.previewUrl)) continue;
+        if (ad.image || !ad.imageUrl) continue;
         if (!fresh.has(id)) {
           if (retries >= 20) continue;
           retries++;
