@@ -63,3 +63,10 @@ POST `https://adstransparency.google.com/anji/_/rpc/<Service>/<Method>?authuser=
 
 ## Để bên xây tự quyết
 Thư viện cụ thể, cấu trúc mã, kiểu dáng giao diện (theo bố cục trên).
+
+## Bổ sung 22/11 (anh Dai, 16:33)
+- **Hai loại theo dõi:** "Đối thủ" và "Dự án" (`watch.kind = "competitor" | "project"`, mặc định competitor cho dữ liệu cũ). Cách quét giống nhau (tên miền hoặc mã nhà QC); khác nhau ở mục đích người dùng và chỗ hiển thị.
+- **Chỉ quảng cáo Google Tìm kiếm:** mọi yêu cầu SearchCreatives thêm `"3":{"14":[3]}` (đã đo trên ATC ngày 22/11: bộ lọc nền tảng "Google Tìm kiếm" = 14:[3]).
+  Mẫu được thấy trong kết quả đã lọc thì gắn `platform:"search"`; giao diện chỉ hiện mẫu có `platform:"search"`. Phân trang tiếp tục khi trang còn mẫu mới HOẶC mẫu chưa gắn `platform:"search"`.
+- **Trang chủ:** tổng kết thay đổi của lượt quét gần nhất so với lượt trước: số mẫu mới, số mẫu vừa dừng (đang chạy ở lượt trước, nay đã dừng), số đang chạy; bảng theo từng đối thủ/dự án; lưới mẫu mới và mẫu vừa dừng.
+- **Cột trái:** Trang chủ · mục Đối thủ · mục Dự án. Chọn mục nào hiện mục đó.
