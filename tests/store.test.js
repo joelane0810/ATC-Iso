@@ -169,7 +169,7 @@ test('summary uses Vietnamese dates, all windows, and ATC dates after repeat sca
     ['decrease.com', 'decrease', -1, false], ['stopped.com', 'stopped', -1, false],
   ]);
   assert.equal(first.watches[1].groups.find(g => g.key === 'AR123').followed, true);
-  assert.equal(first.watches[0].spark.length, 30);
+  assert.equal(first.watches[0].spark.length, 1);
   assert.deepEqual(first.watches[0].spark.at(-1), { date: first.refDate, running: 7 });
   for (const [window, prevDate, projects, newAds] of [
     ['7d', '2026-11-15', 2, 5], ['30d', '2026-10-23', 5, 9],
@@ -186,7 +186,7 @@ test('summary uses Vietnamese dates, all windows, and ATC dates after repeat sca
     assert.deepEqual(summary().totals, first.totals);
   }
   assert.deepEqual(summary().lastScan, { at: now, status: 'ok' });
-  const points = store.getSeries(id, { now, watchId: competitor.id, group: 'new.com' }).points;
+  const points = store.getSeries(id, { now, watchId: competitor.id, group: 'new.com', days: 90 }).points;
   assert.equal(points.length, 90);
   assert.deepEqual(points[0], { date: '2026-08-25', running: 0, newAds: 0 });
   assert.deepEqual(points.at(-2), { date: '2026-11-21', running: 0, newAds: 0 });
@@ -197,6 +197,55 @@ test('summary uses Vietnamese dates, all windows, and ATC dates after repeat sca
   ]);
   assert.deepEqual(store.getSeries(id, { now, days: 1, group: undefined }).points,
     [{ date: first.refDate, running: 8, newAds: 3 }]);
+});
+
+test('ranges count ads on any overlapping day and compare the preceding equal-length range', t => {
+  const { store } = setup(t);
+  const { id } = store.addProfile('Dai');
+  const watch = store.addWatch(id, 'example.com');
+  const now = '2026-11-22T13:00:00Z';
+  const ad = (creativeId, firstShown, lastShown, domain = creativeId + '.com') =>
+    ({ creativeId, domain, firstShown, lastShown });
+  store.mergeAds(watch, [
+    ad('old', '2026-07-01T00:00:00Z', '2026-07-01T00:00:00Z'),
+    ad('prior', '2026-11-08T17:00:00Z', '2026-11-15T16:59:59Z'),
+    ad('spans', '2026-11-12T00:00:00Z', '2026-11-15T17:00:00Z'),
+    ad('starts', '2026-11-15T17:00:00Z', '2026-11-16T00:00:00Z', 'spans.com'),
+    ad('ends', '2026-11-22T00:00:00Z', now),
+  ], now);
+
+  const from = '2026-11-16';
+  const to = '2026-11-22';
+  const summary = store.getSummary(id, { from, to, now });
+  assert.deepEqual([summary.from, summary.to, summary.prevFrom, summary.prevTo, summary.minDate],
+    [from, to, '2026-11-09', '2026-11-15', '2026-07-01']);
+  const [result] = summary.watches;
+  assert.deepEqual([result.runningNow, result.runningPrev, result.newAds, result.newGroups], [3, 2, 2, 1]);
+  assert.equal(result.groups.find(group => group.key === 'prior.com').status, 'stopped');
+  assert.deepEqual(result.spark.map(point => point.running), [2, 0, 0, 0, 0, 0, 1]);
+  assert.deepEqual(store.getSummary(id, { window: '7d', now }).watches, summary.watches);
+  assert.deepEqual(store.getSummary(id, { from: to, to: '2026-12-01', now }),
+    store.getSummary(id, { window: 'day', now }));
+  assert.deepEqual(store.listAdsForProfile(id, { from, to, watchId: watch.id }, now)
+    .map(ad => ad.creativeId).sort(), ['ends', 'spans', 'starts']);
+  assert.deepEqual(store.listAdsForProfile(id, { from: to, to: '2026-12-01' }, now)
+    .map(ad => ad.creativeId), ['ends']);
+
+  const other = store.addWatch(id, 'other.com');
+  store.mergeAds(other, [ad('starts', '2026-11-16T00:00:00Z', '2026-11-16T00:00:00Z')], now);
+  const weekly = store.getSeries(id, { now });
+  assert.deepEqual([weekly.refDate, weekly.minDate, weekly.from, weekly.to, weekly.bucket],
+    [to, '2026-07-01', '2026-07-01', to, 'week']);
+  assert.equal(weekly.points.length, 21);
+  assert.deepEqual(weekly.points[0], { date: '2026-07-01', running: 1, newAds: 1 });
+  assert.deepEqual(weekly.points.at(-1), { date: '2026-11-18', running: 1, newAds: 1 });
+  assert.deepEqual(weekly.points.at(-2), { date: '2026-11-11', running: 3, newAds: 2 });
+  const scoped = store.getSeries(id, { watchId: other.id, now });
+  assert.equal(scoped.minDate, from);
+  assert.equal(scoped.bucket, 'day');
+  const long = store.getSummary(id, { from: '2020-01-01', to, now }).watches[0].spark;
+  assert.equal(long.length, 120);
+  assert.deepEqual(long.at(-1), { date: '2026-11-18', running: 1 });
 });
 
 test('suggest counts known domains and advertisers and addWatch resolves exact names and ATC links', t => {
@@ -379,13 +428,16 @@ test('summary groups 5,000 ads with country data in under 1,500 ms', async t => 
   db.prepare('INSERT INTO creative_regions (creative_id, region_id, last_shown) SELECT id, 2840, ? FROM creatives').run(at);
   db.close();
   const start = performance.now();
-  const { watches } = store.getSummary(id, { now: at });
+  const { watches } = store.getSummary(id, { from: '2026-06-01', to: '2026-11-22', now: at });
+  const series = store.getSeries(id, { from: '2026-06-01', to: '2026-11-22', now: at });
   const elapsed = performance.now() - start;
-  t.diagnostic(`Tổng quan 5.000 mẫu: ${elapsed.toFixed(1)} ms`);
+  t.diagnostic(`Tổng quan và biểu đồ 5.000 mẫu: ${elapsed.toFixed(1)} ms`);
   assert.ok(elapsed < 1500);
   assert.equal(watches[0].groups[0].regions[0].running, 5000);
   assert.equal(watches[0].groups[0].sampleAds.length, 4);
-  assert.ok(watches[0].spark.every(point => point.running === 5000));
+  assert.equal(series.bucket, 'week');
+  assert.deepEqual(watches[0].spark, series.points.map(({ date, running }) => ({ date, running })));
+  assert.equal(watches[0].spark.at(-1).running, 5000);
 });
 
 test('journal configuration verifies WAL and logs the switch to DELETE', async () => {

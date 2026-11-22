@@ -158,7 +158,7 @@ test('profile summary and group filters follow the API contract', async t => {
   assert.equal(empty.lastScan, null);
   assert.equal(empty.window, 'day');
   assert.equal(empty.watches.length, 2);
-  assert.ok(empty.watches.every(watch => watch.spark.length === 30 && watch.groups.length === 0));
+  assert.ok(empty.watches.every(watch => watch.spark.length === 1 && watch.groups.length === 0));
   const firstShown = `${empty.refDate}T00:00:00Z`;
   const ad = { creativeId: 'CR1', advertiserId: 'AR1', advertiserName: 'Áo Đẹp',
     domain: 'example.com', firstShown, lastShown: at, format: 'text' };
@@ -188,6 +188,26 @@ test('profile summary and group filters follow the API contract', async t => {
   assert.deepEqual(await (await request(`${adsUrl}?watchId=${project.id}&group=example.com`)).json(), []);
   assert.deepEqual(await (await request(`${adsUrl}?watchId=${other.id}`)).json(), []);
   assert.equal((await (await request(adsUrl)).json()).length, 1);
+  assert.equal((await (await request(`${adsUrl}?from=${result.refDate}&to=${result.refDate}`)).json()).length, 1);
+  assert.deepEqual(await (await request(`${adsUrl}?to=${result.prevTo}`)).json(), []);
+  const explicitDay = await (await request(`${summary}?from=${result.refDate}&to=${result.refDate}`)).json();
+  assert.deepEqual(explicitDay, await (await request(summary + '?window=day')).json());
+  const allTime = await (await request(`/api/profiles/dai/series?watchId=${project.id}`)).json();
+  assert.deepEqual(allTime, {
+    refDate: result.refDate, minDate: result.refDate, from: result.refDate, to: result.refDate, bucket: 'day',
+    points: [{ date: result.refDate, running: 1, newAds: 1 }],
+  });
+  for (const route of [summary, '/api/profiles/dai/series', adsUrl]) {
+    for (const [query, message] of [
+      ['from=2026-02-30', /Ngày không hợp lệ/],
+      ['from=2026-11-02&to=2026-11-01', /Ngày bắt đầu/],
+    ]) {
+      const invalid = await request(`${route}?${query}`);
+      assert.equal(invalid.status, 400);
+      assert.match((await invalid.json()).error, message);
+    }
+  }
+
 });
 
 test('web GET reads under a WAL writer and reports DELETE contention in Vietnamese', async t => {

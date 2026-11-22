@@ -138,12 +138,15 @@ export async function startServer({
           }
         }
         if (method === 'GET' && resource === 'summary' && !wid) {
-          return json(res, 200, await store.getSummary(pid, { window: params.get('window') ?? 'day' }));
+          return json(res, 200, await store.getSummary(pid, {
+            window: params.get('window') ?? 'day', from: params.get('from'), to: params.get('to'),
+          }));
         }
         if (method === 'GET' && resource === 'series' && !wid) {
           return json(res, 200, await store.getSeries(pid, {
             watchId: params.get('watchId') || null, group: params.get('group'),
-            days: Number(params.get('days') ?? 90),
+            from: params.get('from'), to: params.get('to'),
+            days: params.has('days') ? Number(params.get('days')) : undefined,
           }));
         }
         if (method === 'GET' && resource === 'ads' && !wid) {
@@ -154,6 +157,8 @@ export async function startServer({
           };
           if (params.has('watchId')) filters.watchId = params.get('watchId');
           if (params.has('group')) filters.group = params.get('group');
+          if (params.has('from')) filters.from = params.get('from');
+          if (params.has('to')) filters.to = params.get('to');
           return json(res, 200, await store.listAdsForProfile(pid, filters, new Date()));
         }
       }

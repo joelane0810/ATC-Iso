@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { parseWatchInput, regionIdToIso, slugify } from './atc.js';
 import { openDb } from './db.js';
 import { groupIdentity, runningAt } from './groups.js';
-import { createTimeReport } from './time-report.js';
+import { adsDateRange, createTimeReport, vietnamDate } from './time-report.js';
 import { scanResumeAt } from './scan-rest.js';
 import { createWebStore } from './web-store.js';
 
@@ -242,7 +242,8 @@ export function createStore(root, options) {
       ) SELECT * FROM suggestions ORDER BY ads DESC, value, type LIMIT 10`, q, q, q)
         .map(({ name, ...row }) => name == null ? row : { ...row, name });
     },
-    listAdsForProfile(pid, { filter = 'all', q = '', format = '', watchId = '', group } = {}, now = new Date()) {
+    listAdsForProfile(pid, { filter = 'all', q = '', format = '', watchId = '', group, from, to } = {}, now = new Date()) {
+      const range = from != null || to != null ? adsDateRange(all, pid, watchId || null, { from, to }, now) : null;
       const currentTime = new Date(now).getTime();
       const query = q.trim().toLowerCase();
       const creatives = new Map();
@@ -253,6 +254,11 @@ export function createStore(root, options) {
         for (const ad of Object.values(file.ads)) {
           if (ad.platform !== 'search') continue;
           if (group != null && groupIdentity(ad, groupTypeFor(watch.kind)).key !== group) continue;
+          if (range) {
+            const firstDay = vietnamDate(ad.firstShown);
+            const lastDay = vietnamDate(ad.lastShown);
+            if (!firstDay || !lastDay || firstDay > lastDay || firstDay > range.to || lastDay < range.from) continue;
+          }
           const existing = creatives.get(ad.creativeId);
           const watchIds = existing?.watchIds ?? [];
           const watchLabels = existing?.watchLabels ?? [];
