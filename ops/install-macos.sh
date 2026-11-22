@@ -17,19 +17,20 @@ fi
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 node_path=
 npm_path=
-for dir in ${NODE_BIN:+"$(dirname "$NODE_BIN")"} "$HOME/.homebrew/bin" /opt/homebrew/bin ${path_dirs[@]+"${path_dirs[@]}"} /usr/local/bin /usr/bin; do
-  if [[ "$dir" = /* && -x "$dir/node" && -x "$dir/npm" ]] &&
+for dir in ${NODE_BIN:+"$(dirname "$NODE_BIN")"} "$HOME/.local/bin" "$HOME/.homebrew/bin" /opt/homebrew/bin ${path_dirs[@]+"${path_dirs[@]}"} /usr/local/bin /usr/bin; do
+  if [[ "$dir" = /* && -x "$dir/node" ]] &&
      "$dir/node" -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 20 ? 0 : 1)'; then
     node_path="$dir/node"
-    npm_path="$dir/npm"
+    [[ -x "$dir/npm" ]] && npm_path="$dir/npm"
     export PATH="$dir:$PATH"
     break
   fi
 done
 if [[ -z "$node_path" ]]; then
-  echo "Cần cài Node.js từ phiên bản 20 trở lên, kèm npm." >&2
+  echo "Cần cài Node.js từ phiên bản 20 trở lên." >&2
   exit 1
 fi
+[[ -z "$npm_path" && -n "${NPM_BIN:-}" && -x "$NPM_BIN" ]] && npm_path="$NPM_BIN"
 
 if [[ ! -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ]]; then
   echo "Cần cài Google Chrome vào thư mục Ứng dụng." >&2
@@ -37,7 +38,14 @@ if [[ ! -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ]]; th
 fi
 
 cd "$root"
-"$npm_path" ci
+if [[ -d node_modules/playwright-core ]]; then
+  echo "Thư viện đã có sẵn."
+elif [[ -n "$npm_path" ]]; then
+  "$npm_path" ci
+else
+  echo "Thiếu npm và thiếu thư viện playwright-core." >&2
+  exit 1
+fi
 
 agent_dir="$HOME/Library/LaunchAgents"
 domain="gui/$(id -u)"
