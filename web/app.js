@@ -30,10 +30,10 @@ const formats = { image: 'Hình ảnh', text: 'Chữ', video: 'Video' };
 let watchId = '';
 let selectedAd;
 let ads = [];
-const kindLabels = { competitor: 'Đối thủ', project: 'Dự án' };
+const kindLabels = { competitor: 'Nhà quảng cáo', project: 'Dự án' };
 const groupLabels = { increase: 'Tăng', decrease: 'Giảm', stopped: 'Đã dừng', steady: 'Ổn định' };
 const overviewTotals = [
-  ['newProjects', 'Dự án mới', 'competitor'], ['newAdvertisers', 'Nhà QC mới', 'project'],
+  ['newProjects', 'Dự án mới', 'competitor'], ['newAdvertisers', 'Nhà quảng cáo mới', 'project'],
   ['newAds', 'Ads mới', 'new'], ['increased', 'Tăng', 'increase'],
   ['decreased', 'Giảm', 'decrease'], ['stopped', 'Đã dừng', 'stopped'],
   ['runningAds', 'Ads đang chạy', 'running'],
@@ -63,7 +63,7 @@ const vietnamTime = new Intl.DateTimeFormat('vi-VN', {
 const shortDate = new Intl.DateTimeFormat('en-GB', {
   day: '2-digit', month: '2-digit', timeZone: 'Asia/Ho_Chi_Minh',
 });
-let watchKind = 'competitor';
+let suggestionKind;
 let summary;
 let watchCounts = new Map();
 let watches = [];
@@ -142,7 +142,9 @@ async function selectProfile() {
   overviewFilter = '';
   expandedWatches.clear();
   expandedLists.clear();
+  suggestionKind = undefined;
   clearSuggestions();
+  showWatchType();
   watchBounds = undefined;
   if (rangeDialog.open) rangeDialog.close();
   selectedAd = undefined;
@@ -246,13 +248,6 @@ function chooseWatch(id) {
 
 function kindOf(watch) {
   return watch.kind ?? 'competitor';
-}
-
-function setWatchKind(kind) {
-  watchKind = kind;
-  for (const value of Object.keys(kindLabels)) {
-    byId('kind-' + value).setAttribute('aria-pressed', String(value === kind));
-  }
 }
 
 function button(label, action, className = '') {
@@ -529,9 +524,11 @@ function renderWatches() {
   byId('home').setAttribute('aria-pressed', String(!watchId));
   for (const kind of Object.keys(kindLabels)) {
     const buckets = watchBuckets(kind);
+    const count = buckets.reduce((total, bucket) => total + bucket.items.length, 0);
+    byId('count-' + kind).textContent = formatCount.format(count);
     byId('new-group-' + kind).disabled = !management;
     const select = byId('select-' + kind);
-    select.disabled = !management || !buckets.some((group) => group.items.length);
+    select.disabled = !management || count === 0;
     select.setAttribute('aria-pressed', String(watchSelection?.kind === kind));
     renderWatchSelection(kind);
     byId('watches-' + kind).replaceChildren(...buckets.map((group) => renderWatchBucket(group, management)));
@@ -1098,7 +1095,7 @@ function groupRow(watch, group) {
   renderedGroups.get(watch.watchId).set(group.key, row);
   const heading = element('span');
   heading.className = 'group-heading';
-  if (!isAllTime()) heading.append(badge(group.status === 'new' ? (group.groupType === 'advertiser' ? 'Nhà QC mới' : 'Dự án mới') : groupLabels[group.status], group.status));
+  if (!isAllTime()) heading.append(badge(group.status === 'new' ? (group.groupType === 'advertiser' ? 'Nhà quảng cáo mới' : 'Dự án mới') : groupLabels[group.status], group.status));
   heading.append(element('strong', group.name));
   const counts = element('span');
   counts.className = 'group-counts';
@@ -1129,7 +1126,7 @@ function groupRow(watch, group) {
     follow.onclick = () => run(async () => {
       follow.disabled = true;
       try {
-        await addWatch(input, group.groupType === 'advertiser' ? 'competitor' : 'project');
+        await addWatch(input, group.groupType === 'advertiser' ? 'competitor' : 'project', null);
       } finally {
         follow.disabled = false;
       }
@@ -1611,7 +1608,7 @@ function showDetail(ad) {
       : input.toUpperCase());
     const followed = watches.some((watch) => kindOf(watch) === kind && watch.value
       && normalized(watch.value) === normalized(value));
-    const action = followed ? 'Đang theo dõi' : '+ Theo dõi ' + (kind === 'project' ? 'dự án ' : 'nhà QC ') + label;
+    const action = followed ? 'Đang theo dõi' : '+ Theo dõi ' + (kind === 'project' ? 'dự án ' : 'nhà quảng cáo ') + label;
     const add = async (groupId) => {
       await addWatch(value, kind, groupId, true);
     };
@@ -1959,7 +1956,7 @@ function clearSuggestions() {
   return ++suggestionVersion;
 }
 
-async function addWatch(input, kind, groupId = null, keepDetail = false) {
+async function addWatch(input, kind, groupId, keepDetail = false) {
   const id = profile.value;
   if (!id || !input.trim()) return;
   const group = openGroup;
@@ -1974,38 +1971,81 @@ async function addWatch(input, kind, groupId = null, keepDetail = false) {
   }
 }
 
+const watchTypeHint = byId('watch-type-hint');
+const suggestionGroups = [
+  { type: 'advertiser', kind: 'competitor', title: 'Nhà quảng cáo' },
+  { type: 'domain', kind: 'project', title: 'Dự án (tên miền)' },
+];
+
+function watchInputType(input) {
+  if (/^AR\d+$/i.test(input)) return { type: 'advertiser', value: input.toUpperCase() };
+  const address = input.replace(/^\/\//, '');
+  try {
+    const url = new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(address) ? address : 'https://' + address);
+    if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) return;
+    const domain = url.hostname.replace(/^www\./, '').replace(/\.$/, '');
+    const advertiser = url.pathname.match(/\/advertiser\/(AR\d+)(?:\/|$)/i);
+    if (domain === 'adstransparency.google.com' && advertiser) {
+      return { type: 'advertiser', value: advertiser[1].toUpperCase() };
+    }
+    if (/^(?:[a-z\d](?:[a-z\d-]{0,61}[a-z\d])?\.)+[a-z][a-z\d-]{0,62}$/i.test(domain)) {
+      return { type: 'domain', value: domain };
+    }
+  } catch {}
+}
+
+function showWatchType(candidate) {
+  const group = suggestionGroups.find(({ type }) => type === candidate?.type);
+  watchTypeHint.hidden = !group;
+  watchTypeHint.className = group ? 'kind-' + group.kind : '';
+  watchTypeHint.textContent = group
+    ? 'Sẽ thêm vào ' + kindLabels[group.kind] + ': ' + (candidate.name || candidate.value)
+    : '';
+}
+
+function renderSuggestions(candidates) {
+  const list = byId('suggestions');
+  for (const { type, kind, title } of suggestionGroups) {
+    if (suggestionKind && suggestionKind !== kind) continue;
+    const matches = candidates.filter((candidate) => candidate.type === type);
+    if (!matches.length) continue;
+    const section = element('section');
+    section.className = 'kind-' + kind;
+    section.append(element('h2', title));
+    for (const candidate of matches) {
+      const chip = element('span', kindLabels[kind]);
+      chip.className = 'kind-chip';
+      const count = element('span', formatCount.format(candidate.ads) + ' mẫu');
+      count.className = 'suggestion-count';
+      const choice = button('', () => {
+        watchInput.value = candidate.value;
+        watchInput.focus();
+        showWatchType(candidate);
+        clearSuggestions();
+      });
+      choice.append(element('strong', candidate.name || candidate.value), chip, count);
+      section.append(choice);
+    }
+    list.append(section);
+  }
+  list.hidden = !list.children.length;
+}
+
 watchInput.oninput = () => {
   const version = clearSuggestions();
   const input = watchInput.value.trim();
+  showWatchType(watchInputType(input));
   if (!input || !profile.value) return;
   suggestionTimer = setTimeout(async () => {
     try {
       const candidates = await api('suggest?' + new URLSearchParams({ q: input }));
-      if (version !== suggestionVersion) return;
-      const list = byId('suggestions');
-      list.replaceChildren(...candidates.slice(0, 10).map((candidate) => {
-        const text = candidate.name || candidate.value;
-        const button = element('button');
-        button.type = 'button';
-        button.append(element('strong', text), element('span', formatCount.format(candidate.ads) + ' mẫu'));
-        button.onclick = () => {
-          const kind = watchKind;
-          watchInput.value = candidate.value;
-          clearSuggestions();
-          watchInput.focus();
-          return run(async () => {
-            await addWatch(candidate.value, kind);
-            if (watchInput.value === candidate.value) watchInput.value = '';
-          });
-        };
-        return button;
-      }));
-      list.hidden = !candidates.length;
+      if (version === suggestionVersion) renderSuggestions(candidates);
     } catch {
       if (version === suggestionVersion) clearSuggestions();
     }
   }, 250);
 };
+watchInput.onfocus = () => showWatchType(watchInputType(watchInput.value.trim()));
 watchForm.onkeydown = (event) => {
   if (event.key === 'Escape') {
     clearSuggestions();
@@ -2013,7 +2053,11 @@ watchForm.onkeydown = (event) => {
   }
 };
 watchForm.onfocusout = (event) => {
-  if (!watchForm.contains(event.relatedTarget)) clearSuggestions();
+  if (!watchForm.contains(event.relatedTarget)) {
+    suggestionKind = undefined;
+    clearSuggestions();
+    watchTypeHint.hidden = true;
+  }
 };
 
 profile.onchange = () => run(selectProfile);
@@ -2066,25 +2110,28 @@ function setupGroupEditor(kind) {
 
 byId('home').onclick = () => chooseWatch('');
 for (const kind of Object.keys(kindLabels)) {
-  byId('kind-' + kind).onclick = () => setWatchKind(kind);
   byId('select-' + kind).onclick = () => {
     watchSelection = watchSelection?.kind === kind ? undefined : { kind, ids: new Set() };
     renderWatches();
   };
   byId('add-' + kind).onclick = () => {
-    setWatchKind(kind);
-    watchForm.elements.input.focus();
+    suggestionKind = kind;
+    watchInput.focus();
+    watchInput.oninput();
   };
 }
 
 watchForm.onsubmit = (event) => {
   event.preventDefault();
   const input = watchInput.value;
-  const kind = watchKind;
   clearSuggestions();
   return run(async () => {
-    await addWatch(input, kind);
-    if (watchInput.value === input) watchInput.value = '';
+    await addWatch(input);
+    if (watchInput.value === input) {
+      watchInput.value = '';
+      suggestionKind = undefined;
+      showWatchType();
+    }
   });
 };
 

@@ -13,14 +13,13 @@
       <h1>ATC Iso</h1>
       <form id="watch-form">
         <span class="search-icon" aria-hidden="true"></span>
-        <input name="input" aria-label="Tìm nhà quảng cáo hoặc tên miền" autocomplete="off"
+        <input name="input" aria-label="Tìm nhà quảng cáo hoặc tên miền" autocomplete="off" aria-describedby="watch-type-hint"
           placeholder="Tìm nhà quảng cáo hoặc dán đường dẫn" required disabled>
-        <div class="watch-kinds" role="group" aria-label="Loại theo dõi">
-          <button id="kind-competitor" class="kind-competitor" type="button" aria-pressed="true" disabled>Đối thủ</button>
-          <button id="kind-project" class="kind-project" type="button" aria-pressed="false" disabled>Dự án</button>
-        </div>
         <button type="submit" aria-label="Thêm theo dõi" title="Thêm theo dõi" disabled>↵</button>
-        <div id="suggestions" class="suggestions" aria-label="Gợi ý theo dõi" hidden></div>
+        <div class="watch-search-results">
+          <p id="watch-type-hint" role="status" hidden></p>
+          <div id="suggestions" class="suggestions" aria-label="Gợi ý theo dõi" hidden></div>
+        </div>
       </form>
       <div class="toolbar">
         <select id="profile" aria-label="Hồ sơ" disabled></select>
@@ -46,10 +45,10 @@
           <details id="group-competitor" open>
             <summary class="watch-group-title">
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="4.5" r="2.5"/><path d="M2.5 14v-1.5a5.5 5.5 0 0 1 11 0V14"/></svg>
-              Đối thủ
+              <span role="heading" aria-level="2">NHÀ QUẢNG CÁO · <span id="count-competitor">0</span></span>
             </summary>
             <div class="watch-tools sidebar-tools">
-              <button id="add-competitor" type="button" aria-label="Thêm đối thủ" disabled>+ Thêm</button>
+              <button id="add-competitor" type="button" aria-label="Thêm nhà quảng cáo" disabled>+ Thêm</button>
               <button id="new-group-competitor" type="button" disabled>+ Nhóm</button>
               <button id="select-competitor" type="button" disabled>Chọn</button>
             </div>
@@ -62,7 +61,7 @@
           <details id="group-project" open>
             <summary class="watch-group-title">
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m8 1.5 6 3.3v6.4l-6 3.3-6-3.3V4.8zM2 4.8l6 3.3 6-3.3M8 8.1v6.4"/></svg>
-              Dự án
+              <span role="heading" aria-level="2">DỰ ÁN · <span id="count-project">0</span></span>
             </summary>
             <div class="watch-tools sidebar-tools">
               <button id="add-project" type="button" aria-label="Thêm dự án" disabled>+ Thêm</button>
@@ -129,7 +128,7 @@
         <div id="watch-view" hidden>
           <div class="watch-tools">
             <div role="group" aria-label="Cách xem">
-              <button id="mode-groups" type="button" aria-pressed="true">Theo nhà QC/dự án</button>
+              <button id="mode-groups" type="button" aria-pressed="true">Theo nhà quảng cáo/dự án</button>
               <button id="mode-grid" type="button" aria-pressed="false">Lưới mẫu</button>
             </div>
             <button id="scan-watch" class="action" type="button">Quét mục này</button>

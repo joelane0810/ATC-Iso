@@ -115,7 +115,10 @@ async function loadGrid(results, groupResponse, storage = new Map(), browser = {
       if (pathname === '/api/scan') return { ok: true, status: 202 };
       const json = async () => {
         if (path === '/api/status') return { scanning: false, scanningWatchId: null, last: null };
-        if (pathname === '/api/suggest') return [{ type: 'advertiser', value: 'AR1', name: 'Example', ads: 1 }];
+        if (pathname === '/api/suggest') return [
+          { type: 'domain', value: 'example.com', ads: 3 },
+          { type: 'advertiser', value: 'AR1', name: 'Example', ads: 1 },
+        ];
         if (pathname.endsWith('/series')) return {
           refDate, minDate: '2026-10-22', from: searchParams.get('from') || '2026-10-22',
           to: searchParams.get('to') || refDate, bucket: 'day',
@@ -365,31 +368,46 @@ test('cards show advertiser, website, Vietnamese dates and applicable badges', a
   assert.equal(cards[1].children[1].children[3].children.length, 0);
 });
 
-test('the add buttons choose a kind and the form sends the active chip', async () => {
+test('search suggests both types and sidebar buttons filter suggestions only', async () => {
   const { nodes, posts, suggest, calls } = await loadGrid([]);
   const form = nodes.get('watch-form');
-  const submit = async (input) => {
-    form.elements.input.value = input;
-    await form.onsubmit({ preventDefault() {}, currentTarget: form });
+  const input = form.elements.input;
+  const hint = nodes.get('watch-type-hint');
+  const list = nodes.get('suggestions');
+  const titles = () => list.children.map((section) => section.children[0].textContent);
+  const type = (value) => {
+    input.value = value;
+    input.oninput();
   };
-  await submit('competitor.example');
-  nodes.get('add-project').onclick();
-  assert.equal(form.elements.input.focused, true);
-  assert.equal(nodes.get('kind-project').attributes.get('aria-pressed'), 'true');
-  await submit('project.example');
-  nodes.get('kind-competitor').onclick();
-  await submit('another.example');
-  form.elements.input.value = 'Example';
-  form.elements.input.oninput();
+
+  type('Example');
+  assert.equal(hint.hidden, true);
   await suggest();
   assert.equal(calls.at(-1).url.searchParams.get('q'), 'Example');
-  await nodes.get('suggestions').children[0].onclick();
+  assert.deepEqual(titles(), ['Nhà quảng cáo', 'Dự án (tên miền)']);
+  assert.deepEqual(list.children.map((section) => [
+    section.className, section.children[1].children[1].textContent,
+  ]), [['kind-competitor', 'Nhà quảng cáo'], ['kind-project', 'Dự án']]);
+
+  nodes.get('add-project').onclick();
+  assert.equal(input.focused, true);
+  await suggest();
+  assert.deepEqual(titles(), ['Dự án (tên miền)']);
+  type('ar1');
+  assert.equal(hint.textContent, 'Sẽ thêm vào Nhà quảng cáo: AR1');
+  await form.onsubmit({ preventDefault() {} });
+
+  nodes.get('add-competitor').onclick();
+  type('https://WWW.Example.com/path');
+  assert.equal(hint.textContent, 'Sẽ thêm vào Dự án: example.com');
+  await suggest();
+  assert.deepEqual(titles(), ['Nhà quảng cáo']);
+  await form.onsubmit({ preventDefault() {} });
   assert.deepEqual(posts, [
-    { input: 'competitor.example', region: null, kind: 'competitor', groupId: null },
-    { input: 'project.example', region: null, kind: 'project', groupId: null },
-    { input: 'another.example', region: null, kind: 'competitor', groupId: null },
-    { input: 'AR1', region: null, kind: 'competitor', groupId: null },
+    { input: 'ar1', region: null },
+    { input: 'https://WWW.Example.com/path', region: null },
   ]);
+  assert.equal(hint.hidden, true);
 });
 
 test('clicking a card opens and updates the right-hand detail panel', async () => {
@@ -458,7 +476,7 @@ test('overview shows grouped changes, stable watch colors and all seven totals',
   assert.equal(expand(1)[0].children[0].children[1].textContent, 'Theo dõi');
   const totals = nodes.get('totals').children;
   assert.deepEqual(totals.map((card) => card.children.map((node) => node.textContent)), [
-    ['Dự án mới', '1'], ['Nhà QC mới', '0'], ['Ads mới', '4'], ['Tăng', '1'],
+    ['Dự án mới', '1'], ['Nhà quảng cáo mới', '0'], ['Ads mới', '4'], ['Tăng', '1'],
     ['Giảm', '1'], ['Đã dừng', '1'], ['Ads đang chạy', '7'],
   ]);
   assert.equal(totals[6].title, 'Số mẫu quảng cáo có hiển thị trong phạm vi ngày đã chọn');
