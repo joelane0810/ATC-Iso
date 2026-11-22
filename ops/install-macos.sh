@@ -17,7 +17,7 @@ fi
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 node_path=
 npm_path=
-for dir in "$HOME/.homebrew/bin" /opt/homebrew/bin ${path_dirs[@]+"${path_dirs[@]}"} /usr/local/bin /usr/bin; do
+for dir in ${NODE_BIN:+"$(dirname "$NODE_BIN")"} "$HOME/.homebrew/bin" /opt/homebrew/bin ${path_dirs[@]+"${path_dirs[@]}"} /usr/local/bin /usr/bin; do
   if [[ "$dir" = /* && -x "$dir/node" && -x "$dir/npm" ]] &&
      "$dir/node" -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 20 ? 0 : 1)'; then
     node_path="$dir/node"
