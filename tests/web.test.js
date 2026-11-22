@@ -23,6 +23,9 @@ class Element {
   setAttribute(name, value) { this.attributes.set(name, value); }
   querySelectorAll() { return []; }
   replaceWith(node) { this.replacement = node; }
+  get firstElementChild() { return this.children[0]; }
+  get classList() { return { add: (name) => { this.className += ' ' + name; } }; }
+  clientWidth = 240;
   focus() { this.focused = true; }
   querySelector(selector) {
     assert.equal(selector, '.ad[aria-pressed="true"]');
@@ -64,14 +67,19 @@ const projectGroup = {
   runningNow: 2, runningPrev: 1, delta: 1, regions: [], sampleAds: [],
 };
 
-async function loadGrid(results, groupResponse, storage = new Map()) {
+async function loadGrid(results, groupResponse, storage = new Map(), browser = {}) {
   const posts = [];
   const requests = [];
   const calls = [];
   let timer;
   const nodes = new Map();
   const document = {
-    createElement: (tag) => new Element(tag),
+    body: new Element('body'),
+    createElement(tag) {
+      const node = new Element(tag);
+      if (tag === 'iframe') node.contentWindow = {};
+      return node;
+    },
     createElementNS: (_, tag) => new Element(tag),
     querySelectorAll: () => [],
     getElementById(id) {
@@ -86,7 +94,7 @@ async function loadGrid(results, groupResponse, storage = new Map()) {
   form.elements = { input: new Element('input') };
   document.getElementById('gallery').children = ['ads', 'overview-watches'].map(document.getElementById);
   await runInNewContext(script, {
-    document, URLSearchParams,
+    document, URL, URLSearchParams,
     localStorage: {
       getItem: (key) => storage.get(key) ?? null,
       setItem: (key, value) => storage.set(key, value),
@@ -152,6 +160,7 @@ async function loadGrid(results, groupResponse, storage = new Map()) {
       };
       return { ok: true, json };
     },
+    ...browser,
   });
   assert.equal(nodes.get('error').hidden, true);
   const rows = () => nodes.get('overview-watches').children[0].children[1].children;
@@ -183,6 +192,157 @@ test('grid prefers a local image, then a remote image, then the placeholder', as
   assert.equal(local.replacement.children[1].textContent, 'Chưa có ảnh xem trước');
   assert.equal(cards[1].children[0].src, imageUrl);
   assert.equal(cards[2].children[0].children[1].textContent, 'Chưa có ảnh xem trước');
+});
+
+const liveUrl = 'https://displayads-formats.googleusercontent.com/ads/preview/content.js?sig=a%20b&x=1&x=2';
+const origin = 'http://localhost:4317';
+
+function mockLivePreviews() {
+  const observed = new Set();
+  const timers = new Map();
+  let onVisibility;
+  let onMessage;
+  let onMutation;
+  const browser = {
+    IntersectionObserver: class {
+      constructor(callback) { onVisibility = callback; }
+      observe(node) { observed.add(node); }
+      unobserve(node) { observed.delete(node); }
+    },
+    MutationObserver: class {
+      constructor(callback) { onMutation = callback; }
+      observe() {}
+    },
+    window: { location: { origin }, addEventListener: (_, callback) => { onMessage = callback; } },
+    setTimeout(callback, delay) {
+      const id = Symbol();
+      timers.set(id, { callback, delay });
+      return id;
+    },
+    clearTimeout: (id) => timers.delete(id),
+  };
+  return {
+    browser, observed, timers,
+    visibility(nodes, isIntersecting) {
+      onVisibility(nodes.filter((node) => observed.has(node)).map((target) => ({ target, isIntersecting })));
+    },
+    ready(source, width, height) {
+      onMessage({ source, origin, data: { type: 'atc-preview-ready', width, height } });
+    },
+    mutation: () => onMutation(),
+  };
+}
+
+test('cards and detail prefer images before live preview, with only images or format icons in group thumbnails', async () => {
+  const live = mockLivePreviews();
+  const imageUrl = 'https://example.com/remote.png';
+  const input = { ...creative, format: 'video', previewUrl: liveUrl };
+  const { open, expand, detail } = await loadGrid([
+    { ...input, image: 'images/CR1.png', imageUrl },
+    { ...input, creativeId: 'CR2', imageUrl },
+    { ...input, creativeId: 'CR3' },
+    { ...input, creativeId: 'CR4', previewUrl: 'https://example.com/content.js' },
+  ], undefined, undefined, live.browser);
+  const [controls] = expand()[0].children;
+  const thumbs = controls.children[0].children[3].children;
+  assert.deepEqual(thumbs.map((node) => node.src || node.textContent),
+    ['/images/CR1.png', imageUrl, '▷', '▷']);
+  assert.equal(live.observed.size, 0);
+
+  expand();
+  const cards = await open();
+  const [local] = cards[0].children;
+  assert.equal(local.src, '/images/CR1.png');
+  assert.equal(cards[1].children[0].src, imageUrl);
+  assert.equal(cards[3].children[0].children[1].textContent, 'Chưa có ảnh xem trước');
+  assert.equal(live.observed.size, 1);
+  local.onerror();
+  assert.equal(local.src, imageUrl);
+  local.onerror();
+  assert.ok(live.observed.has(local.replacement));
+
+  cards[0].onclick();
+  const [detailImage] = detail.children;
+  assert.equal(detailImage.src, '/images/CR1.png');
+  detailImage.onerror();
+  assert.equal(detailImage.src, imageUrl);
+  detailImage.onerror();
+  const box = detailImage.replacement;
+  box.isConnected = true;
+  live.visibility([box], true);
+  const frame = box.children[1];
+  box.children[0].remove = () => box.children.shift();
+  live.ready(frame.contentWindow, 120, 160);
+  assert.equal(frame.style.transform, 'scale(1)');
+  assert.equal(box.style.height, '160px');
+});
+
+test('live previews preserve URL parameters and load at most four visible frames, with a 12-second fallback', async () => {
+  const live = mockLivePreviews();
+  const { open } = await loadGrid(Array.from({ length: 6 }, (_, index) => ({
+    ...creative, creativeId: 'CR' + index, previewUrl: liveUrl,
+  })), undefined, undefined, live.browser);
+  const boxes = (await open()).map((card) => card.children[0]);
+  for (const box of boxes) {
+    box.isConnected = true;
+    box.children[0].remove = () => box.children.shift();
+  }
+  const frames = () => boxes.map((box) => box.children.find((node) => node.tag === 'iframe'));
+  assert.equal(frames().filter(Boolean).length, 0);
+  live.visibility(boxes, true);
+  assert.equal(frames().filter(Boolean).length, 4);
+  const [first, second] = frames();
+  assert.equal(first.attributes.get('sandbox'), 'allow-scripts allow-same-origin allow-popups');
+  const src = first.srcdoc.match(/<script src="([^"]+)"/)[1].replaceAll('&amp;', '&');
+  const url = new URL(src);
+  assert.ok(src.startsWith(liveUrl + '&'));
+  assert.equal(url.searchParams.get('htmlParentId'), 'atc-preview');
+  assert.equal(url.searchParams.get('responseCallback'), 'atcPreviewReady');
+
+  live.visibility([boxes[4]], false);
+  live.ready({}, 240, 360);
+  assert.equal(frames()[5], undefined);
+  let addedContent;
+  let contentChanged;
+  const childWindow = { origin };
+  runInNewContext(first.srcdoc.match(/<script>([\s\S]+?)<\/script>/)[1], {
+    window: childWindow,
+    document: { getElementById: () => ({ querySelector: () => addedContent, textContent: '' }) },
+    MutationObserver: class {
+      constructor(callback) { contentChanged = callback; }
+      observe() {}
+      disconnect() {}
+    },
+    parent: { postMessage(message, targetOrigin) {
+      assert.equal(targetOrigin, origin);
+      assert.equal(message.type, 'atc-preview-ready');
+      live.ready(first.contentWindow, message.width, message.height);
+    } },
+  });
+  childWindow.atcPreviewReady({ previewMetadata: [{ width: 240, height: 360 }] });
+  assert.equal(first.style.transform, undefined);
+  addedContent = {};
+  contentChanged();
+  assert.equal(first.style.transform, 'scale(0.5)');
+  assert.equal(first.style.width, '240px');
+  assert.equal(first.style.height, '360px');
+  assert.equal(frames()[4], undefined);
+  assert.ok(frames()[5]);
+  live.visibility([boxes[0]], false);
+  live.visibility([boxes[0], boxes[4]], true);
+  assert.equal(frames()[0], first);
+
+  const pending = [...live.timers.values()].filter(({ delay }) => delay === 12_000);
+  assert.equal(pending.length, 4);
+  pending[0].callback();
+  assert.equal(boxes[1].replacement.children[1].textContent, 'Chưa có ảnh xem trước');
+  assert.ok(frames()[4]);
+  live.ready(second.contentWindow, 240, 360);
+  assert.equal(second.style.transform, undefined);
+
+  boxes[2].isConnected = false;
+  live.mutation();
+  assert.equal([...live.timers.values()].filter(({ delay }) => delay === 12_000).length, 3);
 });
 
 test('cards show advertiser, website, Vietnamese dates and applicable badges', async () => {

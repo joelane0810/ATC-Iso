@@ -293,32 +293,197 @@ function signed(value) {
   return (value > 0 ? '+' : value < 0 ? '−' : '') + formatCount.format(Math.abs(value));
 }
 
+function previewIcon(ad) {
+  const icon = element('span', { text: '≡', image: '▧', video: '▷' }[ad.format] || '▧');
+  icon.className = 'format-icon';
+  return icon;
+}
+
 function previewFallback(ad) {
   const placeholder = element('span');
   placeholder.className = 'preview preview-empty';
-  const icon = element('span', { text: '≡', image: '▧', video: '▷' }[ad.format] || '▧');
-  icon.className = 'format-icon';
+  const icon = previewIcon(ad);
   icon.setAttribute('aria-hidden', 'true');
   placeholder.append(icon, element('span', 'Chưa có ảnh xem trước'));
   return placeholder;
 }
 
-function preview(ad, thumbnail = false) {
+const livePreviews = new Map();
+const loadingPreviews = new Map();
+const maxLiveLoads = 4;
+const previewTimeout = 12_000;
+
+function previewScriptUrl(raw) {
+  if (typeof raw !== 'string') return null;
+  try {
+    const url = new URL(raw);
+    if (url.origin !== 'https://displayads-formats.googleusercontent.com' ||
+        url.username || url.password || !url.pathname.includes('/content.js')) return null;
+    // Keep the original query encoding, including any repeated parameters.
+    const keys = ['htmlParentId', 'responseCallback'];
+    const query = url.search.slice(1).split('&').filter((part) =>
+      part && !keys.some((key) => new URLSearchParams(part).has(key)));
+    query.push('htmlParentId=atc-preview', 'responseCallback=atcPreviewReady');
+    url.search = '?' + query.join('&');
+    url.hash = '';
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+function previewDocument(url) {
+  const src = url.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;');
+  return `<!doctype html><html lang="vi"><meta charset="utf-8">
+<style>html,body{margin:0;overflow:hidden}</style>
+<div id="atc-preview"></div>
+<script>
+  (() => {
+    const target = document.getElementById('atc-preview');
+    let dimensions;
+    const observer = new MutationObserver(report);
+    observer.observe(target, { childList: true, subtree: true, characterData: true });
+    function report() {
+      if (!dimensions || !target.querySelector(':not(script, style, link, template):not([hidden])')
+          && !target.textContent.trim()) return;
+      parent.postMessage({ type: 'atc-preview-ready', ...dimensions }, window.origin);
+      observer.disconnect();
+    }
+    window.atcPreviewReady = ({ previewMetadata } = {}) => {
+      const { width, height } = previewMetadata?.[0] ?? {};
+      if (![width, height].every((value) => Number.isFinite(value) && value > 0)) return;
+      dimensions = { width, height };
+      report();
+    };
+  })();
+</script>
+<script src="${src}"></script></html>`;
+}
+
+function fitLivePreview(entry, width) {
+  const { box, frame, size, large } = entry;
+  if (!size || width <= 0) return;
+  const heightLimit = large ? Infinity : width * 3 / 4;
+  const scale = Math.min(1, width / size.width, heightLimit / size.height);
+  frame.style.transform = 'scale(' + scale + ')';
+  if (large) box.style.height = size.height * scale + 'px';
+}
+
+function releasePreviewLoad(entry) {
+  loadingPreviews.delete(entry.source);
+  clearTimeout(entry.timer);
+}
+
+function drainPreviews() {
+  for (const entry of livePreviews.values()) {
+    if (loadingPreviews.size >= maxLiveLoads) break;
+    if (!entry.visible || entry.frame || !entry.box.isConnected) continue;
+    previewVisibility.unobserve(entry.box);
+    const frame = element('iframe');
+    frame.title = 'Xem trước mẫu quảng cáo';
+    frame.className = 'live-preview-frame';
+    frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups');
+    if (!entry.large) frame.tabIndex = -1;
+    frame.srcdoc = previewDocument(entry.url);
+    entry.frame = frame;
+    entry.box.append(frame);
+    entry.source = frame.contentWindow;
+    loadingPreviews.set(entry.source, entry);
+    entry.timer = setTimeout(() => {
+      releasePreviewLoad(entry);
+      livePreviews.delete(entry.box);
+      entry.box.replaceWith(previewFallback(entry.ad));
+      drainPreviews();
+    }, previewTimeout);
+  }
+}
+
+const previewVisibility = typeof IntersectionObserver === 'function' ? new IntersectionObserver((changes) => {
+  for (const { target, isIntersecting } of changes) {
+    const entry = livePreviews.get(target);
+    if (entry) entry.visible = isIntersecting;
+  }
+  drainPreviews();
+}) : null;
+
+const previewSizes = typeof ResizeObserver === 'function' ? new ResizeObserver((changes) => {
+  for (const { target, contentRect } of changes) {
+    const entry = livePreviews.get(target);
+    if (entry) fitLivePreview(entry, contentRect.width);
+  }
+}) : null;
+
+if (previewVisibility) {
+  // Release slots and observers when a view removes cards or replaces the detail.
+  new MutationObserver(() => {
+    let removed = false;
+    for (const entry of livePreviews.values()) {
+      if (entry.box.isConnected) continue;
+      previewVisibility.unobserve(entry.box);
+      previewSizes?.unobserve(entry.box);
+      if (loadingPreviews.has(entry.source)) releasePreviewLoad(entry);
+      livePreviews.delete(entry.box);
+      removed = true;
+    }
+    if (removed) drainPreviews();
+  }).observe(document.body, { childList: true, subtree: true });
+
+  window.addEventListener('message', ({ source, origin, data }) => {
+    if (origin !== window.location.origin || data?.type !== 'atc-preview-ready') return;
+    const entry = loadingPreviews.get(source);
+    if (!entry?.box.isConnected) return;
+    const { width, height } = data;
+    if (![width, height].every((value) => Number.isFinite(value) && value > 0)) return;
+    releasePreviewLoad(entry);
+    entry.size = { width, height };
+    entry.frame.style.width = width + 'px';
+    entry.frame.style.height = height + 'px';
+    entry.box.classList.add('live-preview-ready');
+    if (entry.large) entry.box.classList.add('live-preview-large');
+    fitLivePreview(entry, entry.box.clientWidth);
+    previewSizes?.observe(entry.box);
+    entry.box.firstElementChild.remove();
+    drainPreviews();
+  });
+}
+
+function livePreview(ad, large) {
+  const url = previewVisibility && previewScriptUrl(ad.previewUrl);
+  if (!url) return previewFallback(ad);
+  const box = element('span');
+  box.className = 'preview live-preview';
+  box.append(element('span', 'Đang tải mẫu…'));
+  livePreviews.set(box, { ad, box, large, url });
+  previewVisibility.observe(box);
+  return box;
+}
+
+function preview(ad, thumbnail = false, large = false) {
   const filename = /^(?:images\/)?([\w.-]+\.(?:png|jpe?g|webp|gif|avif))$/i.exec(ad.image || '')?.[1];
   const remote = /^https?:\/\//i.test(ad.imageUrl || '') ? ad.imageUrl : null;
-  const source = filename ? '/images/' + encodeURIComponent(filename) : remote;
-  const fallback = () => thumbnail ? element('span', '▧') : previewFallback(ad);
-  if (!source) return fallback();
+  const local = filename ? '/images/' + encodeURIComponent(filename) : null;
+  const fallback = () => {
+    if (!thumbnail) return livePreview(ad, large);
+    const icon = previewIcon(ad);
+    icon.setAttribute('aria-label', formats[ad.format] || 'Mẫu quảng cáo');
+    return icon;
+  };
+  if (!local && !remote) return fallback();
 
   const image = element('img');
   image.className = 'preview';
   image.alt = thumbnail ? '' : 'Ảnh mẫu quảng cáo';
   image.loading = 'lazy';
+  let triedRemote = !local;
   image.onerror = () => {
-    if (remote && image.src !== remote) { image.src = remote; return; }
-    image.replaceWith(fallback());
+    if (remote && !triedRemote) {
+      triedRemote = true;
+      image.src = remote;
+      return;
+    }
+    if (image.isConnected !== false) image.replaceWith(fallback());
   };
-  image.src = source;
+  image.src = local || remote;
   return image;
 }
 
@@ -989,7 +1154,7 @@ function showDetail(ad) {
   status.append(badge(running === undefined ? 'Chưa rõ' : running ? 'Đang chạy' : 'Đã dừng',
     running === false ? 'stopped' : 'steady'));
   fields.append(element('dt', 'Trạng thái'), status);
-  detail.append(preview(ad), fields);
+  detail.append(preview(ad, false, true), fields);
   if (ad.regions?.length) {
     const countries = element('ul');
     countries.className = 'detail-regions';
