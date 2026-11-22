@@ -603,8 +603,27 @@ main {
     padding: calc(8px + env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
       8px max(12px, env(safe-area-inset-left));
   }
-  #watch-form, .toolbar { grid-column: 1 / -1; }
-  .toolbar { position: relative; flex-wrap: wrap; gap: 8px; }
+  /* Hàng 1: ☰ · ATC Iso · (hồ sơ + nút thêm) ở góc phải. Hàng 2: tìm kiếm. Hàng 3: trạng thái · Quét tất cả. */
+  .topbar {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-areas: "menu title profile add" "search search search search" "status status status scan";
+    align-items: center;
+  }
+  #watch-menu { grid-area: menu; }
+  .topbar h1 { grid-area: title; }
+  #watch-form { grid-area: search; }
+  .toolbar { display: contents; }
+  #profile { grid-area: profile; justify-self: end; max-width: 40vw; min-height: 36px; font-size: 14px; }
+  .profile-menu { grid-area: add; position: relative; }
+  .profile-menu summary {
+    width: 36px; min-height: 36px; justify-content: center; padding: 0;
+    font-size: 0; border: 1px solid var(--line); border-radius: 50%; list-style: none; cursor: pointer;
+  }
+  .profile-menu summary::-webkit-details-marker { display: none; }
+  .profile-menu summary::before { content: "+"; font-size: 20px; line-height: 1; color: var(--accent); }
+  .profile-menu #profile-form { left: auto; right: 0; top: calc(100% + 6px); }
+  #status { grid-area: status; font-size: 12px; color: var(--muted); }
+  #scan { grid-area: scan; justify-self: end; }
   .topbar h1 { font-size: 18px; }
   #watch-form { height: 40px; gap: 12px; padding: 0 8px 0 16px; }
   #watch-form input { height: 100%; min-height: 0; font-size: 14px; }
@@ -618,8 +637,7 @@ main {
   }
   .profile-menu summary { padding-inline: 0; }
   #scan { margin-left: auto; }
-  .profile-menu { position: static; }
-  #profile-form { left: 0; right: auto; z-index: 3; width: min(240px, calc(100vw - 32px)); }
+  #profile-form { z-index: 3; width: min(240px, calc(100vw - 32px)); }
   #status { max-width: none; overflow-wrap: anywhere; }
 
   main { display: block; }
@@ -851,4 +869,9 @@ main {
 
 @media (width >= 1280px) and (any-pointer: coarse) {
   button, select, .detail-actions .action { min-height: 40px; }
+}
+
+@media (width < 1280px) {
+  .topbar .profile-menu summary { width: 36px; padding: 0; font-size: 0; justify-content: center; }
+  .topbar .profile-menu summary::before { font-size: 20px; }
 }
