@@ -9,6 +9,13 @@ class Element {
   children = [];
   attributes = new Map();
   textContent = '';
+  style = {};
+  offsetTop = 0;
+
+  showModal() { this.open = true; }
+  close() { this.open = false; }
+  setPointerCapture() {}
+  getBoundingClientRect() { return { left: 0, right: 700, top: 0, bottom: 290, width: 700 }; }
 
   constructor(tag) { this.tag = tag; }
   append(...children) { this.children.push(...children); }
@@ -57,7 +64,7 @@ const projectGroup = {
   runningNow: 2, runningPrev: 1, delta: 1, regions: [], sampleAds: [],
 };
 
-async function loadGrid(results, groupResponse) {
+async function loadGrid(results, groupResponse, storage = new Map()) {
   const posts = [];
   const requests = [];
   const calls = [];
@@ -80,6 +87,10 @@ async function loadGrid(results, groupResponse) {
   document.getElementById('gallery').children = ['ads', 'overview-watches'].map(document.getElementById);
   await runInNewContext(script, {
     document, URLSearchParams,
+    localStorage: {
+      getItem: (key) => storage.get(key) ?? null,
+      setItem: (key, value) => storage.set(key, value),
+    },
     setTimeout: (callback, delay) => {
       if (delay === 250) timer = callback;
     },
@@ -94,7 +105,15 @@ async function loadGrid(results, groupResponse) {
       const json = async () => {
         if (path === '/api/status') return { scanning: false, scanningWatchId: null, last: null };
         if (pathname === '/api/suggest') return [{ type: 'advertiser', value: 'AR1', name: 'Example', ads: 1 }];
-        if (pathname.endsWith('/series')) return { refDate, points: [{ ...spark[0], newAds: 1 }] };
+        if (pathname.endsWith('/series')) return {
+          refDate, minDate: '2026-10-22', from: searchParams.get('from') || '2026-10-22',
+          to: searchParams.get('to') || refDate, bucket: 'day',
+          points: [
+            { date: '2026-11-09', running: 3, newAds: 2 },
+            { date: '2026-11-10', running: 5, newAds: 1 },
+            { date: refDate, running: 3, newAds: 1 },
+          ].filter(({ date }) => date >= (searchParams.get('from') ?? '') && date <= (searchParams.get('to') ?? refDate)),
+        };
         if (path === '/api/profiles') return [{ id: 'dai', name: 'Dai' }];
         if (path.endsWith('/watchlist')) {
           if (options.method === 'POST') posts.push(JSON.parse(options.body));
@@ -105,7 +124,8 @@ async function loadGrid(results, groupResponse) {
         }
         if (pathname.endsWith('/summary')) {
           return {
-            window: searchParams.get('window'), refDate, prevDate: '2026-11-20', dataNote,
+            refDate, minDate: '2026-10-01', prevFrom: '2026-11-20', prevTo: '2026-11-20', dataNote,
+            from: searchParams.get('from') || refDate, to: searchParams.get('to') || refDate,
             lastScan: { at: scanAt, status: 'ok' },
             totals: { newProjects: 1, newAdvertisers: 0, newAds: 4, increased: 1, decreased: 1, stopped: 1, runningAds: 7 },
             watches: [
@@ -250,7 +270,9 @@ test('overview shows grouped changes, stable watch colors and all seven totals',
   ]);
   assert.equal(requests.length, 0);
   assert.equal(nodes.get('gallery-summary').textContent, dataNote);
-  assert.equal(calls.find(({ url }) => url.pathname.endsWith('/summary')).url.searchParams.get('window'), 'day');
+  assert.equal(calls.find(({ url }) => url.pathname.endsWith('/summary')).url.searchParams.get('from'), null);
+  assert.equal(nodes.get('range-value').textContent, '21 thg 11, 2026');
+  assert.equal(nodes.get('comparison').textContent, 'So với 20/11 – 20/11');
   const [competitor, , project] = rows();
   assert.equal(competitor.children[2].textContent, '5 (−2)');
   assert.equal(competitor.children[4].children[0].attributes.get('role'), 'img');
@@ -272,7 +294,7 @@ test('overview shows grouped changes, stable watch colors and all seven totals',
     ['Dự án mới', '1'], ['Nhà QC mới', '0'], ['Ads mới', '4'], ['Tăng', '1'],
     ['Giảm', '1'], ['Đã dừng', '1'], ['Ads đang chạy', '7'],
   ]);
-  assert.equal(totals[6].title, 'Số mẫu quảng cáo có hiển thị trong ngày dữ liệu mới nhất');
+  assert.equal(totals[6].title, 'Số mẫu quảng cáo có hiển thị trong phạm vi ngày đã chọn');
   const visibleStatuses = () => rows().filter((_, index) => index % 2).flatMap((row) =>
     row.children[0].children.map((group) => group.children[0].children[0].children[0].children[0].textContent));
   for (const card of [totals[0], ...totals.slice(3, 6)]) {
@@ -301,7 +323,9 @@ test('group opens inline and loads only the selected watch and group', async () 
   const series = calls.find(({ url }) => url.pathname.endsWith('/series')).url.searchParams;
   assert.equal(series.get('watchId'), 'example-com');
   assert.equal(series.get('group'), groupKey);
-  assert.equal(series.get('days'), '90');
+  assert.equal(series.get('from'), refDate);
+  assert.equal(series.get('to'), refDate);
+  assert.equal(requests[0].get('from'), refDate);
   row.onclick();
   assert.equal(row.attributes.get('aria-expanded'), 'false');
   assert.equal(panel.hidden, true);
@@ -334,4 +358,86 @@ test('an ads response arriving after the group is closed cannot reopen it', asyn
   await loading;
   assert.equal(panel.hidden, true);
   assert.equal(panel.children.length, 0);
+});
+
+
+test('the calendar validates dates, applies a range to every view and persists it', async () => {
+  const storage = new Map();
+  const { nodes, calls, requests } = await loadGrid([creative], undefined, storage);
+  await nodes.get('watches-competitor').children[0].children[0].onclick();
+  assert.equal(nodes.get('range-value').textContent, 'Mọi lúc');
+  nodes.get('range-open').onclick();
+  assert.equal(nodes.get('calendar-title').textContent, 'THG 11 2026');
+  const [october, november] = nodes.get('calendar-months').children;
+  const day = (month, label) => month.children[1].children.find((node) => node.textContent === label);
+  assert.equal(day(october, '21').disabled, true);
+  assert.equal(day(november, '22').disabled, true);
+  nodes.get('calendar-prev').onclick();
+  assert.equal(nodes.get('calendar-title').textContent, 'THG 10 2026');
+  day(october, '22').onclick();
+  day(november, '10').onclick();
+  assert.match(day(october, '22').className, /range-start/);
+  assert.match(day(november, '10').className, /range-end/);
+  assert.match(day(november, '5').className, /in-range/);
+  const submit = () => nodes.get('range-form').onsubmit({ preventDefault() {} });
+  nodes.get('range-to').value = '31 thg 11, 2026';
+  await submit();
+  assert.equal(nodes.get('range-error').hidden, false);
+  nodes.get('range-to').value = '10 thg 11, 2026';
+  await submit();
+  assert.equal(nodes.get('range-dialog').open, false);
+  assert.equal(nodes.get('range-value').textContent, '22 thg 10 – 10 thg 11, 2026');
+  await nodes.get('mode-grid').onclick();
+  assert.equal(requests.at(-1).get('from'), '2026-10-22');
+  assert.equal(requests.at(-1).get('to'), '2026-11-10');
+  await nodes.get('home').onclick();
+  for (const endpoint of ['summary', 'series', 'ads']) {
+    const { url } = calls.findLast(({ url }) => url.pathname.endsWith('/' + endpoint));
+    assert.equal(url.searchParams.get('from'), '2026-10-22');
+    assert.equal(url.searchParams.get('to'), '2026-11-10');
+  }
+  const reloaded = await loadGrid([], undefined, storage);
+  assert.equal(reloaded.nodes.get('range-value').textContent, '22 thg 10 – 10 thg 11, 2026');
+});
+
+test('the chart shares a tooltip, switches to a table and applies a dragged range', async () => {
+  const { nodes, calls } = await loadGrid([creative]);
+  await nodes.get('watches-competitor').children[0].children[0].onclick();
+  const [header, plot, table] = nodes.get('watch-chart').children;
+  const [svg, tooltip] = plot.children;
+  const hit = svg.children.at(-1);
+  hit.onpointermove({ clientX: 365 });
+  assert.equal(tooltip.hidden, false);
+  assert.equal(tooltip.textContent, '10/11/2026\nAds đang chạy: 5\nAds mới: 1');
+  assert.ok(svg.children.some((node) => node.attributes.get('class') === 'chart-area'));
+  assert.equal(svg.children.filter((node) => node.attributes.get('class') === 'chart-bar').length, 3);
+  const toggle = header.children.at(-1);
+  toggle.onclick();
+  assert.equal(plot.hidden, true);
+  assert.equal(table.hidden, false);
+  assert.equal(table.children[1].children.length, 3);
+  toggle.onclick();
+  hit.onpointerdown({ clientX: 130, button: 0, pointerId: 1 });
+  hit.onpointermove({ clientX: 365 });
+  await hit.onpointerup({ clientX: 365 });
+  assert.equal(nodes.get('range-value').textContent, '9 thg 11 – 10 thg 11, 2026');
+  assert.equal(calls.findLast(({ url }) => url.pathname.endsWith('/series')).url.searchParams.get('to'), '2026-11-10');
+  await nodes.get('watch-chart').children[0].children[1].onclick();
+  assert.equal(nodes.get('range-value').textContent, 'Mọi lúc');
+});
+
+
+test('reset to all time uses the profile minimum after returning to the overview and reloading', async () => {
+  const storage = new Map();
+  const { nodes } = await loadGrid([], undefined, storage);
+  nodes.get('range-open').onclick();
+  nodes.get('range-dialog').onclick({ target: nodes.get('range-dialog'), clientX: -1, clientY: 10 });
+  assert.equal(nodes.get('range-dialog').open, false);
+  nodes.get('range-open').onclick();
+  await nodes.get('range-reset').onclick();
+  const reloaded = await loadGrid([], undefined, storage);
+  assert.equal(reloaded.nodes.get('range-value').textContent, 'Mọi lúc');
+  const request = reloaded.calls.findLast(({ url }) => url.pathname.endsWith('/summary'));
+  assert.equal(request.url.searchParams.get('from'), '2026-10-01');
+  assert.equal(request.url.searchParams.get('to'), refDate);
 });

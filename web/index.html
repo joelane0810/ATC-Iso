@@ -61,14 +61,41 @@
         <h2 id="gallery-heading" tabindex="-1">Tổng quan thay đổi</h2>
         <p id="gallery-summary"></p>
         <p class="search-only">Chỉ quảng cáo Google Tìm kiếm</p>
+        <div class="range-toolbar">
+          <button id="range-open" class="chip range-chip" type="button" aria-haspopup="dialog"
+            aria-controls="range-dialog" disabled>
+            <span>Phạm vi ngày</span><strong id="range-value">Mọi lúc</strong><span aria-hidden="true">▾</span>
+          </button>
+          <span id="comparison"></span>
+        </div>
+        <dialog id="range-dialog" aria-label="Phạm vi ngày">
+          <form id="range-form">
+            <div class="range-inputs">
+              <label>Ngày bắt đầu*<input id="range-from" placeholder="31 thg 5, 2018" autocomplete="off" required></label>
+              <label>Ngày kết thúc*<input id="range-to" placeholder="31 thg 5, 2018" autocomplete="off" required></label>
+            </div>
+            <p id="range-error" role="status" hidden></p>
+            <div class="calendar-nav">
+              <label class="calendar-month-choice">
+                <span id="calendar-title" aria-hidden="true"></span><span aria-hidden="true">▾</span>
+                <select id="calendar-jump" aria-label="Chuyển đến tháng"></select>
+              </label>
+              <button id="calendar-prev" type="button" aria-label="Tháng trước">‹</button>
+              <button id="calendar-next" type="button" aria-label="Tháng sau">›</button>
+            </div>
+            <div id="calendar-weekdays" class="calendar-grid" aria-hidden="true">
+              <span>T2</span><span>T3</span><span>T4</span><span>T5</span><span>T6</span><span>T7</span><span>CN</span>
+            </div>
+            <div id="calendar-months" tabindex="0" aria-label="Lịch theo tháng"></div>
+            <button id="range-reset" type="button">Đặt lại: Mọi lúc</button>
+            <footer class="range-footer">
+              <span>Dữ liệu theo giờ Việt Nam</span>
+              <button id="range-cancel" type="button">Hủy</button>
+              <button class="action" type="submit">OK</button>
+            </footer>
+          </form>
+        </dialog>
         <div id="overview">
-          <label class="chip overview-period">Khoảng so sánh
-            <select id="period">
-              <option value="day">Hôm nay</option>
-              <option value="7d">7 ngày</option>
-              <option value="30d">30 ngày</option>
-            </select>
-          </label>
           <div id="totals" class="totals" role="group" aria-label="Lọc theo thay đổi"></div>
           <div id="overview-watches"></div>
         </div>
@@ -81,22 +108,6 @@
             <button id="scan-watch" class="action" type="button">Quét mục này</button>
           </div>
           <div id="watch-chart"></div>
-          <div class="filters date-filters">
-            <label class="chip">Thời gian chạy
-              <select id="ad-period">
-                <option value="all">Mọi lúc</option>
-                <option value="today">Hôm nay</option>
-                <option value="7d">7 ngày qua</option>
-                <option value="30d">30 ngày qua</option>
-                <option value="custom">Tuỳ chọn</option>
-              </select>
-            </label>
-            <div id="ad-dates" class="filters" hidden>
-              <label>Từ <input id="ad-from" type="date"></label>
-              <label>Đến <input id="ad-to" type="date"></label>
-            </div>
-            <p id="ad-date-error" role="status" hidden>Ngày bắt đầu phải trước hoặc bằng ngày kết thúc.</p>
-          </div>
           <div id="group-view">
             <label class="chip">Sắp xếp theo
               <select id="group-sort">
