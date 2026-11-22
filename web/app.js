@@ -2,9 +2,19 @@ const byId = (id) => document.getElementById(id);
 const profile = byId('profile');
 const filter = byId('filter');
 const query = byId('query');
-const adPeriod = byId('ad-period');
-const adFrom = byId('ad-from');
-const adTo = byId('ad-to');
+const rangeDialog = byId('range-dialog');
+const rangeOpen = byId('range-open');
+const rangeFrom = byId('range-from');
+const rangeTo = byId('range-to');
+const calendar = byId('calendar-months');
+const calendarJump = byId('calendar-jump');
+const rangeStorage = 'atc-iso-date-range';
+let rangeChoice;
+let watchBounds;
+let chartPending = false;
+let calendarMonths = [];
+let calendarIndex = 0;
+let selectingEnd = false;
 const format = byId('format');
 const scan = byId('scan');
 const errorMessage = byId('error');
@@ -34,11 +44,10 @@ const regionNames = new Intl.DisplayNames('vi', { type: 'region', fallback: 'non
 const dayMs = 86_400_000;
 let overviewFilter = '';
 let openGroup;
-let period = 'day';
+const renderedGroups = new Map();
 let mode = 'groups';
 const expandedWatches = new Set();
 const expandedLists = new Set();
-let seriesVersion = 0;
 let suggestionVersion = 0;
 let suggestionTimer;
 let scanning = false;
@@ -114,7 +123,8 @@ async function selectProfile() {
   expandedWatches.clear();
   expandedLists.clear();
   clearSuggestions();
-  ++seriesVersion;
+  watchBounds = undefined;
+  if (rangeDialog.open) rangeDialog.close();
   selectedAd = undefined;
   watches = [];
   ads = [];
@@ -126,34 +136,66 @@ async function selectProfile() {
   await loadProfileData();
 }
 
-async function loadProfileData() {
+async function loadProfileData({ refreshChart = true, reopenGroup = false } = {}) {
   const version = ++loadVersion;
   const id = profile.value;
   if (!id) return;
   const currentWatch = watchId;
-  const filters = new URLSearchParams({ filter: filter.value, q: query.value, format: format.value, watchId: currentWatch });
-  const grouped = mode === 'groups';
+  const currentGroup = reopenGroup && openGroup;
   const path = profilePath(id);
-  const groupFilters = new URLSearchParams({ filter: 'all', watchId: currentWatch });
-  const [watchlist, results, overview] = await Promise.all([
-    api(path + '/watchlist'),
-    currentWatch && (!grouped || adDateRange()) ? api(path + '/ads?' + (grouped ? groupFilters : filters)) : [],
-    api(path + '/summary?' + new URLSearchParams({ window: period })),
+  const filters = new URLSearchParams({
+    filter: filter.value || 'all', q: query.value || '', format: format.value || '', watchId: currentWatch,
+  });
+  const series = currentWatch && (refreshChart || chartPending || !watchBounds)
+    ? loadSeries(path, currentWatch, undefined, rangeChoice?.from ? rangeChoice : null).then(
+      (data) => ({ data }), () => ({ error: true }),
+    )
+    : null;
+  if (series) {
+    chartPending = true;
+    byId('watch-chart').replaceChildren(element('p', 'Đang tải biểu đồ…'));
+  }
+  const chart = await series;
+  if (version !== loadVersion) return;
+  if (chart?.data) watchBounds = chart.data;
+  const range = currentWatch || rangeChoice?.from ? activeRange() : null;
+  const fetchSummary = (dates) => api(path + '/summary?' + withRange(new URLSearchParams(), dates));
+  const [list, overview] = await Promise.all([
+    api(path + '/watchlist'), fetchSummary(range),
   ]);
   if (version !== loadVersion) return;
-  watches = watchlist;
+
+  // The unbounded summary supplies the latest date and profile minimum.
+  const allOverview = !currentWatch && rangeChoice === 'all' && overview.minDate;
+  const data = allOverview
+    ? await fetchSummary({ from: overview.minDate, to: overview.refDate })
+    : overview;
+  if (version !== loadVersion) return;
+  summary = data;
+  const results = currentWatch && mode === 'grid'
+    ? await api(path + '/ads?' + withRange(filters, range ?? activeRange()))
+    : [];
+  if (version !== loadVersion) return;
+  watches = list;
   ads = results.filter((ad) => ad.platform === 'search');
-  summary = overview;
   watchCounts = new Map(summary.watches.map((watch) => [watch.watchId, watch]));
-  if (!watches.some((watch) => watch.id === watchId)) watchId = '';
+  if (watchId && !watches.some((watch) => watch.id === watchId)) return chooseWatch('');
   renderWatches();
   renderAds();
   renderScanStatus();
+  chartPending = false;
+  if (chart?.data) {
+    renderChart(byId('watch-chart'), chart.data, watches.find((watch) => watch.id === watchId)?.label);
+  } else if (chart?.error) {
+    byId('watch-chart').replaceChildren(element('p', 'Không tải được biểu đồ.'));
+  }
+  if (currentGroup) await renderedGroups.get(currentGroup.watchId)?.get(currentGroup.key)?.onclick();
 }
 
 function chooseWatch(id) {
   ++loadVersion;
-  ++seriesVersion;
+  watchBounds = undefined;
+  if (rangeDialog.open) rangeDialog.close();
   mode = 'groups';
   watchId = id;
   ads = [];
@@ -162,12 +204,7 @@ function chooseWatch(id) {
     const watch = watches.find((watch) => watch.id === id);
     if (watch) byId('group-' + kindOf(watch)).open = true;
   }
-  renderWatches();
-  renderAds();
   byId('gallery-heading').focus({ preventScroll: true });
-  if (id) return run(() => Promise.all([
-    loadWatchSeries(id), adDateRange() && loadProfileData(),
-  ]));
   return run(loadProfileData);
 }
 
@@ -292,6 +329,8 @@ function preview(ad, thumbnail = false) {
 
 function renderAds() {
   closeGroup();
+  renderedGroups.clear();
+  renderRangeControl();
   const watch = watches.find(({ id }) => id === watchId);
   byId('overview').hidden = Boolean(watch);
   byId('watch-view').hidden = !watch;
@@ -303,7 +342,7 @@ function renderAds() {
       byId('mode-' + view).setAttribute('aria-pressed', String(mode === view));
     }
     if (mode === 'groups') renderWatchGroups();
-    const visible = mode === 'grid' ? filterAdDates(ads, adDateRange()) : [];
+    const visible = mode === 'grid' ? ads : [];
     const status = watchCounts.get(watchId);
     selectedAd = visible.find((ad) => ad.creativeId === selectedAd?.creativeId);
     const domain = watch.type === 'domain' ? watch.value : visible.find((ad) => ad.domain)?.domain;
@@ -325,6 +364,10 @@ function renderAds() {
 function renderOverview() {
   byId('gallery-heading').textContent = 'Tổng quan thay đổi';
   byId('gallery-summary').textContent = summary?.dataNote ?? '';
+  const prevFrom = summary?.prevFrom ?? summary?.prevDate;
+  const prevTo = summary?.prevTo ?? prevFrom;
+  byId('comparison').textContent = prevFrom ? 'So với ' + displayDate(prevFrom, shortDate)
+    + ' – ' + displayDate(prevTo, shortDate) : '';
   byId('totals').replaceChildren(...overviewTotals.map(([key, label, tone]) => {
     const button = element('button');
     button.type = 'button';
@@ -332,7 +375,7 @@ function renderOverview() {
     button.append(element('span', label),
       element('strong', summary?.totals[key] != null ? formatCount.format(summary.totals[key]) : '—'));
     if (key === 'runningAds') {
-      button.title = 'Số mẫu quảng cáo có hiển thị trong ngày dữ liệu mới nhất';
+      button.title = 'Số mẫu quảng cáo có hiển thị trong phạm vi ngày đã chọn';
     }
     button.setAttribute('aria-pressed', String(overviewFilter === key));
     button.onclick = () => {
@@ -366,7 +409,7 @@ function renderOverviewWatches() {
   const table = element('table');
   table.className = 'overview-table';
   const heading = element('tr');
-  heading.append(...['Mục theo dõi', 'Loại', 'Đang chạy (±)', 'Mới', '30 ngày', 'Quét'].map((label) => {
+  heading.append(...['Mục theo dõi', 'Loại', 'Đang chạy (±)', 'Mới', 'Xu hướng', 'Quét'].map((label) => {
     const cell = element('th', label);
     cell.setAttribute('scope', 'col');
     return cell;
@@ -444,20 +487,7 @@ function fillOverviewGroups(panel, watch, groups) {
 function renderWatchGroups() {
   const watch = watchCounts.get(watchId);
   const key = byId('group-sort').value || 'runningNow';
-  const range = adDateRange();
-  let groups = [...(watch?.groups ?? [])];
-  if (watch && range) {
-    const byGroup = new Map();
-    for (const ad of filterAdDates(ads, range)) {
-      const key = watch.groupType === 'advertiser' ? ad.advertiserId || ''
-        : ad.domain?.trim().toLowerCase().replace(/^www\./, '').replace(/\.$/, '') || '';
-      if (!byGroup.has(key)) byGroup.set(key, []);
-      const samples = byGroup.get(key);
-      if (samples.length < 4) samples.push(ad);
-    }
-    groups = groups.filter(({ key }) => byGroup.has(key))
-      .map((group) => ({ ...group, sampleAds: byGroup.get(group.key) }));
-  }
+  const groups = [...(watch?.groups ?? [])].filter((group) => group.runningNow > 0 || group.runningPrev > 0 || group.newAds > 0);
   groups.sort((a, b) =>
     (key === 'name' ? 0 : b[key] - a[key]) || a.name.localeCompare(b.name, 'vi'));
   byId('watch-groups').replaceChildren(...(groups.length
@@ -470,6 +500,8 @@ function groupRow(watch, group) {
   row.type = 'button';
   row.className = 'group-row';
   row.setAttribute('aria-expanded', 'false');
+  if (!renderedGroups.has(watch.watchId)) renderedGroups.set(watch.watchId, new Map());
+  renderedGroups.get(watch.watchId).set(group.key, row);
   const heading = element('span');
   heading.className = 'group-heading';
   heading.append(badge(group.status === 'new' ? (group.groupType === 'advertiser' ? 'Nhà QC mới' : 'Dự án mới') : groupLabels[group.status], group.status), element('strong', group.name));
@@ -511,14 +543,14 @@ function groupRow(watch, group) {
     selectedAd = undefined;
     showDetail();
     if (alreadyOpen) return;
-    const request = { row, panel };
+    const request = { row, panel, watchId: watch.watchId, key: group.key };
     openGroup = request;
     row.setAttribute('aria-expanded', 'true');
     panel.hidden = false;
     const message = element('p', 'Đang tải mẫu…');
     message.setAttribute('role', 'status');
     panel.append(message);
-    return loadGroupAds(request, watch.watchId, group.key, message);
+    return loadGroupAds(request, group.name, message);
   };
   return wrapper;
 }
@@ -532,20 +564,22 @@ function closeGroup() {
   openGroup = undefined;
 }
 
-async function loadGroupAds(request, id, key, message) {
-  const params = new URLSearchParams({ filter: 'all', q: '', format: '', watchId: id, group: key });
+async function loadGroupAds(request, name, message) {
+  const { watchId: id, key } = request;
+  const range = activeRange();
+  const params = withRange(new URLSearchParams({ filter: 'all', watchId: id, group: key }), range);
   const path = profilePath(profile.value);
   const chart = element('div', 'Đang tải biểu đồ…');
   request.panel.replaceChildren(chart, message);
-  const graph = loadSeries(path, id, key).then((series) => {
-    if (openGroup === request) renderChart(chart, series.points);
+  const graph = loadSeries(path, id, key, range).then((series) => {
+    if (openGroup === request) renderChart(chart, series, name);
   }).catch(() => {
     if (openGroup === request) chart.textContent = 'Không tải được biểu đồ.';
   });
   try {
     const results = await api(path + '/ads?' + params);
     if (openGroup !== request) return;
-    const visible = filterAdDates(results.filter((ad) => ad.platform === 'search'), watchId ? adDateRange() : null);
+    const visible = results.filter((ad) => ad.platform === 'search');
     if (!visible.length) {
       message.textContent = 'Chưa có mẫu phù hợp.';
     } else {
@@ -609,34 +643,190 @@ function dateInVietnam(value) {
   return [part('year'), part('month'), part('day')].join('-');
 }
 
-function adDateRange() {
-  if (adPeriod.value === 'custom') {
-    const from = adFrom.value;
-    const to = adTo.value;
-    return (from || to) && !(from && to && from > to) ? { from, to } : null;
+function validDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value ?? '')) return false;
+  const date = new Date(value);
+  return Number.isFinite(+date) && date.toISOString().slice(0, 10) === value;
+}
+
+function shiftDate(date, days) {
+  return new Date(Date.parse(date) + days * dayMs).toISOString().slice(0, 10);
+}
+
+function dateBounds() {
+  const ref = watchBounds?.refDate ?? summary?.refDate;
+  const min = watchBounds ? watchBounds.minDate : summary?.minDate;
+  return ref ? { from: min && min <= ref ? min : ref, to: ref } : null;
+}
+
+function activeRange() {
+  if (rangeChoice?.from) return rangeChoice;
+  const bounds = dateBounds();
+  if (!bounds || watchId || rangeChoice === 'all') return bounds;
+  return { from: bounds.to, to: bounds.to };
+}
+
+function withRange(params, range) {
+  if (range) {
+    params.set('from', range.from);
+    params.set('to', range.to);
   }
-  const days = { today: 1, '7d': 7, '30d': 30 }[adPeriod.value];
-  if (!days) return null;
-  const to = dateInVietnam(new Date());
-  const from = new Date(Date.parse(to) - (days - 1) * dayMs).toISOString().slice(0, 10);
-  return { from, to };
+  return params;
 }
 
-function filterAdDates(results, range) {
-  if (!range) return results;
-  return results.filter((ad) => {
-    const first = dateInVietnam(ad.firstShown);
-    const last = dateInVietnam(ad.lastShown);
-    return first && last && first <= last
-      && (!range.from || last >= range.from) && (!range.to || first <= range.to);
-  });
+function dateText(date, includeYear = true) {
+  const [year, month, day] = date.split('-');
+  return Number(day) + ' thg ' + Number(month) + (includeYear ? ', ' + year : '');
 }
 
-function renderDateControls() {
-  const custom = adPeriod.value === 'custom';
-  byId('ad-dates').hidden = !custom;
-  byId('ad-date-error').hidden = !custom || !adFrom.value || !adTo.value || adFrom.value <= adTo.value;
+function rangeText(range) {
+  const { from, to } = range;
+  if (from === to) return dateText(to);
+  return dateText(from, from.slice(0, 4) !== to.slice(0, 4)) + ' – ' + dateText(to);
 }
+
+function parseDateText(value) {
+  const input = value.trim().toLowerCase();
+  const parts = /^(\d{1,2})\s+thg\s+(\d{1,2})\s*,\s*(\d{4})$/.exec(input);
+  const date = parts ? [parts[3], parts[2].padStart(2, '0'), parts[1].padStart(2, '0')].join('-') : input;
+  return validDate(date) ? date : '';
+}
+
+function renderRangeControl() {
+  const range = activeRange();
+  rangeOpen.disabled = !dateBounds();
+  byId('range-value').textContent = range && rangeChoice !== 'all' && (rangeChoice || !watchId)
+    ? rangeText(range) : 'Mọi lúc';
+  byId('comparison').hidden = Boolean(watchId);
+}
+
+function applyRange(choice) {
+  rangeChoice = choice;
+  try { localStorage.setItem(rangeStorage, JSON.stringify(choice)); } catch {}
+  if (rangeDialog.open) rangeDialog.close();
+  renderRangeControl();
+  return run(() => loadProfileData({ reopenGroup: true }));
+}
+
+function monthTitle(month) {
+  return 'THG ' + Number(month.slice(5)) + ' ' + month.slice(0, 4);
+}
+
+function setCalendarMonth(index, scroll = true) {
+  calendarIndex = Math.max(0, Math.min(calendarMonths.length - 1, index));
+  const month = calendarMonths[calendarIndex];
+  byId('calendar-title').textContent = month.title;
+  calendarJump.value = String(calendarIndex);
+  byId('calendar-prev').disabled = calendarIndex === 0;
+  byId('calendar-next').disabled = calendarIndex === calendarMonths.length - 1;
+  if (scroll) calendar.scrollTop = month.section.offsetTop;
+}
+
+function paintCalendar() {
+  const from = parseDateText(rangeFrom.value);
+  const to = parseDateText(rangeTo.value);
+  for (const { days } of calendarMonths) {
+    for (const [date, button] of days) {
+      const start = date === from;
+      const end = date === to;
+      button.className = (from && to && date >= from && date <= to ? 'in-range ' : '')
+        + (start ? 'range-start ' : '') + (end ? 'range-end' : '');
+      button.setAttribute('aria-pressed', String(start || end));
+    }
+  }
+  byId('range-error').hidden = true;
+}
+
+function pickDate(date) {
+  const start = parseDateText(rangeFrom.value);
+  if (!selectingEnd || !start) {
+    rangeFrom.value = dateText(date);
+    rangeTo.value = '';
+    selectingEnd = true;
+  } else {
+    rangeFrom.value = dateText(date < start ? date : start);
+    rangeTo.value = dateText(date < start ? start : date);
+    selectingEnd = false;
+  }
+  paintCalendar();
+}
+
+function buildCalendar(bounds) {
+  calendarMonths = [];
+  const cursor = new Date(bounds.from.slice(0, 7) + '-01');
+  while (cursor.toISOString().slice(0, 7) <= bounds.to.slice(0, 7)) {
+    const month = cursor.toISOString().slice(0, 7);
+    const offset = (cursor.getUTCDay() + 6) % 7;
+    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+    const title = monthTitle(month);
+    const section = element('section');
+    const grid = element('div');
+    grid.className = 'calendar-grid';
+    section.append(element('h3', title), grid);
+    for (let i = 0; i < offset; i++) grid.append(element('span'));
+    const days = [];
+    for (let date = month + '-01'; date < cursor.toISOString().slice(0, 10); date = shiftDate(date, 1)) {
+      const button = element('button', String(Number(date.slice(8))));
+      button.type = 'button';
+      button.disabled = date < bounds.from || date > bounds.to;
+      button.setAttribute('aria-label', dateText(date));
+      const selectedDate = date;
+      button.onclick = () => pickDate(selectedDate);
+      grid.append(button);
+      days.push([date, button]);
+    }
+    calendarMonths.push({ month, title, section, days });
+  }
+  calendar.replaceChildren(...calendarMonths.map(({ section }) => section));
+  calendarJump.replaceChildren(...calendarMonths.map(({ title }, index) => new Option(title, String(index))));
+}
+
+rangeOpen.onclick = () => {
+  const bounds = dateBounds();
+  if (!bounds) return;
+  const range = activeRange();
+  rangeFrom.value = dateText(range.from);
+  rangeTo.value = dateText(range.to);
+  selectingEnd = false;
+  buildCalendar(bounds);
+  paintCalendar();
+  rangeDialog.showModal();
+  const index = calendarMonths.findIndex(({ month }) => month === range.to.slice(0, 7));
+  setCalendarMonth(index < 0 ? calendarMonths.length - 1 : index);
+  rangeFrom.focus({ preventScroll: true });
+};
+
+byId('calendar-prev').onclick = () => setCalendarMonth(calendarIndex - 1);
+byId('calendar-next').onclick = () => setCalendarMonth(calendarIndex + 1);
+calendarJump.onchange = () => setCalendarMonth(Number(calendarJump.value));
+calendar.onscroll = () => {
+  const next = calendarMonths.findIndex(({ section }) => section.offsetTop > calendar.scrollTop + 8);
+  setCalendarMonth(next < 0 ? calendarMonths.length - 1 : Math.max(0, next - 1), false);
+};
+rangeFrom.oninput = rangeTo.oninput = () => { selectingEnd = false; paintCalendar(); };
+byId('range-cancel').onclick = () => rangeDialog.close();
+byId('range-reset').onclick = () => applyRange('all');
+rangeDialog.onclick = (event) => {
+  if (event.target !== rangeDialog) return;
+  const { left, right, top, bottom } = rangeDialog.getBoundingClientRect();
+  if (event.clientX < left || event.clientX > right || event.clientY < top || event.clientY > bottom) {
+    rangeDialog.close();
+  }
+};
+byId('range-form').onsubmit = (event) => {
+  event.preventDefault();
+  const from = parseDateText(rangeFrom.value);
+  const to = parseDateText(rangeTo.value);
+  const bounds = dateBounds();
+  const error = byId('range-error');
+  if (!from || !to || from > to || from < bounds.from || to > bounds.to) {
+    error.textContent = 'Nhập khoảng ngày từ ' + dateText(bounds.from) + ' đến ' + dateText(bounds.to)
+      + ', với ngày bắt đầu trước hoặc bằng ngày kết thúc.';
+    error.hidden = false;
+    return;
+  }
+  return applyRange({ from, to });
+};
 
 function isRunningAd(ad) {
   if (typeof ad.isRunning === 'boolean') return ad.isRunning;
@@ -729,83 +919,206 @@ function svgElement(tag, attributes = {}, label) {
 
 function sparkline(points) {
   const svg = svgElement('svg', { viewBox: '0 0 96 24', class: 'sparkline', role: 'img',
-    'aria-label': 'Số ads đang chạy trong 30 ngày' });
+    'aria-label': 'Số ads đang chạy trong phạm vi ngày đã chọn' });
   const max = Math.max(1, ...points.map(({ running }) => running));
-  svg.append(svgElement('polyline', {
-    points: points.map(({ running }, index) =>
-      [2 + index * 92 / Math.max(1, points.length - 1), 22 - running * 20 / max].join(',')).join(' '),
-  }));
+  if (points.length === 1) {
+    svg.append(svgElement('circle', { cx: 48, cy: 22 - points[0].running * 20 / max, r: 2, class: 'chart-point' }));
+  } else if (points.length > 1) {
+    svg.append(svgElement('polyline', {
+      points: points.map(({ running }, index) =>
+        [2 + index * 92 / (points.length - 1), 22 - running * 20 / max].join(',')).join(' '),
+    }));
+  }
   return svg;
 }
 
-function renderChart(container, points) {
-  container.textContent = '';
+function axisScale(points, key) {
+  const max = Math.max(1, ...points.map((point) => point[key]));
+  const rawStep = Math.max(1, max / 4);
+  const magnitude = 10 ** Math.floor(Math.log10(rawStep));
+  const step = [1, 2, 5, 10].map((value) => value * magnitude).find((value) => value >= rawStep);
+  const ticks = Array.from({ length: Math.ceil(max / step) + 1 }, (_, index) => index * step);
+  return { max: ticks.at(-1), ticks };
+}
+
+function renderChart(container, series, name) {
+  const { points, bucket } = series;
+  const range = { from: series.from ?? points[0]?.date, to: series.to ?? series.refDate };
+  const header = element('div');
+  header.className = 'chart-header';
+  const title = [name, range.from && range.to ? rangeText(range) : ''].filter(Boolean).join(' · ');
+  header.append(element('h3', title));
+  if (bucket === 'week') header.append(element('span', 'theo tuần'));
+  const reset = element('button', 'Đặt lại');
+  reset.type = 'button';
+  reset.disabled = rangeChoice === 'all' || (!rangeChoice && Boolean(watchId));
+  reset.onclick = () => applyRange('all');
+  header.append(reset);
   if (!points.length) {
-    container.textContent = 'Chưa có dữ liệu biểu đồ.';
+    container.replaceChildren(header, element('p', 'Chưa có dữ liệu biểu đồ.'));
     return;
   }
-  const chart = svgElement('svg', { viewBox: '0 0 600 166', class: 'series-chart',
-    role: 'group', 'aria-label': 'Số ads đang chạy và ads mới theo ngày trong 90 ngày' });
-  const readout = element('div');
-  readout.className = 'chart-readout';
-  const baseline = 140;
-  const max = Math.max(1, ...points.map(({ running, newAds }) => Math.max(running, newAds)));
-  const step = 544 / points.length;
-  const x = (index) => 39 + step * (index + .5);
-  const y = (count) => baseline - count * 118 / max;
-  for (const count of [...new Set([0, Math.round(max / 2), max])]) {
-    chart.append(svgElement('line', { x1: 39, x2: 583, y1: y(count), y2: y(count), class: 'axis' }),
-      svgElement('text', { x: 35, y: y(count) + 4, 'text-anchor': 'end' }, formatCount.format(count)));
+
+  const labels = ['Ads đang chạy', 'Ads mới'];
+  const width = 700;
+  const height = 290;
+  const left = 56;
+  const right = 680;
+  const step = (right - left) / points.length;
+  const x = (index) => left + (index + .5) * step;
+  const svg = svgElement('svg', { viewBox: [0, 0, width, height].join(' '), class: 'series-chart',
+    role: 'group', 'aria-label': labels.join(' và ') });
+  const plot = element('div');
+  plot.className = 'chart-plot';
+  const table = element('table');
+  table.className = 'chart-table';
+  const head = element('thead');
+  const headings = element('tr');
+  for (const label of [bucket === 'week' ? 'Tuần bắt đầu' : 'Ngày', ...labels]) {
+    const cell = element('th', label);
+    cell.setAttribute('scope', 'col');
+    headings.append(cell);
   }
+  head.append(headings);
+  const body = element('tbody');
+  table.append(head, body);
+  table.hidden = true;
+  const toggle = element('button', 'Xem bảng');
+  toggle.type = 'button';
+  toggle.setAttribute('aria-pressed', 'false');
+  toggle.onclick = () => {
+    table.hidden = !table.hidden;
+    plot.hidden = !table.hidden;
+    toggle.textContent = table.hidden ? 'Xem bảng' : 'Xem biểu đồ';
+    toggle.setAttribute('aria-pressed', String(!table.hidden));
+  };
+  header.append(toggle);
+
+  const drawAxis = (key, label, top, bottom) => {
+    const scale = axisScale(points, key);
+    const y = (value) => bottom - value / scale.max * (bottom - top);
+    svg.append(svgElement('text', { x: left, y: top - 12, class: 'chart-label' }, label));
+    for (const tick of scale.ticks) {
+      svg.append(svgElement('line', { x1: left, x2: right, y1: y(tick), y2: y(tick), class: 'axis' }),
+        svgElement('text', { x: left - 8, y: y(tick) + 4, 'text-anchor': 'end' }, formatCount.format(tick)));
+    }
+    return y;
+  };
+  const runY = drawAxis('running', labels[0], 30, 138);
+  const runPoints = points.map(({ running }, index) => [x(index), runY(running)].join(','));
+  if (points.length === 1) {
+    svg.append(svgElement('circle', { cx: x(0), cy: runY(points[0].running), r: 3, class: 'chart-point' }));
+  } else {
+    svg.append(svgElement('polygon', { class: 'chart-area',
+      points: [x(0) + ',138', ...runPoints, x(points.length - 1) + ',138'].join(' ') }),
+    svgElement('polyline', { class: 'chart-line', points: runPoints.join(' ') }));
+  }
+  const barY = drawAxis('newAds', labels[1], 173, 263);
+  const barWidth = Math.min(38, Math.max(1, step - 2));
   for (const [index, point] of points.entries()) {
-    chart.append(svgElement('rect', { x: x(index) - step * .36, y: y(point.newAds),
-      width: step * .72, height: baseline - y(point.newAds), class: 'chart-bar' }));
+    const y = barY(point.newAds);
+    const barLeft = x(index) - barWidth / 2;
+    const barRight = barLeft + barWidth;
+    const radius = Math.min(2, barWidth / 2, 263 - y);
+    svg.append(svgElement('path', { class: 'chart-bar', d:
+      `M ${barLeft} 263 V ${y + radius} Q ${barLeft} ${y} ${barLeft + radius} ${y}
+       H ${barRight - radius} Q ${barRight} ${y} ${barRight} ${y + radius} V 263 Z` }));
+    const row = element('tr');
+    row.append(element('td', displayDate(point.date)), ...['running', 'newAds'].map(
+      (key) => element('td', formatCount.format(point[key])),
+    ));
+    body.append(row);
   }
-  chart.append(svgElement('polyline', { class: 'chart-line',
-    points: points.map(({ running }, index) => [x(index), y(running)].join(',')).join(' ') }));
-  const tickCount = Math.min(5, points.length);
+
+  const duration = (Date.parse(range.to) - Date.parse(range.from)) / dayMs;
+  const tickCount = Math.min(points.length, duration <= 10 ? 7 : 6);
+  let previousLabel;
   for (let tick = 0; tick < tickCount; tick++) {
     const index = Math.round(tick * (points.length - 1) / Math.max(1, tickCount - 1));
+    const date = points[index].date;
     const anchor = tick === 0 ? 'start' : tick === tickCount - 1 ? 'end' : 'middle';
-    chart.append(svgElement('text', { x: x(index), y: 158, 'text-anchor': anchor },
-      displayDate(points[index].date, shortDate)));
+    const label = duration > 60 ? date.slice(5, 7) + '/' + date.slice(0, 4) : displayDate(date, shortDate);
+    if (label === previousLabel) continue;
+    previousLabel = label;
+    svg.append(svgElement('text', { x: x(index), y: 282, 'text-anchor': anchor }, label));
   }
-  const highlight = svgElement('line', { y1: 19, y2: baseline, class: 'chart-highlight' });
-  chart.append(highlight);
-  for (const [index, point] of points.entries()) {
-    const label = displayDate(point.date, shortDate) + ' · ' + formatCount.format(point.running)
-      + ' đang chạy · ' + formatCount.format(point.newAds) + ' ads mới';
-    const hit = svgElement('rect', { x: x(index) - step / 2, y: 16, width: step, height: 126,
-      class: 'chart-hit', tabindex: 0, 'aria-label': label });
-    hit.onmouseenter = hit.onfocus = () => {
-      readout.textContent = label;
-      highlight.setAttribute('x1', x(index));
-      highlight.setAttribute('x2', x(index));
-    };
-    chart.append(hit);
-  }
-  const legend = element('div');
-  legend.className = 'chart-legend';
-  legend.append(element('span', 'Đang chạy'), element('span', 'Ads mới'));
-  container.replaceChildren(legend, chart, readout);
+
+  const selection = svgElement('rect', { y: 30, height: 233, class: 'chart-selection', visibility: 'hidden' });
+  const highlight = svgElement('line', { y1: 30, y2: 263, class: 'chart-highlight', visibility: 'hidden' });
+  const hit = svgElement('rect', { x: left, y: 30, width: right - left, height: 233,
+    class: 'chart-hit', tabindex: 0, 'aria-label': 'Dùng phím mũi tên để xem từng mốc ngày' });
+  svg.append(selection, highlight, hit);
+  const tooltip = element('div');
+  tooltip.className = 'chart-tooltip';
+  tooltip.setAttribute('role', 'status');
+  tooltip.hidden = true;
+  let dragStart;
+  let cursor = 0;
+  const read = (index) => {
+    cursor = index;
+    const point = points[index];
+    tooltip.textContent = (bucket === 'week' ? 'Tuần từ ' : '') + displayDate(point.date)
+      + '\n' + labels[0] + ': ' + formatCount.format(point.running)
+      + '\n' + labels[1] + ': ' + formatCount.format(point.newAds);
+    tooltip.style.left = (x(index) / width * 100) + '%';
+    tooltip.className = 'chart-tooltip' + (x(index) > width * .65 ? ' tooltip-left' : '');
+    tooltip.hidden = false;
+    highlight.setAttribute('x1', x(index));
+    highlight.setAttribute('x2', x(index));
+    highlight.setAttribute('visibility', 'visible');
+  };
+  const clear = () => {
+    tooltip.hidden = true;
+    highlight.setAttribute('visibility', 'hidden');
+    selection.setAttribute('visibility', 'hidden');
+    dragStart = undefined;
+  };
+  const indexAt = (event) => {
+    const box = svg.getBoundingClientRect();
+    const position = (event.clientX - box.left) * width / box.width;
+    return Math.max(0, Math.min(points.length - 1, Math.floor((position - left) / step)));
+  };
+  hit.onpointermove = (event) => {
+    const index = indexAt(event);
+    read(index);
+    if (dragStart === undefined) return;
+    selection.setAttribute('x', x(Math.min(index, dragStart)) - step / 2);
+    selection.setAttribute('width', (Math.abs(index - dragStart) + 1) * step);
+    selection.setAttribute('visibility', 'visible');
+  };
+  hit.onpointerdown = (event) => {
+    if (event.button !== 0 || dragStart !== undefined) return;
+    dragStart = indexAt(event);
+    hit.setPointerCapture(event.pointerId);
+  };
+  hit.onpointerup = (event) => {
+    const end = indexAt(event);
+    if (dragStart === undefined || end === dragStart) return clear();
+    const start = Math.min(dragStart, end);
+    const finish = Math.max(dragStart, end);
+    const first = points[start].date;
+    const last = bucket !== 'week' ? points[finish].date
+      : points[finish + 1] ? shiftDate(points[finish + 1].date, -1) : range.to;
+    clear();
+    return applyRange({ from: first < range.from ? range.from : first, to: last > range.to ? range.to : last });
+  };
+  hit.onpointerleave = () => { if (dragStart === undefined) clear(); };
+  hit.onfocus = () => read(cursor);
+  hit.onblur = clear;
+  hit.onpointercancel = hit.onlostpointercapture = clear;
+  hit.onkeydown = (event) => {
+    if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+    event.preventDefault();
+    read(Math.max(0, Math.min(points.length - 1, cursor + (event.key === 'ArrowLeft' ? -1 : 1))));
+  };
+  plot.append(svg, tooltip);
+  container.replaceChildren(header, plot, table);
 }
 
-function loadSeries(path, id, group) {
-  const params = new URLSearchParams({ watchId: id, days: '90' });
+function loadSeries(path, id, group, range) {
+  const params = withRange(new URLSearchParams({ watchId: id }), range);
   if (group !== undefined) params.set('group', group);
   return api(path + '/series?' + params);
-}
-
-async function loadWatchSeries(id) {
-  const version = ++seriesVersion;
-  const chart = byId('watch-chart');
-  chart.replaceChildren(element('p', 'Đang tải biểu đồ…'));
-  try {
-    const { points } = await loadSeries(profilePath(profile.value), id);
-    if (version === seriesVersion) renderChart(chart, points);
-  } catch {
-    if (version === seriesVersion) chart.replaceChildren(element('p', 'Không tải được biểu đồ.'));
-  }
 }
 
 function scanButton(label, id, fullLabel) {
@@ -848,7 +1161,7 @@ async function refreshStatus(reload = false) {
     if (reload) startingScan = false;
     renderScanStatus();
     if (reload && !scanning) {
-      await Promise.all([loadProfileData(), watchId && loadWatchSeries(watchId)]);
+      await loadProfileData();
     }
   } finally {
     if (version === statusVersion) {
@@ -944,25 +1257,7 @@ watchForm.onfocusout = (event) => {
 };
 
 profile.onchange = () => run(selectProfile);
-byId('period').onchange = (event) => {
-  period = event.currentTarget.value;
-  return run(loadProfileData);
-};
-filter.onchange = format.onchange = query.oninput = () => run(loadProfileData);
-adPeriod.onchange = adFrom.onchange = adTo.onchange = () => {
-  try {
-    localStorage.setItem('atc-iso-ad-period', JSON.stringify({
-      period: adPeriod.value, from: adFrom.value, to: adTo.value,
-    }));
-  } catch {}
-  renderDateControls();
-  if (mode === 'groups' && adDateRange()) {
-    closeGroup();
-    showDetail();
-    return run(loadProfileData);
-  }
-  renderAds();
-};
+filter.onchange = format.onchange = query.oninput = () => run(() => loadProfileData({ refreshChart: false }));
 byId('group-sort').onchange = () => {
   closeGroup();
   showDetail();
@@ -973,10 +1268,9 @@ for (const view of ['groups', 'grid']) {
     if (mode === view) return;
     mode = view;
     ads = [];
-    ++loadVersion;
     selectedAd = undefined;
     renderAds();
-    if (view === 'grid' || adDateRange()) return run(loadProfileData);
+    if (view === 'grid') return run(() => loadProfileData({ refreshChart: false }));
   };
 }
 
@@ -1013,17 +1307,12 @@ watchForm.onsubmit = (event) => {
 
 scan.onclick = () => startScan();
 
-adPeriod.value = 'all';
-adFrom.value = adTo.value = '';
 try {
-  const saved = JSON.parse(localStorage.getItem('atc-iso-ad-period'));
-  if (['all', 'today', '7d', '30d', 'custom'].includes(saved?.period)) {
-    adPeriod.value = saved.period;
-    adFrom.value = saved.from || '';
-    adTo.value = saved.to || '';
+  const saved = JSON.parse(localStorage.getItem(rangeStorage));
+  if (saved === 'all' || (validDate(saved?.from) && validDate(saved?.to) && saved.from <= saved.to)) {
+    rangeChoice = saved;
   }
 } catch {}
-renderDateControls();
 
 let preferred;
 try { preferred = localStorage.getItem('atc-iso-profile'); } catch {}
