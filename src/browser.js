@@ -368,9 +368,11 @@ export async function openChromeClient({
         debugSaved = true;
         try {
           mkdirSync(debugDir, { recursive: true });
+          writeFileSync(joinPath(debugDir, 'quoc-gia-loi.txt'), ['timeout', detailPage.url(), ...seenUrls.slice(-60)].join('\n'));
           await detailPage.screenshot({ path: joinPath(debugDir, 'quoc-gia-loi.png'), fullPage: true });
-          writeFileSync(joinPath(debugDir, 'quoc-gia-loi.txt'), [detailPage.url(), ...seenUrls.slice(-60)].join('\n'));
-        } catch {}
+        } catch (error) {
+          try { writeFileSync(joinPath(debugDir, 'quoc-gia-loi-ghi.txt'), String(error?.stack || error)); } catch {}
+        }
       }
       return null;
     }
