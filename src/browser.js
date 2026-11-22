@@ -9,7 +9,7 @@ import { BlockedError, isBlockedResponse, parseCreativeRegions, RPC_BASE } from 
 
 const landingUrl = 'https://adstransparency.google.com/?region=anywhere';
 const blockedMessage = 'Google đã chặn lượt quét';
-const previewTimeout = 8_000;
+const imageTimeout = 8_000;
 const imageExtensions = new Map([
   ['image/jpeg', '.jpg'],
   ['image/png', '.png'],
@@ -52,142 +52,8 @@ function assertUnblocked({ redirectedTo, ...response }) {
   }
 }
 
-// These functions are evaluated in Chrome.
-export function installPreview({ parentId, callback, src }) {
-  const parent = document.createElement('div');
-  parent.id = parentId;
-  parent.style.width = 'max-content';
-  document.body.append(parent);
-  window[callback] = payload => {
-    const html = typeof payload === 'string' ? payload : payload?.html;
-    if (typeof html === 'string' && html.trim()) parent.innerHTML = html;
-  };
-  const script = document.createElement('script');
-  script.src = src;
-  document.body.append(script);
-}
-
-export function hasVisiblePreview({ parentId, videoRequired }) {
-  const root = parentId ? document.getElementById(parentId) : document.body;
-  if (!root) return false;
-  const visible = element => {
-    const style = getComputedStyle(element);
-    return style.visibility === 'visible' && style.opacity !== '0'
-      && [...element.getClientRects()].some(rect => rect.width && rect.height);
-  };
-  const images = [...root.querySelectorAll('img')].filter(visible);
-  if (images.some(image => image.complete && image.naturalWidth > 0)) return true;
-  const videos = [...root.querySelectorAll('video')].filter(visible);
-  if (videoRequired || videos.length) {
-    return videos.some(video => video.readyState >= 2 && video.videoWidth && video.videoHeight);
-  }
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  while (walker.nextNode()) {
-    const node = walker.currentNode;
-    if (!node.textContent.trim() || !visible(node.parentElement)) continue;
-    const range = document.createRange();
-    range.selectNodeContents(node);
-    if ([...range.getClientRects()].some(rect => rect.width && rect.height)) return true;
-  }
-  return false;
-}
-
-async function frameInPreview(frame, page, parentId) {
-  const parent = frame.parentFrame();
-  if (!parent) return false;
-  const element = await frame.frameElement();
-  try {
-    const visible = await element.evaluate((iframe, id) => {
-      const rect = iframe.getBoundingClientRect();
-      const style = getComputedStyle(iframe);
-      return rect.width && rect.height && style.visibility === 'visible' && style.opacity !== '0'
-        && (!id || document.getElementById(id)?.contains(iframe));
-    }, parent === page.mainFrame() ? parentId : null);
-    return visible && (parent === page.mainFrame() || await frameInPreview(parent, page, parentId));
-  } finally {
-    await element.dispose();
-  }
-}
-
-async function waitForPreview(page, parentId, format, signal) {
-  const options = { parentId, videoRequired: format === 'video' };
-  while (!signal.aborted) {
-    if (await page.evaluate(hasVisiblePreview, options)) return;
-    for (const frame of page.frames()) {
-      if (frame === page.mainFrame()) continue;
-      try {
-        if (await frameInPreview(frame, page, parentId) &&
-            (frame.url() !== 'about:blank' ||
-              await frame.evaluate(hasVisiblePreview, { ...options, parentId: null }))) return;
-      } catch (error) {
-        if (!/detached|context was destroyed/i.test(error.message)) throw error;
-      }
-    }
-    await delay(100, undefined, { signal });
-  }
-}
-
-async function renderPreview(context, previewUrl, format, path) {
-  const url = new URL(previewUrl);
-  assertUnblocked({ url: url.href });
-  if (url.protocol !== 'https:') throw new Error('URL xem trước không hợp lệ');
-  const parentId = url.searchParams.get('htmlParentId') || 'atc-preview';
-  const callback = url.searchParams.get('responseCallback') || 'atcRenderPreview';
-  for (const [name, value] of Object.entries({ htmlParentId: parentId, responseCallback: callback })) {
-    if (!url.searchParams.has(name)) {
-      url.search += (url.search ? '&' : '?') + name + '=' + encodeURIComponent(value);
-    } else if (!url.searchParams.get(name)) {
-      url.searchParams.set(name, value);
-    }
-  }
-  url.hash = '';
-
-  const page = await context.newPage();
-  const deadline = performance.now() + previewTimeout;
-  const remaining = () => Math.max(1, deadline - performance.now());
-  const controller = new AbortController();
-  let loaded;
-  const firstScript = new Promise(resolve => { loaded = resolve; });
-  let interrupt;
-  const interrupted = new Promise((_, reject) => { interrupt = reject; });
-  page.on('response', async response => {
-    try {
-      const metadata = responseMetadata(response);
-      let request = response.request();
-      while (request.redirectedFrom()) request = request.redirectedFrom();
-      const script = request.url() === url.href;
-      assertUnblocked({ ...metadata, contentType: script ? metadata.contentType : '' });
-      if (!script || (metadata.status >= 300 && metadata.status < 400)) return;
-      if (!response.ok()) throw new Error(`Tải nội dung xem trước thất bại (${metadata.status})`);
-      assertUnblocked({ text: await response.text() });
-      loaded();
-    } catch (error) {
-      interrupt(error);
-    }
-  });
-  try {
-    return await Promise.race([
-      interrupted,
-      delay(previewTimeout, undefined, { signal: controller.signal }).then(() => {
-        throw new Error('Hết thời gian chờ nội dung xem trước');
-      }),
-      (async () => {
-        await page.goto('about:blank', { timeout: remaining() });
-        await page.evaluate(installPreview, { parentId, callback, src: url.href });
-        await firstScript;
-        await waitForPreview(page, parentId, format, controller.signal);
-        await page.locator(`[id=${JSON.stringify(parentId)}]`).screenshot({ path, timeout: remaining() });
-        return path;
-      })(),
-    ]);
-  } finally {
-    controller.abort();
-    await page.close();
-  }
-}
-
 async function captureDirectImage(context, imageUrl, destNoExt) {
-  const deadline = performance.now() + previewTimeout;
+  const deadline = performance.now() + imageTimeout;
   let url = imageUrl;
   for (let redirects = 0; redirects <= 10; redirects++) {
     assertUnblocked({ url });
@@ -400,22 +266,16 @@ export async function openChromeClient({
 
     async captureImage(ad, destNoExt) {
       if (blocked || isSorry()) throw new BlockedError(blockedMessage);
+      if (!ad.imageUrl) return null;
       try {
-        if (ad.imageUrl) {
-          await mkdir(dirname(destNoExt), { recursive: true });
-          return await captureDirectImage(context, ad.imageUrl, destNoExt);
-        }
-        if (ad.previewUrl) {
-          await mkdir(dirname(destNoExt), { recursive: true });
-          return await renderPreview(context, ad.previewUrl, ad.format, destNoExt + '.png');
-        }
-        return null;
+        await mkdir(dirname(destNoExt), { recursive: true });
+        return await captureDirectImage(context, ad.imageUrl, destNoExt);
       } catch (error) {
         if (error instanceof BlockedError || blocked || isSorry()) {
           blocked = true;
           throw new BlockedError(blockedMessage);
         }
-        log(`Không chụp được ảnh xem trước ${ad.creativeId ?? ''}: ${error.message}`);
+        log(`Không tải được ảnh xem trước ${ad.creativeId ?? ''}: ${error.message}`);
         return null;
       }
     },

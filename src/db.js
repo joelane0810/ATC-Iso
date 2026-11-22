@@ -36,7 +36,7 @@ function jsonFiles(path) {
   }
 }
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const retryWait = new Int32Array(new SharedArrayBuffer(4));
 
 export function isSqliteBusy(error) {
@@ -183,103 +183,128 @@ export function openDb(data, { readOnly = false, web = false } = {}) {
       transaction(() => {
         const previous = version();
         if (previous >= SCHEMA_VERSION) return;
-        db.exec(`
-          CREATE TABLE IF NOT EXISTS profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT);
-          CREATE TABLE IF NOT EXISTS watches (
-            id TEXT PRIMARY KEY, type TEXT NOT NULL, value TEXT NOT NULL, region INTEGER,
-            label TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('competitor', 'project')),
-            added_at TEXT, last_scan_at TEXT
-          );
-          CREATE TABLE IF NOT EXISTS profile_watches (
-            profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-            watch_id TEXT NOT NULL REFERENCES watches(id),
-            label TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('competitor', 'project')),
-            added_at TEXT, PRIMARY KEY (profile_id, watch_id)
-          );
-          CREATE INDEX IF NOT EXISTS profile_watches_watch ON profile_watches(watch_id);
-          CREATE TABLE IF NOT EXISTS advertisers (id TEXT PRIMARY KEY, name TEXT);
-          CREATE TABLE IF NOT EXISTS domains (name TEXT PRIMARY KEY);
-          CREATE TABLE IF NOT EXISTS creatives (
-            id TEXT PRIMARY KEY, advertiser_id TEXT REFERENCES advertisers(id),
-            domain TEXT REFERENCES domains(name), format TEXT, first_shown TEXT, last_shown TEXT,
-            preview_url TEXT, image_url TEXT, image TEXT, platform TEXT, first_seen_by_us TEXT,
-            details_url TEXT, regions_checked_at TEXT
-          );
-          CREATE INDEX IF NOT EXISTS creatives_regions_pending ON creatives(first_seen_by_us DESC)
-            WHERE platform = 'search' AND regions_checked_at IS NULL;
-          CREATE TABLE IF NOT EXISTS watch_creatives (
-            watch_id TEXT NOT NULL REFERENCES watches(id),
-            creative_id TEXT NOT NULL REFERENCES creatives(id), observation TEXT NOT NULL,
-            PRIMARY KEY (watch_id, creative_id)
-          );
-          CREATE INDEX IF NOT EXISTS watch_creatives_creative ON watch_creatives(creative_id);
-          CREATE TABLE IF NOT EXISTS creative_regions (
-            creative_id TEXT NOT NULL REFERENCES creatives(id) ON DELETE CASCADE,
-            region_id INTEGER NOT NULL, last_shown TEXT NOT NULL, first_shown TEXT,
-            PRIMARY KEY (creative_id, region_id)
-          );
-          CREATE TABLE IF NOT EXISTS scans (
-            id INTEGER PRIMARY KEY, at TEXT, status TEXT, error TEXT, sync TEXT, entry TEXT NOT NULL,
-            has_snapshots INTEGER NOT NULL DEFAULT 0
-          );
-          CREATE TABLE IF NOT EXISTS group_snapshots (
-            scan_id INTEGER NOT NULL REFERENCES scans(id) ON DELETE CASCADE,
-            watch_id TEXT NOT NULL REFERENCES watches(id), group_type TEXT NOT NULL, group_key TEXT NOT NULL,
-            running INTEGER NOT NULL, total INTEGER NOT NULL,
-            PRIMARY KEY (scan_id, watch_id, group_type, group_key)
-          );
-          CREATE INDEX IF NOT EXISTS group_snapshots_history
-            ON group_snapshots(watch_id, group_type, group_key, scan_id);
-        `);
-        db.exec(`
-          ALTER TABLE creatives ADD COLUMN regions_retry INTEGER NOT NULL DEFAULT 0;
-          ALTER TABLE watch_creatives ADD COLUMN first_seen TEXT;
-          ALTER TABLE watch_creatives ADD COLUMN last_shown TEXT;
-          ALTER TABLE watch_creatives ADD COLUMN platform TEXT;
-          ALTER TABLE group_snapshots ADD COLUMN name TEXT;
-          CREATE INDEX watch_creatives_dates ON watch_creatives(watch_id, platform, last_shown, first_seen);
-          CREATE INDEX creatives_region_check ON creatives(regions_checked_at);
-          CREATE TABLE watch_scans (
-            scan_id INTEGER NOT NULL REFERENCES scans(id) ON DELETE CASCADE,
-            watch_id TEXT NOT NULL REFERENCES watches(id), at TEXT NOT NULL,
-            PRIMARY KEY (watch_id, scan_id)
-          );
-        `);
-        if (previous === 0) {
-          for (const profile of readJson(join(data, 'profiles.json'), [])) {
-            run('INSERT INTO profiles VALUES (?, ?, ?)', profile.id, profile.name, profile.createdAt ?? null);
-            for (const watch of readJson(join(data, 'profiles', profile.id, 'watchlist.json'), [])) {
-              linkWatch(profile.id, importWatch(watch));
+        if (previous < 2) {
+          db.exec(`
+            CREATE TABLE IF NOT EXISTS profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT);
+            CREATE TABLE IF NOT EXISTS watches (
+              id TEXT PRIMARY KEY, type TEXT NOT NULL, value TEXT NOT NULL, region INTEGER,
+              label TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('competitor', 'project')),
+              added_at TEXT, last_scan_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS profile_watches (
+              profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+              watch_id TEXT NOT NULL REFERENCES watches(id),
+              label TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('competitor', 'project')),
+              added_at TEXT, PRIMARY KEY (profile_id, watch_id)
+            );
+            CREATE INDEX IF NOT EXISTS profile_watches_watch ON profile_watches(watch_id);
+            CREATE TABLE IF NOT EXISTS advertisers (id TEXT PRIMARY KEY, name TEXT);
+            CREATE TABLE IF NOT EXISTS domains (name TEXT PRIMARY KEY);
+            CREATE TABLE IF NOT EXISTS creatives (
+              id TEXT PRIMARY KEY, advertiser_id TEXT REFERENCES advertisers(id),
+              domain TEXT REFERENCES domains(name), format TEXT, first_shown TEXT, last_shown TEXT,
+              preview_url TEXT, image_url TEXT, image TEXT, platform TEXT, first_seen_by_us TEXT,
+              details_url TEXT, regions_checked_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS creatives_regions_pending ON creatives(first_seen_by_us DESC)
+              WHERE platform = 'search' AND regions_checked_at IS NULL;
+            CREATE TABLE IF NOT EXISTS watch_creatives (
+              watch_id TEXT NOT NULL REFERENCES watches(id),
+              creative_id TEXT NOT NULL REFERENCES creatives(id), observation TEXT NOT NULL,
+              PRIMARY KEY (watch_id, creative_id)
+            );
+            CREATE INDEX IF NOT EXISTS watch_creatives_creative ON watch_creatives(creative_id);
+            CREATE TABLE IF NOT EXISTS creative_regions (
+              creative_id TEXT NOT NULL REFERENCES creatives(id) ON DELETE CASCADE,
+              region_id INTEGER NOT NULL, last_shown TEXT NOT NULL, first_shown TEXT,
+              PRIMARY KEY (creative_id, region_id)
+            );
+            CREATE TABLE IF NOT EXISTS scans (
+              id INTEGER PRIMARY KEY, at TEXT, status TEXT, error TEXT, sync TEXT, entry TEXT NOT NULL,
+              has_snapshots INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS group_snapshots (
+              scan_id INTEGER NOT NULL REFERENCES scans(id) ON DELETE CASCADE,
+              watch_id TEXT NOT NULL REFERENCES watches(id), group_type TEXT NOT NULL, group_key TEXT NOT NULL,
+              running INTEGER NOT NULL, total INTEGER NOT NULL,
+              PRIMARY KEY (scan_id, watch_id, group_type, group_key)
+            );
+            CREATE INDEX IF NOT EXISTS group_snapshots_history
+              ON group_snapshots(watch_id, group_type, group_key, scan_id);
+          `);
+          db.exec(`
+            ALTER TABLE creatives ADD COLUMN regions_retry INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE watch_creatives ADD COLUMN first_seen TEXT;
+            ALTER TABLE watch_creatives ADD COLUMN last_shown TEXT;
+            ALTER TABLE watch_creatives ADD COLUMN platform TEXT;
+            ALTER TABLE group_snapshots ADD COLUMN name TEXT;
+            CREATE INDEX watch_creatives_dates ON watch_creatives(watch_id, platform, last_shown, first_seen);
+            CREATE INDEX creatives_region_check ON creatives(regions_checked_at);
+            CREATE TABLE watch_scans (
+              scan_id INTEGER NOT NULL REFERENCES scans(id) ON DELETE CASCADE,
+              watch_id TEXT NOT NULL REFERENCES watches(id), at TEXT NOT NULL,
+              PRIMARY KEY (watch_id, scan_id)
+            );
+          `);
+          if (previous === 0) {
+            for (const profile of readJson(join(data, 'profiles.json'), [])) {
+              run('INSERT INTO profiles VALUES (?, ?, ?)', profile.id, profile.name, profile.createdAt ?? null);
+              for (const watch of readJson(join(data, 'profiles', profile.id, 'watchlist.json'), [])) {
+                linkWatch(profile.id, importWatch(watch));
+              }
             }
+            const adsDir = join(data, 'ads');
+            for (const name of jsonFiles(adsDir)) {
+              const { watch: metadata, lastScanAt, ads } = readJson(join(adsDir, name), {});
+              const watch = importWatch(metadata);
+              ensureWatch(watch);
+              run('UPDATE watches SET last_scan_at = ?, label = ? WHERE id = ?', lastScanAt ?? null, watch.label, watch.id);
+              for (const ad of Object.values(ads)) saveAd(watch.id, ad);
+            }
+            for (const entry of readJson(join(data, 'scan-log.json'), [])) saveScan(entry);
+          } else {
+            db.exec(`UPDATE watch_creatives SET first_seen = strftime('%Y-%m-%dT%H:%M:%fZ', json_extract(observation, '$.firstSeenByUs')),
+              last_shown = strftime('%Y-%m-%dT%H:%M:%fZ', json_extract(observation, '$.lastShown')),
+              platform = json_extract(observation, '$.platform');
+              UPDATE creatives SET first_seen_by_us = strftime('%Y-%m-%dT%H:%M:%fZ', first_seen_by_us),
+                last_shown = strftime('%Y-%m-%dT%H:%M:%fZ', last_shown);
+              INSERT OR IGNORE INTO watch_scans (scan_id, watch_id, at)
+                SELECT s.id, w.id, s.at FROM scans s
+                JOIN json_each(s.entry, '$.changes') change
+                JOIN watches w ON w.id = json_extract(change.value, '$.watchId')
+                WHERE s.has_snapshots = 1 AND s.at IS NOT NULL`);
           }
-          const adsDir = join(data, 'ads');
-          for (const name of jsonFiles(adsDir)) {
-            const { watch: metadata, lastScanAt, ads } = readJson(join(adsDir, name), {});
-            const watch = importWatch(metadata);
-            ensureWatch(watch);
-            run('UPDATE watches SET last_scan_at = ?, label = ? WHERE id = ?', lastScanAt ?? null, watch.label, watch.id);
-            for (const ad of Object.values(ads)) saveAd(watch.id, ad);
-          }
-          for (const entry of readJson(join(data, 'scan-log.json'), [])) saveScan(entry);
-        } else {
-          db.exec(`UPDATE watch_creatives SET first_seen = strftime('%Y-%m-%dT%H:%M:%fZ', json_extract(observation, '$.firstSeenByUs')),
-            last_shown = strftime('%Y-%m-%dT%H:%M:%fZ', json_extract(observation, '$.lastShown')),
-            platform = json_extract(observation, '$.platform');
-            UPDATE creatives SET first_seen_by_us = strftime('%Y-%m-%dT%H:%M:%fZ', first_seen_by_us),
-              last_shown = strftime('%Y-%m-%dT%H:%M:%fZ', last_shown);
-            INSERT OR IGNORE INTO watch_scans (scan_id, watch_id, at)
-              SELECT s.id, w.id, s.at FROM scans s
-              JOIN json_each(s.entry, '$.changes') change
-              JOIN watches w ON w.id = json_extract(change.value, '$.watchId')
-              WHERE s.has_snapshots = 1 AND s.at IS NOT NULL`);
         }
-        for (const { id, last_scan_at: at } of all(`SELECT w.id, w.last_scan_at FROM watches w
-          WHERE w.last_scan_at IS NOT NULL AND NOT EXISTS (
-            SELECT 1 FROM watch_scans ws WHERE ws.watch_id = w.id AND ws.at = w.last_scan_at)`)) {
-          const scanId = saveScan({ at });
-          const ads = all('SELECT observation FROM watch_creatives WHERE watch_id = ?', id)
-            .map(row => JSON.parse(row.observation));
-          saveSnapshot(scanId, id, at, ads);
+        db.exec(`
+          INSERT OR IGNORE INTO domains (name)
+            SELECT w.value FROM watches w
+            JOIN watch_creatives wc ON wc.watch_id = w.id
+            JOIN creatives c ON c.id = wc.creative_id
+            WHERE w.type = 'domain' AND coalesce(trim(c.domain), '') = '';
+          UPDATE creatives AS c
+          SET domain = (
+            SELECT w.value FROM watch_creatives wc JOIN watches w ON w.id = wc.watch_id
+            WHERE wc.creative_id = c.id AND w.type = 'domain' ORDER BY w.id LIMIT 1
+          )
+          WHERE coalesce(trim(c.domain), '') = '' AND EXISTS (
+            SELECT 1 FROM watch_creatives wc JOIN watches w ON w.id = wc.watch_id
+            WHERE wc.creative_id = c.id AND w.type = 'domain'
+          );
+          UPDATE watch_creatives AS wc
+          SET observation = json_set(wc.observation, '$.domain', w.value)
+          FROM watches w
+          WHERE w.id = wc.watch_id AND w.type = 'domain'
+            AND coalesce(trim(json_extract(wc.observation, '$.domain')), '') = '';
+        `);
+        if (previous < 2) {
+          for (const { id, last_scan_at: at } of all(`SELECT w.id, w.last_scan_at FROM watches w
+            WHERE w.last_scan_at IS NOT NULL AND NOT EXISTS (
+              SELECT 1 FROM watch_scans ws WHERE ws.watch_id = w.id AND ws.at = w.last_scan_at)`)) {
+            const scanId = saveScan({ at });
+            const ads = all('SELECT observation FROM watch_creatives WHERE watch_id = ?', id)
+              .map(row => JSON.parse(row.observation));
+            saveSnapshot(scanId, id, at, ads);
+          }
         }
         db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
       });
