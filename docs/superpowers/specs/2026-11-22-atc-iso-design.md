@@ -70,3 +70,12 @@ Thư viện cụ thể, cấu trúc mã, kiểu dáng giao diện (theo bố c�
   Mẫu được thấy trong kết quả đã lọc thì gắn `platform:"search"`; giao diện chỉ hiện mẫu có `platform:"search"`. Phân trang tiếp tục khi trang còn mẫu mới HOẶC mẫu chưa gắn `platform:"search"`.
 - **Trang chủ:** tổng kết thay đổi của lượt quét gần nhất so với lượt trước: số mẫu mới, số mẫu vừa dừng (đang chạy ở lượt trước, nay đã dừng), số đang chạy; bảng theo từng đối thủ/dự án; lưới mẫu mới và mẫu vừa dừng.
 - **Cột trái:** Trang chủ · mục Đối thủ · mục Dự án. Chọn mục nào hiện mục đó.
+
+## Bổ sung 22/11 (anh Dai, 17:20) — tổng quan theo dự án, quốc gia, SQL, ổ rời
+- **Hệ thống chạy từ ổ rời:** thư mục gốc `/Volumes/MEMORY BACKUP/ATC ISO` (anh đã chuyển). Mọi đường dẫn tương đối theo thư mục gốc; LaunchAgents cài lại từ đó. Ổ rút ra thì app tạm dừng — chấp nhận.
+- **Lưu trữ SQL:** SQLite một tệp `data/atc.db` qua `node:sqlite` (có sẵn từ Node 22.13, không cần cài thêm). Lần chạy đầu tự chuyển dữ liệu JSON cũ vào DB (giữ JSON cũ làm bản sao lưu, không xoá).
+  Bảng (liên kết nhiều chiều): profiles · watches(kind) · advertisers · domains · creatives(advertiser_id, domain, format, first_shown, last_shown, preview_url, image_url, image, platform, first_seen_by_us) · watch_creatives(watch_id, creative_id) · creative_regions(creative_id, region_id, last_shown, first_shown) · scans(at, status, error, sync) · group_snapshots(scan_id, watch_id, group_key, running, total).
+- **Quốc gia:** `LookupService/GetCreativeById` body `{"1":"AR…","2":"CR…","5":{"1":1,"2":28,"3":2704}}` → `"17": [{"1": mã vùng, "4": yyyymmdd đầu (có thể thiếu), "5": yyyymmdd gần nhất}]`. Mã vùng = 2000 + mã số ISO 3166 (2840 Mỹ, 2704 Việt Nam, 2392 Nhật, 2276 Đức). Gọi cho mẫu mới và mẫu đang chạy chưa có quốc gia, tối đa 60 lượt/lượt quét, cùng nhịp ≥ 8 s, cùng cầu dao chặn.
+- **"Dự án" trong tổng quan** = tên miền đích của quảng cáo. Với mục theo dõi loại Đối thủ: nhóm mẫu theo tên miền (đối thủ đang chạy dự án nào). Với mục loại Dự án: nhóm theo nhà quảng cáo (ai đang chạy dự án này).
+  Trạng thái mỗi nhóm so với lượt quét trước: `new` (chưa từng thấy nhóm này ở mục này) · `increase` (số mẫu đang chạy tăng) · `decrease` (giảm, vẫn > 0) · `stopped` (trước > 0, nay 0) · `steady`. "Đang chạy" = lastShown ≥ lúc quét − 2 ngày.
+- **Tổng quan trọng tâm:** đối thủ chạy dự án gì mới; dự án đó mới hay chạy thêm ads; dự án nào dừng/giảm; tăng/giảm bao nhiêu mẫu; quốc gia đang chạy. Màu nhận diện rõ cho từng trạng thái và từng đối thủ.
