@@ -1,65 +1,76 @@
-import { linkSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { mkdirSync, readFileSync } from 'node:fs';
+import { once } from 'node:events';
 import { dirname } from 'node:path';
 
-const maxAgeMs = 3 * 60 * 60 * 1000;
+export class ScanBusyError extends Error {
+  constructor() {
+    super('ĐANG_QUÉT');
+    this.code = 'SCAN_BUSY';
+  }
+}
 
-function isAlive({ pid, startedAt }) {
-  if (!Number.isSafeInteger(pid) || pid <= 0 || !Number.isFinite(startedAt)
-    || Date.now() - startedAt >= maxAgeMs) return false;
+// Keep the inode in place. The kernel releases the lock when the helper exits.
+// The pipe ties the helper's lifetime to the scanner, including abrupt exits.
+const program = `
+  use Fcntl qw(:flock);
+  use Errno qw(EAGAIN EWOULDBLOCK);
+  open my $lock, ">>", $ARGV[0] or die "$!";
+  if (!flock($lock, LOCK_EX | LOCK_NB)) {
+    exit 75 if $! == EAGAIN || $! == EWOULDBLOCK;
+    die "$!";
+  }
+  if ($ARGV[1] eq "hold") {
+    $| = 1;
+    print "locked\n";
+    1 while read(STDIN, my $buffer, 1);
+  }
+`;
+
+function legacyOwnerAlive(path) {
   try {
+    const { pid } = JSON.parse(readFileSync(path, 'utf8')) ?? {};
+    if (!Number.isSafeInteger(pid) || pid <= 0) return false;
     process.kill(pid, 0);
     return true;
   } catch (error) {
-    if (error.code === 'ESRCH') return false;
     if (error.code === 'EPERM') return true;
+    if (error instanceof SyntaxError || ['ENOENT', 'ESRCH'].includes(error.code)) return false;
     throw error;
   }
 }
 
-export async function withLock(lockPath, fn) {
-  const directory = dirname(lockPath);
-  mkdirSync(directory, { recursive: true });
-  const owner = JSON.stringify({ pid: process.pid, startedAt: Date.now(), id: randomUUID() });
-  const temporary = `${lockPath}.${randomUUID()}.tmp`;
-  writeFileSync(temporary, owner, { flag: 'wx' });
+export async function isScanLocked(path) {
+  if (legacyOwnerAlive(path)) return true;
+  mkdirSync(dirname(path), { recursive: true });
+  const probe = spawn('/usr/bin/perl', ['-e', program, path, 'probe'], { stdio: ['ignore', 'ignore', 'pipe'] });
+  let stderr = '';
+  probe.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
+  const [code] = await once(probe, 'close');
+  if (code === 75) return true;
+  if (code !== 0) throw new Error(stderr || 'Không kiểm tra được khoá quét');
+  return false;
+}
+
+export async function withLock(path, fn) {
+  mkdirSync(dirname(path), { recursive: true });
+  const helper = spawn('/usr/bin/perl', ['-e', program, path, 'hold']);
+  helper.stdin.on('error', () => {});
+  let stderr = '';
+  helper.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
+  const closed = once(helper, 'close');
   try {
-    for (;;) {
-      try {
-        // Publish the complete owner record atomically, without replacing a lock.
-        linkSync(temporary, lockPath);
-        break;
-      } catch (error) {
-        if (error.code !== 'EEXIST') throw error;
-      }
-
-      try {
-        const before = statSync(lockPath);
-        let lock;
-        try {
-          lock = JSON.parse(readFileSync(lockPath, 'utf8'));
-        } catch (error) {
-          if (!(error instanceof SyntaxError)) throw error;
-        }
-        if (lock && isAlive(lock)) throw new Error('ĐANG_QUÉT');
-
-        const current = statSync(lockPath);
-        if (before.ino === current.ino && before.dev === current.dev) unlinkSync(lockPath);
-      } catch (error) {
-        if (error.code !== 'ENOENT') throw error;
-      }
-    }
-  } finally {
-    unlinkSync(temporary);
-  }
-
-  try {
+    await Promise.race([
+      once(helper.stdout, 'data'),
+      closed.then(([code]) => {
+        if (code === 75) throw new ScanBusyError();
+        throw new Error(stderr || 'Không lấy được khoá quét');
+      }),
+    ]);
+    if (legacyOwnerAlive(path)) throw new ScanBusyError();
     return await fn();
   } finally {
-    try {
-      if (readFileSync(lockPath, 'utf8') === owner) unlinkSync(lockPath);
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error;
-    }
+    helper.stdin.end();
+    await closed;
   }
 }

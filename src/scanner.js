@@ -1,10 +1,14 @@
 import { basename, join } from 'node:path';
 import { BlockedError, buildSearchCreativesReq, parseCreatives } from './atc.js';
 
-export async function runScan({ store, client, now = () => new Date(), log = console.log }) {
+export async function runScan({
+  store, client, now = () => new Date(), log = console.log,
+  record = entry => store.appendScanLog(entry),
+}) {
   const scannedAt = now();
   const result = { status: 'ok', watched: 0, newAds: 0 };
 
+  let retries = 0;
   try {
     for (const watch of await store.allWatches()) {
       const previous = await store.getAds(watch.id);
@@ -35,13 +39,25 @@ export async function runScan({ store, client, now = () => new Date(), log = con
       } while (pageToken);
 
       // A blocked page must leave this watch's existing data intact.
-      const { newIds } = await store.mergeAds(watch, [...ads.values()], scannedAt);
+      // The store retains previewUrl, so image ads can be retried off the current page.
+      const { file, newIds } = await store.mergeAds(watch, [...ads.values()].map(ad => ({
+        ...ad,
+        previewUrl: ad.previewUrl ?? ad.imageUrl ?? previous?.ads[ad.creativeId]?.previewUrl ?? null,
+      })), scannedAt);
       result.watched++;
       result.newAds += newIds.length;
 
-      for (const id of newIds) {
+      const fresh = new Set(newIds);
+      for (const id of [...newIds, ...Object.keys(file.ads).filter(id => !fresh.has(id))]) {
         if (basename(id) !== id || id === '..' || id === '.') continue;
-        const image = await client.captureImage(ads.get(id), join(store.imagesDir(), id));
+        const saved = file.ads[id];
+        const ad = { ...saved, ...ads.get(id), previewUrl: saved.previewUrl };
+        if (ad.format === 'image') ad.imageUrl ??= saved.previewUrl;
+        if (!fresh.has(id)) {
+          if (saved.image || !(ad.imageUrl || ad.previewUrl) || retries >= 20) continue;
+          retries++;
+        }
+        const image = await client.captureImage(ad, join(store.imagesDir(), id));
         if (image) await store.setAdImage(watch.id, id, `images/${basename(image)}`);
       }
     }
@@ -51,6 +67,6 @@ export async function runScan({ store, client, now = () => new Date(), log = con
     log(result.error);
   }
 
-  await store.appendScanLog({ at: scannedAt.toISOString(), ...result });
+  await record({ at: scannedAt.toISOString(), ...result });
   return result;
 }

@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { register } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -22,15 +24,15 @@ register('data:text/javascript,' + encodeURIComponent(`
 `));
 const { BlockedError } = await import(stubUrl);
 const { runScan } = await import('../src/scanner.js');
-const { withLock } = await import('../src/lock.js');
+const { isScanLocked, withLock } = await import('../src/lock.js');
 
 const now = () => new Date('2026-11-22T02:00:00Z');
 const first = { id: 'first', type: 'domain', value: 'first.example' };
 const second = { id: 'second', type: 'domain', value: 'second.example' };
 
-function setup(respond, { watches = [first], previous = [] } = {}) {
+function setup(respond, { watches = [first], previous = [], capture, saved = {} } = {}) {
   const files = new Map();
-  if (previous.length) files.set(first.id, { ads: Object.fromEntries(previous.map(id => [id, {}])) });
+  if (previous.length) files.set(first.id, { ads: Object.fromEntries(previous.map(id => [id, saved[id] ?? {}])) });
   const logs = [];
   const requests = [];
   const captures = [];
@@ -43,7 +45,7 @@ function setup(respond, { watches = [first], previous = [] } = {}) {
       const newIds = [];
       for (const ad of ads) {
         if (!Object.hasOwn(file.ads, ad.creativeId)) newIds.push(ad.creativeId);
-        file.ads[ad.creativeId] = ad;
+        file.ads[ad.creativeId] = { ...file.ads[ad.creativeId], ...ad };
       }
       files.set(watch.id, file);
       return { file, newIds };
@@ -60,7 +62,7 @@ function setup(respond, { watches = [first], previous = [] } = {}) {
     },
     async captureImage(ad, destNoExt) {
       captures.push(ad.creativeId);
-      return destNoExt + '.png';
+      return capture ? capture(ad, destNoExt) : destNoExt + '.png';
     },
   };
   return { scan: () => runScan({ store, client, now, log: () => {} }), files, logs, requests, captures, images };
@@ -109,5 +111,57 @@ test('lock prevents concurrent scan', async t => {
   await assert.rejects(withLock(path, () => { throw new Error('test failure'); }), /test failure/);
   assert.equal(await withLock(path, () => 42), 42);
   await writeFile(path, JSON.stringify({ pid: process.pid, startedAt: Date.now() - 4 * 3600_000 }));
-  assert.equal(await withLock(path, () => 43), 43);
+  await assert.rejects(withLock(path, () => 43), { code: 'SCAN_BUSY' });
+});
+
+test('a preview block stops subsequent captures and watches', async () => {
+  const run = setup(() => page(['CR1', 'CR2'], null), {
+    watches: [first, second],
+    capture() { throw new BlockedError('Bị chặn khi tải ảnh'); },
+  });
+  assert.equal((await run.scan()).status, 'blocked');
+  assert.deepEqual(run.captures, ['CR1']);
+  assert.equal(run.requests.length, 1);
+  assert.equal(run.logs[0].status, 'blocked');
+});
+
+test('a scan retries at most 20 old ads with missing images, even off the current page', async () => {
+  const ids = Array.from({ length: 23 }, (_, i) => 'CR' + i);
+  const saved = Object.fromEntries(ids.map(creativeId => [creativeId, {
+    creativeId, format: 'video', previewUrl: 'https://example.com/content.js',
+  }]));
+  saved.CR0.image = 'images/CR0.png';
+  const run = setup(() => page([], null), { previous: ids, saved });
+  assert.equal((await run.scan()).newAds, 0);
+  assert.deepEqual(run.captures, ids.slice(1, 21));
+});
+
+test('two processes contend for a stale lock and only one acquires it', { timeout: 10_000 }, async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'atc-lock-race-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const path = join(dir, '.scan.lock');
+  await writeFile(path, '{"pid":2147483647}');
+  const contender = spawn('/usr/bin/perl', ['-e', `
+    use Fcntl qw(:flock);
+    open my $lock, ">>", $ARGV[0] or die "$!";
+    flock($lock, LOCK_EX | LOCK_NB) or die "$!";
+    $| = 1;
+    print "held\n";
+    1 while read(STDIN, my $buffer, 1);
+  `, path]);
+  const exit = once(contender, 'close');
+  try {
+    const [reply] = await Promise.race([
+      once(contender.stdout, 'data'),
+      exit.then(([code]) => { throw new Error('Contender exited before replying: ' + code); }),
+    ]);
+    assert.equal(reply.toString().trim(), 'held');
+    assert.equal(await isScanLocked(path), true);
+    await assert.rejects(withLock(path, () => assert.fail('second process entered')), { code: 'SCAN_BUSY' });
+  } finally {
+    contender.stdin.end();
+    assert.deepEqual(await exit, [0, null]);
+  }
+  assert.equal(await isScanLocked(path), false);
+  assert.equal(await withLock(path, () => 42), 42);
 });

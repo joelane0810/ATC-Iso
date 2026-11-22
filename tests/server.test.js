@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { test } from 'node:test';
 import { startServer } from '../src/server.js';
+import { isScanLocked, ScanBusyError, withLock } from '../src/lock.js';
 
 test('Task 3 HTTP API and static files', async (t) => {
   const images = await mkdtemp(join(tmpdir(), 'atc-iso-'));
@@ -38,16 +39,22 @@ test('Task 3 HTTP API and static files', async (t) => {
       assert.ok(now);
       return [filters];
     },
-    getScanLog: () => [last],
+    getScanLog: () => [{ status: 'error' }, last],
     imagesDir: () => images,
   };
-  let scanning = false;
+  const lockPath = join(images, '.scan.lock');
+  let scheduledWins = false;
   let finishScan;
   const scan = new Promise((resolve) => { finishScan = resolve; });
   const options = {
     store, port: 0,
-    triggerScan: () => scan,
-    isScanning: () => scanning,
+    triggerScan: acquired => {
+      if (scheduledWins) throw new ScanBusyError();
+      acquired();
+      return scan;
+    },
+    waitForAcquisition: true,
+    isScanning: () => isScanLocked(lockPath),
   };
   let request;
   try {
@@ -108,9 +115,13 @@ test('Task 3 HTTP API and static files', async (t) => {
   assert.deepEqual(await (await get('/api/profiles/dai/ads?filter=new&q=%C3%A1o&format=image')).json(),
     [{ filter: 'new', q: 'áo', format: 'image' }]);
   assert.deepEqual(await (await get('/api/status')).json(), { scanning: false, last });
-  scanning = true;
+  await withLock(lockPath, async () => {
+    assert.deepEqual(await (await get('/api/status')).json(), { scanning: true, last });
+    assert.equal((await post('/api/scan')).status, 409);
+  });
+  scheduledWins = true;
   assert.equal((await post('/api/scan')).status, 409);
-  scanning = false;
+  scheduledWins = false;
   assert.equal((await post('/api/scan')).status, 202);
   assert.equal((await post('/api/scan')).status, 409);
   finishScan();

@@ -1,15 +1,32 @@
 #!/bin/bash
 set -euo pipefail
 
+path_dirs=()
+IFS=: read -r -a inherited_dirs <<< "${PATH:-}"
+for dir in ${inherited_dirs[@]+"${inherited_dirs[@]}"}; do
+  [[ "$dir" = /* ]] && path_dirs+=("$dir")
+done
+absolute_path="$(IFS=:; printf '%s' "${path_dirs[*]-}")"
+export PATH="${absolute_path:+$absolute_path:}/usr/bin:/bin:/usr/sbin:/sbin"
+
 if [[ "$(uname -s)" != Darwin ]]; then
   echo "Chỉ cài được trên macOS." >&2
   exit 1
 fi
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
-if ! node_path="$(command -v node)" ||
-   ! "$node_path" -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 20 ? 0 : 1)' ||
-   ! command -v npm >/dev/null; then
+node_path=
+npm_path=
+for dir in "$HOME/.homebrew/bin" /opt/homebrew/bin ${path_dirs[@]+"${path_dirs[@]}"} /usr/local/bin /usr/bin; do
+  if [[ "$dir" = /* && -x "$dir/node" && -x "$dir/npm" ]] &&
+     "$dir/node" -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 20 ? 0 : 1)'; then
+    node_path="$dir/node"
+    npm_path="$dir/npm"
+    export PATH="$dir:$PATH"
+    break
+  fi
+done
+if [[ -z "$node_path" ]]; then
   echo "Cần cài Node.js từ phiên bản 20 trở lên, kèm npm." >&2
   exit 1
 fi
@@ -20,7 +37,7 @@ if [[ ! -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ]]; th
 fi
 
 cd "$root"
-npm ci
+"$npm_path" ci
 
 agent_dir="$HOME/Library/LaunchAgents"
 domain="gui/$(id -u)"
