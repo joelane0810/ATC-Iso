@@ -1,0 +1,13 @@
+{
+  "name": "atc-iso",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node --test tests/",
+    "start": "node bin/server.js",
+    "scan": "node bin/scan.js"
+  },
+  "dependencies": { "playwright-core": "^1.49.0" }
+}
