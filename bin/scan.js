@@ -28,6 +28,7 @@ export async function scanOnce({
   sync = syncData, log = console.error, onAcquired = () => {}, watchId = null,
 } = {}) {
   return withLock(join(root, 'data', '.scan.lock'), async () => {
+    await store.purgeExpiredTrash?.();
     const history = (await store.getScanLog?.()) ?? [];
     const resumeAt = scanResumeAt(history);
     const watches = await store.allWatches();

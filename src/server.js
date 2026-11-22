@@ -21,6 +21,11 @@ function json(res, status, value) {
   res.end(JSON.stringify(value));
 }
 
+function noContent(res) {
+  res.writeHead(204);
+  return res.end();
+}
+
 async function readBody(req, allowEmpty = false) {
   const chunks = [];
   let size = 0;
@@ -96,6 +101,17 @@ export async function startServer({
         if (await scanning() || scanPending) return json(res, 409, { error: 'Đang có lượt quét.' });
         scanPending = true;
         pendingWatchId = watchId;
+        if (watchId && store.isWatchActive) {
+          try {
+            if (!await store.isWatchActive(watchId)) throw Object.assign(
+              new Error('Không tìm thấy mục theo dõi.'), { code: 'NOT_FOUND' },
+            );
+          } catch (error) {
+            scanPending = false;
+            pendingWatchId = null;
+            throw error;
+          }
+        }
         const accepted = new Promise((resolve, reject) => {
           let acknowledged = false;
           const acquired = () => {
@@ -116,25 +132,57 @@ export async function startServer({
         return json(res, status, { scanning: true });
       }
 
-      const profile = path.match(/^\/api\/profiles\/([\w-]+)\/(watchlist|ads|summary|series)(?:\/([\w.-]+))?$/);
+      const profile = path.match(/^\/api\/profiles\/([\w-]+)\/(watchlist|ads|summary|series|groups|trash)(?:\/([\w.-]+))?$/);
       if (profile) {
         const [, pid, resource, wid] = profile;
+        if (resource === 'groups') {
+          if (method === 'GET' && !wid) return json(res, 200, await store.getGroups(pid));
+          if (method === 'POST' && !wid) {
+            const { name, kind } = await readBody(req);
+            return json(res, 201, await store.addGroup(pid, name, kind));
+          }
+          if (method === 'PATCH' && wid) {
+            const { name } = await readBody(req);
+            return json(res, 200, await store.renameGroup(pid, wid, name));
+          }
+          if (method === 'DELETE' && wid) {
+            await store.removeGroup(pid, wid);
+            return noContent(res);
+          }
+        }
+        if (resource === 'trash') {
+          if (method === 'GET' && !wid) return json(res, 200, await store.getTrash(pid));
+          if (method === 'POST' && (wid === 'restore' || wid === 'purge')) {
+            const { ids } = await readBody(req);
+            if (wid === 'restore') await store.restoreWatches(pid, ids);
+            else await store.purgeWatches(pid, ids);
+            return noContent(res);
+          }
+        }
         if (resource === 'watchlist') {
           if (method === 'GET' && !wid) return json(res, 200, await store.getWatchlist(pid));
           if (method === 'POST' && !wid) {
-            const { input, region = null, kind = 'competitor' } = await readBody(req);
+            const { input, region = null, kind, groupId } = await readBody(req);
             if (typeof input !== 'string' || !input.trim()) {
               throw new Error('Vui lòng nhập tên miền hoặc link nhà quảng cáo.');
             }
             if (region !== null && (!Number.isSafeInteger(region) || region <= 0)) {
               throw new Error('Khu vực không hợp lệ.');
             }
-            return json(res, 201, await store.addWatch(pid, input, region, kind));
+            return json(res, 201, await store.addWatch(pid, input, region, kind, groupId));
+          }
+          if (method === 'POST' && wid === 'delete') {
+            const { ids } = await readBody(req);
+            await store.removeWatches(pid, ids);
+            return noContent(res);
+          }
+          if (method === 'PATCH' && wid) {
+            const { groupId } = await readBody(req);
+            return json(res, 200, await store.setWatchGroup(pid, wid, groupId));
           }
           if (method === 'DELETE' && wid && wid !== '.' && wid !== '..') {
             await store.removeWatch(pid, wid);
-            res.writeHead(204);
-            return res.end();
+            return noContent(res);
           }
         }
         if (method === 'GET' && resource === 'summary' && !wid) {
@@ -182,6 +230,7 @@ export async function startServer({
       if (isSqliteBusy(error)) {
         return json(res, 503, { error: 'Đang cập nhật dữ liệu, thử lại sau vài giây' });
       }
+      if (error.code === 'NOT_FOUND') return json(res, 404, { error: error.message });
       if (error.code) {
         console.error(error);
         return json(res, 500, { error: 'Có lỗi xảy ra. Vui lòng thử lại.' });

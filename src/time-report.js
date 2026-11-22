@@ -32,14 +32,14 @@ const members = `
     coalesce(nullif(json_extract(wc.observation, '$.advertiserName'), ''), a.name) AS advertiserName
   FROM profile_watches p JOIN watch_creatives wc ON wc.watch_id = p.watch_id
   JOIN creatives c ON c.id = wc.creative_id LEFT JOIN advertisers a ON a.id = c.advertiser_id
-  WHERE p.profile_id = ? AND wc.platform = 'search'
+  WHERE p.profile_id = ? AND p.deleted_at IS NULL AND wc.platform = 'search'
 `;
 
 // Dữ liệu chỉ mới bằng lần quét gần nhất: ngày tham chiếu không được vượt quá
 // ngày mà lần quét đó đã thấy đủ (cùng luật 20:00 giờ Việt Nam).
 function effectiveNow(all, pid, watchId, now) {
   const row = all(`SELECT min(w.last_scan_at) AS at FROM profile_watches p JOIN watches w ON w.id = p.watch_id
-    WHERE p.profile_id = ? AND (? IS NULL OR p.watch_id = ?) AND w.last_scan_at IS NOT NULL`, pid, watchId, watchId)[0];
+    WHERE p.profile_id = ? AND p.deleted_at IS NULL AND (? IS NULL OR p.watch_id = ?) AND w.last_scan_at IS NOT NULL`, pid, watchId, watchId)[0];
   const scanned = row?.at ? Date.parse(row.at) : NaN;
   return Number.isFinite(scanned) && scanned < +new Date(now) ? new Date(scanned) : new Date(now);
 }
@@ -48,7 +48,7 @@ function reportDates(all, pid, watchId, now) {
   const refDate = referenceDate(effectiveNow(all, pid, watchId, now));
   const [{ minDate }] = all(`SELECT min(date(json_extract(wc.observation, '$.firstShown'), '+7 hours')) AS minDate
     FROM profile_watches p JOIN watch_creatives wc ON wc.watch_id = p.watch_id
-    WHERE p.profile_id = ? AND (? IS NULL OR p.watch_id = ?)`, pid, watchId, watchId);
+    WHERE p.profile_id = ? AND p.deleted_at IS NULL AND (? IS NULL OR p.watch_id = ?)`, pid, watchId, watchId);
   return { refDate, minDate: minDate ?? refDate };
 }
 
@@ -148,14 +148,14 @@ export function createTimeReport({ all, scanHistory }) {
         increased: 0, decreased: 0, stopped: 0, runningAds: 0 };
       const watches = all(`SELECT w.id AS watchId, p.label, p.kind, w.last_scan_at AS lastScanAt
         FROM profile_watches p JOIN watches w ON w.id = p.watch_id
-        WHERE p.profile_id = ? ORDER BY p.rowid`, pid).map(row => ({
+        WHERE p.profile_id = ? AND p.deleted_at IS NULL ORDER BY p.rowid`, pid).map(row => ({
         ...row, groupType: row.kind === 'project' ? 'advertiser' : 'domain',
         runningNow: 0, runningPrev: 0, delta: 0, newAds: 0, newGroups: 0, spark: [], groups: [],
       }));
       const byWatch = new Map(watches.map(watch => [watch.watchId, watch]));
       const byGroup = new Map(watches.map(watch => [watch.watchId, new Map()]));
       const followed = new Set(all(`SELECT w.type, w.value FROM profile_watches p
-        JOIN watches w ON w.id = p.watch_id WHERE p.profile_id = ?`, pid)
+        JOIN watches w ON w.id = p.watch_id WHERE p.profile_id = ? AND p.deleted_at IS NULL`, pid)
         .map(({ type, value }) => JSON.stringify([type, value])));
       const sparks = new Map(watches.map(({ watchId }) => [watchId, createBuckets(start, end)]));
       for (const row of all(`WITH members AS (${members})

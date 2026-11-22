@@ -25,13 +25,14 @@ export async function runScan({
   let captures = 0;
   let nextCaptureAt = 0;
   try {
+    await store.purgeExpiredTrash?.(scannedAt);
     const watches = (await store.allWatches()).filter(w => !onlyWatchIds || onlyWatchIds.includes(w.id));
     let regionFailures = 0;
     const watchCount = watches.length || 1;
     const baseQuota = Math.floor(maxDetails / watchCount);
     const extra = maxDetails % watchCount;
     const offset = Math.floor(scannedAt.getTime() / 86_400_000) % watchCount;
-    for (const [index, watch] of watches.entries()) {
+    watchesLoop: for (const [index, watch] of watches.entries()) {
       const quota = baseQuota + Number((index - offset + watches.length) % watches.length < extra);
       const previous = await store.getAds(watch.id);
       const seen = new Set(Object.entries(previous?.ads ?? {})
@@ -46,6 +47,7 @@ export async function runScan({
       let refreshThrough = null;
 
       do {
+        if (store.isWatchActive && !store.isWatchActive(watch.id)) continue watchesLoop;
         const request = buildSearchCreativesReq({ watch, pageToken });
         const response = await client.rpc('SearchService/SearchCreatives', request);
         const { ads: pageAds, nextToken } = parseCreatives(response);
@@ -70,6 +72,8 @@ export async function runScan({
         tokens.add(nextToken);
         pageToken = nextToken;
       } while (pageToken);
+
+      if (store.isWatchActive && !store.isWatchActive(watch.id)) continue;
 
       // A blocked page must leave this watch's existing data intact.
       // Keep the preview URL for the web interface and older image records.
@@ -100,6 +104,7 @@ export async function runScan({
           attemptedDetails.add(creative.creativeId);
           const { advertiserId, creativeId } = creative;
           if (regionFailures >= 3) break;
+          if (store.isWatchActive && !store.isWatchActive(watch.id)) continue watchesLoop;
           const regions = await client.lookupRegions({ advertiserId, creativeId });
           regionFailures = regions === null ? regionFailures + 1 : 0;
           log(`Quốc gia ${creativeId}: ${regions === null ? 'chưa lấy được' : regions.length + ' nước'}`);
@@ -125,6 +130,7 @@ export async function runScan({
         }
         const waitMs = Math.ceil(nextCaptureAt - performance.now());
         if (waitMs > 0) await waitForCapture(waitMs);
+        if (store.isWatchActive && !store.isWatchActive(watch.id)) continue watchesLoop;
         captures++;
         const image = await client.captureImage(ad, join(store.imagesDir(), id));
         nextCaptureAt = performance.now() + 1500;

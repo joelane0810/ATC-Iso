@@ -102,7 +102,7 @@ test('legacy JSON migrates once with all rows and leaves the originals intact', 
   }
   const store = createStore(root);
   assert.deepEqual(store.listProfiles(), profiles);
-  assert.deepEqual(store.getWatchlist('dai'), [{ ...watch, kind: 'competitor' }]);
+  assert.deepEqual(store.getWatchlist('dai'), [{ ...watch, kind: 'competitor', groupId: null }]);
   assert.equal(store.getWatchlist('lan')[0].kind, 'project');
   assert.deepEqual(store.getScanLog(), logs);
   assert.equal(store.getAds('x-com').ads.CR2.image, 'images/CR2.png');
@@ -516,6 +516,10 @@ test('version 1 upgrade keeps historical snapshots only for watches listed as co
     ALTER TABLE watch_creatives DROP COLUMN platform;
     ALTER TABLE creatives DROP COLUMN regions_retry;
     ALTER TABLE group_snapshots DROP COLUMN name;
+    DROP INDEX profile_watches_trash;
+    ALTER TABLE profile_watches DROP COLUMN group_id;
+    ALTER TABLE profile_watches DROP COLUMN deleted_at;
+    DROP TABLE watch_groups;
     PRAGMA user_version = 1;
   `);
   const upgraded = createStore(root);
@@ -552,6 +556,10 @@ test('opening a version 2 DB backfills domain watches only once', async t => {
   store.close();
 
   const legacy = openDb(data);
+  legacy.run('DROP INDEX profile_watches_trash');
+  legacy.run('ALTER TABLE profile_watches DROP COLUMN group_id');
+  legacy.run('ALTER TABLE profile_watches DROP COLUMN deleted_at');
+  legacy.run('DROP TABLE watch_groups');
   legacy.run('PRAGMA user_version = 2');
   legacy.close();
 
@@ -574,4 +582,90 @@ test('opening a version 2 DB backfills domain watches only once', async t => {
   assert.equal(reopened.get("SELECT domain FROM creatives WHERE id = 'shared'").domain, null);
   assert.equal(reopened.get("SELECT json_type(observation, '$.domain') AS type FROM watch_creatives WHERE watch_id = ? AND creative_id = 'shared'", domainWatch.id).type, null);
   reopened.close();
+});
+
+test('thùng rác ẩn mục khỏi báo cáo và lượt quét, giữ quảng cáo khi thêm lại', async t => {
+  const { runScan } = await import('../src/scanner.js');
+  const { store } = setup(t);
+  const { id } = store.addProfile('Dai');
+  const group = store.addGroup(id, 'Bán lẻ', 'project');
+  const watch = store.addWatch(id, 'shop.com', null, 'project', group.id);
+  const at = '2026-11-22T14:00:00.000Z';
+  store.mergeAds(watch, [{ creativeId: 'CR1', advertiserId: 'AR1', advertiserName: 'Cửa hàng',
+    domain: 'shop.com', firstShown: at, lastShown: at }], at);
+  assert.equal(store.getSummary(id, { now: at }).watches.length, 1);
+  store.removeWatch(id, watch.id);
+  assert.deepEqual(store.getSummary(id, { now: at }).watches, []);
+  assert.ok(store.getSeries(id, { watchId: watch.id, now: at, days: 2 }).points.every(
+    point => point.running === 0 && point.newAds === 0,
+  ));
+  assert.deepEqual(store.listAdsForProfile(id), []);
+  assert.deepEqual(store.suggest('shop'), []);
+  assert.deepEqual(store.allWatches(), []);
+  let calls = 0;
+  const scan = await runScan({ store, client: { rpc: () => { calls++; return {}; } } });
+  assert.equal(scan.status, 'ok');
+  assert.equal(scan.watched, 0);
+  assert.equal(calls, 0);
+  assert.deepEqual(store.addWatch(id, 'https://www.shop.com/'), watch);
+  assert.deepEqual(store.getTrash(id), []);
+  assert.equal(store.listAdsForProfile(id)[0].firstSeenByUs, at);
+});
+
+test('dọn thùng rác sau đúng mốc 60 ngày khi quét và khi mở DB', async t => {
+  const { runScan } = await import('../src/scanner.js');
+  const { openDb } = await import('../src/db.js');
+  const root = mkdtempSync(join(tmpdir(), 'atc-trash-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const since = Date.parse('2026-08-01T00:00:00Z');
+  let time = since;
+  const now = () => new Date(time);
+  const store = createStore(root, { now });
+  const { id } = store.addProfile('Dai');
+  const scanWatch = store.addWatch(id, 'scan.com');
+  store.removeWatch(id, scanWatch.id);
+  time += 10;
+  const openWatch = store.addWatch(id, 'open.com');
+  store.removeWatch(id, openWatch.id);
+  const client = { rpc: () => assert.fail('Không quét mục trong thùng rác') };
+  time = since + 60 * 86_400_000;
+  await runScan({ store, client, now });
+  assert.equal(store.getTrash(id).length, 2);
+  time++;
+  await runScan({ store, client, now });
+  const data = join(root, 'data');
+  const memberships = db => db.all('SELECT watch_id FROM profile_watches').map(row => row.watch_id);
+  const reader = openDb(data, { readOnly: true });
+  assert.deepEqual(memberships(reader), [openWatch.id]);
+  reader.close();
+  store.close();
+  time += 10;
+  const reopened = openDb(data, { now });
+  assert.deepEqual(memberships(reopened), []);
+  reopened.close();
+});
+
+test('nâng DB phiên bản 3 giữ mục theo dõi và quảng cáo đã lưu', async t => {
+  const { root, store } = setup(t);
+  const { DatabaseSync } = await import('node:sqlite');
+  const { id } = store.addProfile('Dai');
+  const watch = store.addWatch(id, 'AR123', null, 'project');
+  const at = first.toISOString();
+  store.mergeAds(watch, [{ creativeId: 'CR1', advertiserId: 'AR123', domain: 'shop.com',
+    firstShown: at, lastShown: at }], at);
+  store.close();
+  const legacy = new DatabaseSync(join(root, 'data', 'atc.db'));
+  legacy.exec(`
+    DROP INDEX profile_watches_trash;
+    ALTER TABLE profile_watches DROP COLUMN group_id;
+    ALTER TABLE profile_watches DROP COLUMN deleted_at;
+    DROP TABLE watch_groups;
+    PRAGMA user_version = 3;
+  `);
+  legacy.close();
+  const upgraded = createStore(root);
+  t.after(() => upgraded.close());
+  assert.deepEqual(upgraded.getWatchlist(id), [watch]);
+  assert.deepEqual(upgraded.getTrash(id), []);
+  assert.equal(upgraded.listAdsForProfile(id)[0].firstSeenByUs, at);
 });

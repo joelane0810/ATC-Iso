@@ -1,15 +1,30 @@
+import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseWatchInput, regionIdToIso, slugify } from './atc.js';
-import { openDb } from './db.js';
+import { openDb, TRASH_RETENTION_MS } from './db.js';
 import { groupIdentity, runningAt } from './groups.js';
 import { adsDateRange, createTimeReport, vietnamDate } from './time-report.js';
 import { scanResumeAt } from './scan-rest.js';
 import { createWebStore } from './web-store.js';
 
 const DAY = 24 * 60 * 60 * 1000;
-const watchFields = 'w.id, w.type, w.value, w.region, p.label, p.kind, p.added_at AS addedAt';
+const watchFields = 'w.id, w.type, w.value, w.region, p.label, p.kind, p.added_at AS addedAt, p.group_id AS groupId';
 const groupTypeFor = (kind) => kind === 'project' ? 'advertiser' : 'domain';
+
+function notFound(message) {
+  return Object.assign(new Error(message), { code: 'NOT_FOUND' });
+}
+
+function groupName(name) {
+  if (typeof name !== 'string' || !name.trim()) throw new Error('Vui lòng nhập tên nhóm.');
+  return name.trim();
+}
+
+function watchKind(kind) {
+  if (kind !== 'competitor' && kind !== 'project') throw new Error('Loại theo dõi không hợp lệ.');
+  return kind;
+}
 
 function pathId(id) {
   if (typeof id !== 'string' || !/^[a-z0-9-]+$/i.test(id)) throw new Error('Mã không hợp lệ');
@@ -18,12 +33,51 @@ function pathId(id) {
 
 export function createStore(root, options) {
   const data = resolve(root, 'data');
-  const { run, get, all, transaction, ensureWatch, linkWatch, saveAd, saveScan, saveSnapshot, close } =
+  const { run, get, all, transaction, ensureWatch, linkWatch, saveAd, saveScan, saveSnapshot, purgeExpiredTrash, close } =
     openDb(data, options);
+  const now = options?.now ?? (() => new Date());
+  function requireProfile(pid) {
+    if (!get('SELECT 1 FROM profiles WHERE id = ?', pathId(pid))) throw notFound('Không tìm thấy hồ sơ.');
+  }
+
+  function requireGroup(pid, gid) {
+    const group = get(`SELECT id, name, kind, created_at AS createdAt FROM watch_groups
+      WHERE profile_id = ? AND id = ?`, pid, pathId(gid));
+    if (!group) throw notFound('Không tìm thấy nhóm.');
+    return { ...group };
+  }
+
+  function validateGroup(pid, gid, kind) {
+    if (gid !== null && requireGroup(pid, gid).kind !== kind) {
+      throw new Error('Nhóm phải cùng loại với mục theo dõi.');
+    }
+  }
+
+  function changeTrash(pid, ids, action) {
+    if (!Array.isArray(ids) || !ids.length) throw new Error('Vui lòng chọn mục theo dõi.');
+    const unique = new Set(ids.map(pathId));
+    return transaction(() => {
+      requireProfile(pid);
+      const deletedAt = new Date(now()).toISOString();
+      const cutoff = new Date(Date.parse(deletedAt) - TRASH_RETENTION_MS).toISOString();
+      for (const id of unique) {
+        const result = action === 'delete'
+          ? run(`UPDATE profile_watches SET deleted_at = ?
+              WHERE profile_id = ? AND watch_id = ? AND deleted_at IS NULL`, deletedAt, pid, id)
+          : action === 'restore'
+            ? run(`UPDATE profile_watches SET deleted_at = NULL
+                WHERE profile_id = ? AND watch_id = ? AND deleted_at >= ?`, pid, id, cutoff)
+            : run(`DELETE FROM profile_watches
+                WHERE profile_id = ? AND watch_id = ? AND deleted_at IS NOT NULL`, pid, id);
+        if (!result.changes) throw notFound('Không tìm thấy mục theo dõi.');
+      }
+    });
+  }
+
   const listProfiles = () => all('SELECT id, name, created_at AS createdAt FROM profiles ORDER BY rowid')
     .map(row => ({ ...row }));
   const getWatchlist = (pid) => all(`SELECT ${watchFields} FROM profile_watches p
-    JOIN watches w ON w.id = p.watch_id WHERE p.profile_id = ? ORDER BY p.rowid`, pathId(pid))
+    JOIN watches w ON w.id = p.watch_id WHERE p.profile_id = ? AND p.deleted_at IS NULL ORDER BY p.rowid`, pathId(pid))
     .map(row => ({ ...row }));
   const getAds = (wid) => {
     const row = get(`SELECT id, type, value, region, label, kind, added_at AS addedAt, last_scan_at AS lastScanAt
@@ -70,9 +124,39 @@ export function createStore(root, options) {
       });
     },
     getWatchlist,
-    addWatch(pid, input, region = null, kind = 'competitor') {
-      if (kind !== 'competitor' && kind !== 'project') throw new Error('Loại theo dõi không hợp lệ.');
+    getGroups(pid) {
+      requireProfile(pid);
+      return all(`SELECT id, name, kind, created_at AS createdAt FROM watch_groups
+        WHERE profile_id = ? ORDER BY rowid`, pid).map(row => ({ ...row }));
+    },
+    addGroup(pid, name, kind) {
+      const group = { id: randomUUID(), name: groupName(name), kind: watchKind(kind), createdAt: new Date(now()).toISOString() };
       return transaction(() => {
+        requireProfile(pid);
+        run('INSERT INTO watch_groups VALUES (?, ?, ?, ?, ?)', group.id, pid, group.name, group.kind, group.createdAt);
+        return group;
+      });
+    },
+    renameGroup(pid, gid, name) {
+      name = groupName(name);
+      return transaction(() => {
+        const group = requireGroup(pathId(pid), gid);
+        run('UPDATE watch_groups SET name = ? WHERE id = ?', name, gid);
+        return { ...group, name };
+      });
+    },
+    removeGroup(pid, gid) {
+      return transaction(() => {
+        requireGroup(pathId(pid), gid);
+        run('DELETE FROM watch_groups WHERE id = ?', gid);
+      });
+    },
+    addWatch(pid, input, region = null, kind, groupId) {
+      if (kind !== undefined) watchKind(kind);
+      return transaction(() => {
+        requireProfile(pid);
+        const addedAt = new Date(now()).toISOString();
+        purgeExpiredTrash(addedAt);
         const named = get(`SELECT a.id, a.name FROM advertisers a JOIN creatives c ON c.advertiser_id = a.id
           WHERE fold_name(a.name) = fold_name(?) AND fold_name(a.name) != ''
           GROUP BY a.id ORDER BY count(*) DESC, a.id LIMIT 1`, input);
@@ -86,12 +170,19 @@ export function createStore(root, options) {
           ? { type: 'advertiser', value: named.id } : parsed;
         const label = type === 'advertiser'
           ? get('SELECT name FROM advertisers WHERE id = ?', value)?.name || value : value;
-        const watches = getWatchlist(pid);
-        if (!get('SELECT 1 FROM profiles WHERE id = ?', pid)) throw new Error('Không tìm thấy hồ sơ.');
-        const existing = watches.find(watch => watch.type === type && watch.value === value && watch.region === region);
+        const existing = get(`SELECT ${watchFields}, p.deleted_at AS deletedAt FROM profile_watches p
+          JOIN watches w ON w.id = p.watch_id WHERE p.profile_id = ? AND w.type = ?
+          AND w.value = ? AND w.region IS ?`, pid, type, value, region);
+        // Re-adding a trashed watch without a kind restores its original kind and group.
+        const nextKind = kind ?? (existing?.deletedAt ? existing.kind : 'competitor');
+        const nextGroup = groupId === undefined
+          ? (existing?.kind === nextKind ? existing.groupId : null) : groupId;
+        validateGroup(pid, nextGroup, nextKind);
         if (existing) {
-          run('UPDATE profile_watches SET kind = ? WHERE profile_id = ? AND watch_id = ?', kind, pid, existing.id);
-          return { ...existing, kind };
+          run(`UPDATE profile_watches SET kind = ?, group_id = ?, deleted_at = NULL
+            WHERE profile_id = ? AND watch_id = ?`, nextKind, nextGroup, pid, existing.id);
+          const { deletedAt, ...watch } = existing;
+          return { ...watch, kind: nextKind, groupId: nextGroup };
         }
 
         const base = pathId(region == null ? slugify(value) : `${slugify(value)}-r${region}`);
@@ -101,13 +192,37 @@ export function createStore(root, options) {
         if (!shared) {
           for (let suffix = 2; get('SELECT 1 FROM watches WHERE id = ?', id); suffix++) id = `${base}-${suffix}`;
         }
-        const watch = { id, type, value, label, region, kind, addedAt: new Date().toISOString() };
+        const watch = { id, type, value, label, region, kind: nextKind, addedAt, groupId: nextGroup };
         linkWatch(pid, watch);
+        if (nextGroup !== null) {
+          run('UPDATE profile_watches SET group_id = ? WHERE profile_id = ? AND watch_id = ?', nextGroup, pid, id);
+        }
         return watch;
       });
     },
-    removeWatch(pid, wid) {
-      transaction(() => run('DELETE FROM profile_watches WHERE profile_id = ? AND watch_id = ?', pathId(pid), wid));
+    setWatchGroup(pid, wid, groupId) {
+      return transaction(() => {
+        const watch = get(`SELECT ${watchFields} FROM profile_watches p JOIN watches w ON w.id = p.watch_id
+          WHERE p.profile_id = ? AND p.watch_id = ? AND p.deleted_at IS NULL`, pathId(pid), pathId(wid));
+        if (!watch) throw notFound('Không tìm thấy mục theo dõi.');
+        validateGroup(pid, groupId, watch.kind);
+        run('UPDATE profile_watches SET group_id = ? WHERE profile_id = ? AND watch_id = ?', groupId, pid, wid);
+        return { ...watch, groupId };
+      });
+    },
+    removeWatch: (pid, wid) => changeTrash(pid, [wid], 'delete'),
+    removeWatches: (pid, ids) => changeTrash(pid, ids, 'delete'),
+    restoreWatches: (pid, ids) => changeTrash(pid, ids, 'restore'),
+    purgeWatches: (pid, ids) => changeTrash(pid, ids, 'purge'),
+    purgeExpiredTrash,
+    getTrash(pid) {
+      requireProfile(pid);
+      const cutoff = new Date(+new Date(now()) - TRASH_RETENTION_MS).toISOString();
+      return all(`SELECT watch_id AS watchId, label, kind, group_id AS groupId, deleted_at AS deletedAt
+        FROM profile_watches WHERE profile_id = ? AND deleted_at >= ? ORDER BY deleted_at DESC, rowid DESC`,
+      pid, cutoff).map(row => ({
+        ...row, purgeAt: new Date(Date.parse(row.deletedAt) + TRASH_RETENTION_MS).toISOString(),
+      }));
     },
     allWatches() {
       const watches = new Map();
@@ -118,6 +233,9 @@ export function createStore(root, options) {
         }
       }
       return [...watches.values()];
+    },
+    isWatchActive(wid) {
+      return Boolean(get('SELECT 1 FROM profile_watches WHERE watch_id = ? AND deleted_at IS NULL LIMIT 1', wid));
     },
     getAds,
     mergeAds(watch, rawAds, now, scanId) {
@@ -154,7 +272,8 @@ export function createStore(root, options) {
           run('UPDATE profile_watches SET label = ? WHERE watch_id = ? AND label = ?', label, watch.id, watch.value);
         }
         if (scanId != null) saveSnapshot(scanId, watch.id, lastScanAt, Object.values(ads));
-        return { file: { watch: { ...watch, label }, lastScanAt, ads: { ...ads } }, newIds };
+        const { groupId, ...sharedWatch } = watch;
+        return { file: { watch: { ...sharedWatch, label }, lastScanAt, ads: { ...ads } }, newIds };
       });
     },
     setAdImage(wid, cr, relPath) {
@@ -230,13 +349,17 @@ export function createStore(root, options) {
       return scan?.status === 'running' ? JSON.parse(scan.entry).watchId ?? null : null;
     },
     suggest(q) {
-      return all(`WITH suggestions AS (
+      return all(`WITH active_creatives AS (
+        SELECT DISTINCT wc.creative_id FROM watch_creatives wc
+        JOIN profile_watches p ON p.watch_id = wc.watch_id WHERE p.deleted_at IS NULL
+      ), suggestions AS (
         SELECT 'advertiser' AS type, a.id AS value, coalesce(nullif(a.name, ''), a.id) AS name, count(*) AS ads
-        FROM creatives c JOIN advertisers a ON a.id = c.advertiser_id
+        FROM active_creatives ac JOIN creatives c ON c.id = ac.creative_id
+        JOIN advertisers a ON a.id = c.advertiser_id
         WHERE instr(fold_name(a.name), fold_name(?)) OR instr(fold_name(a.id), fold_name(?))
         GROUP BY a.id
         UNION ALL
-        SELECT 'domain', domain_key(domain), NULL, count(*) FROM creatives
+        SELECT 'domain', domain_key(domain), NULL, count(*) FROM active_creatives ac JOIN creatives c ON c.id = ac.creative_id
         WHERE domain_key(domain) != '' AND instr(domain_key(domain), fold_name(?))
         GROUP BY domain_key(domain)
       ) SELECT * FROM suggestions ORDER BY ads DESC, value, type LIMIT 10`, q, q, q)
@@ -277,7 +400,7 @@ export function createStore(root, options) {
         r.region_id AS regionId, r.last_shown AS lastShown FROM creative_regions r
         JOIN (SELECT DISTINCT wc.creative_id FROM profile_watches p
           JOIN watch_creatives wc ON wc.watch_id = p.watch_id
-          WHERE p.profile_id = ? AND wc.platform = 'search') matches ON matches.creative_id = r.creative_id
+          WHERE p.profile_id = ? AND p.deleted_at IS NULL AND wc.platform = 'search') matches ON matches.creative_id = r.creative_id
         ORDER BY r.region_id`, pid));
       return [...creatives.values()].filter((ad) => {
         if (filter === 'new' && !ad.isNew) return false;

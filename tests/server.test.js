@@ -259,3 +259,59 @@ test('web GET reads under a WAL writer and reports DELETE contention in Vietname
   }
   assert.equal((await deleteRequest('/api/profiles')).status, 200);
 });
+
+test('API quản lý nhóm và thùng rác theo hồ sơ', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'atc-groups-api-'));
+  const store = createStore(root);
+  t.after(() => { store.close(); return rm(root, { recursive: true, force: true }); });
+  const { id } = store.addProfile('Dai');
+  const other = store.addProfile('Lan');
+  const request = await startRequest(t, { store, port: 0, isScanning: () => false,
+    triggerScan: () => assert.fail('Mục trong thùng rác không được quét') });
+  const api = '/api/profiles/' + id;
+  const send = (method, path, body) => request(api + path, { method, body: JSON.stringify(body) });
+  const groups = '/groups';
+  const list = '/watchlist';
+  const trash = '/trash';
+  const created = await send('POST', groups, { name: '  Cửa hàng  ', kind: 'project' });
+  assert.equal(created.status, 201);
+  const group = await created.json();
+  assert.deepEqual(group, { id: group.id, name: 'Cửa hàng', kind: 'project', createdAt: group.createdAt });
+  assert.ok(Number.isFinite(Date.parse(group.createdAt)));
+  assert.deepEqual(await (await send('GET', groups)).json(), [group]);
+  assert.equal((await request('/api/profiles/' + other.id + groups + '/' + group.id, {
+    method: 'PATCH', body: JSON.stringify({ name: 'Sửa nhóm' }),
+  })).status, 404);
+  const groupPath = groups + '/' + group.id;
+  assert.deepEqual(await (await send('PATCH', groupPath, { name: 'Bán lẻ' })).json(),
+    { ...group, name: 'Bán lẻ' });
+
+  const wrongKind = await send('POST', list, { input: 'shop.com', groupId: group.id });
+  assert.equal(wrongKind.status, 400);
+  assert.match((await wrongKind.json()).error, /cùng loại/);
+  const first = await (await send('POST', list, { input: 'shop.com', kind: 'project', groupId: group.id })).json();
+  const second = await (await send('POST', list, { input: 'rival.com' })).json();
+  assert.equal(first.groupId, group.id);
+  assert.equal(second.groupId, null);
+  assert.equal((await send('PATCH', list + '/' + second.id, { groupId: group.id })).status, 400);
+  const item = list + '/' + first.id;
+  assert.equal((await (await send('PATCH', item, { groupId: null })).json()).groupId, null);
+  assert.equal((await (await send('PATCH', item, { groupId: group.id })).json()).groupId, group.id);
+  assert.equal((await send('DELETE', item)).status, 204);
+  assert.equal((await request('/api/scan', { method: 'POST', body: JSON.stringify({ watchId: first.id }) })).status, 404);
+  assert.deepEqual(await (await send('GET', list)).json(), [second]);
+  const [entry] = await (await send('GET', trash)).json();
+  assert.deepEqual(entry, { watchId: first.id, label: first.label, kind: 'project', groupId: group.id,
+    deletedAt: entry.deletedAt, purgeAt: entry.purgeAt });
+  assert.equal(Date.parse(entry.purgeAt) - Date.parse(entry.deletedAt), 60 * 86_400_000);
+  assert.equal((await send('POST', trash + '/restore', { ids: [first.id] })).status, 204);
+  assert.equal((await send('POST', list + '/delete', { ids: [first.id, 'missing'] })).status, 404);
+  assert.deepEqual(await (await send('GET', list)).json(), [first, second]);
+  assert.equal((await send('DELETE', groupPath)).status, 204);
+  assert.equal((await (await send('GET', list)).json())[0].groupId, null);
+  assert.equal((await send('POST', list + '/delete', { ids: [first.id, second.id] })).status, 204);
+  assert.deepEqual(await (await send('GET', list)).json(), []);
+  assert.equal((await send('POST', trash + '/purge', { ids: [first.id, second.id] })).status, 204);
+  assert.deepEqual(await (await send('GET', trash)).json(), []);
+  assert.equal((await send('POST', trash + '/restore', { ids: [first.id] })).status, 404);
+});

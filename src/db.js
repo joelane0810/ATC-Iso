@@ -36,7 +36,8 @@ function jsonFiles(path) {
   }
 }
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
+export const TRASH_RETENTION_MS = 60 * 24 * 60 * 60 * 1000;
 const retryWait = new Int32Array(new SharedArrayBuffer(4));
 
 export function isSqliteBusy(error) {
@@ -55,7 +56,7 @@ export function configureJournal(get, log = console.warn) {
   log('Ổ lưu dữ liệu không hỗ trợ WAL. Đang dùng chế độ DELETE.');
 }
 
-export function openDb(data, { readOnly = false, web = false } = {}) {
+export function openDb(data, { readOnly = false, web = false, now = () => new Date() } = {}) {
   if (!readOnly) mkdirSync(data, { recursive: true });
   const db = new DatabaseSync(join(data, 'atc.db'), { readOnly });
   db.function('domain_key', { deterministic: true }, domainKey);
@@ -83,6 +84,14 @@ export function openDb(data, { readOnly = false, web = false } = {}) {
         if (web || attempt >= 2 || !isSqliteBusy(error)) throw error;
         Atomics.wait(retryWait, 0, 0, 25 * (attempt + 1));
       }
+    }
+  }
+
+  function purgeExpiredTrash(at = now()) {
+    const cutoff = new Date(+new Date(at) - TRASH_RETENTION_MS).toISOString();
+    // Avoid taking a write lock when there is nothing to remove.
+    if (get('SELECT 1 FROM profile_watches WHERE deleted_at < ? LIMIT 1', cutoff)) {
+      run('DELETE FROM profile_watches WHERE deleted_at < ?', cutoff);
     }
   }
 
@@ -275,7 +284,7 @@ export function openDb(data, { readOnly = false, web = false } = {}) {
                 WHERE s.has_snapshots = 1 AND s.at IS NOT NULL`);
           }
         }
-        db.exec(`
+        if (previous < 3) db.exec(`
           INSERT OR IGNORE INTO domains (name)
             SELECT w.value FROM watches w
             JOIN watch_creatives wc ON wc.watch_id = w.id
@@ -306,12 +315,24 @@ export function openDb(data, { readOnly = false, web = false } = {}) {
             saveSnapshot(scanId, id, at, ads);
           }
         }
+        db.exec(`
+          CREATE TABLE watch_groups (
+            id TEXT PRIMARY KEY, profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+            name TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('competitor', 'project')),
+            created_at TEXT NOT NULL
+          );
+          CREATE INDEX watch_groups_profile ON watch_groups(profile_id);
+          ALTER TABLE profile_watches ADD COLUMN group_id TEXT REFERENCES watch_groups(id) ON DELETE SET NULL;
+          ALTER TABLE profile_watches ADD COLUMN deleted_at TEXT;
+          CREATE INDEX profile_watches_trash ON profile_watches(deleted_at) WHERE deleted_at IS NOT NULL;
+        `);
         db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
       });
     }
+    if (!readOnly) purgeExpiredTrash();
   } catch (error) {
     close();
     throw error;
   }
-  return { run, get, all, transaction, ensureWatch, linkWatch, saveAd, saveScan, saveSnapshot, close };
+  return { run, get, all, transaction, ensureWatch, linkWatch, saveAd, saveScan, saveSnapshot, purgeExpiredTrash, close };
 }
