@@ -323,3 +323,18 @@ test('RPC and detail visits share the same pacing queue', async () => {
   for (let i = 1; i < times.length; i++) assert.ok(times[i] - times[i - 1] >= interval - 1);
   await client.close();
 });
+
+test('a 429 from another Google host on the detail page is not a block', async () => {
+  const tab = creativeTab([{ body: '{"17":[{"1":2724,"5":20261122}]}' }]);
+  const wait = tab.waitForResponse.bind(tab);
+  tab.waitForResponse = (match, options) => {
+    // Máy ghi nhật ký của Google trả 429 trước khi dữ liệu quốc gia về.
+    assert.equal(match(response({ url: 'https://play.google.com/log?format=json', status: 429 })), false);
+    return wait(match, options);
+  };
+  const client = await chrome({ preview: tab }).open();
+  assert.deepEqual(await client.lookupRegions({ advertiserId: 'AR1', creativeId: 'CR1' }), [
+    { regionId: 2724, firstShown: null, lastShown: '2026-11-22T00:00:00.000Z' },
+  ]);
+  await client.close();
+});

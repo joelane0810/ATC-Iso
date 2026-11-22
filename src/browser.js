@@ -315,10 +315,18 @@ export async function openChromeClient({
       `/advertiser/${encodeURIComponent(advertiserId)}/creative/${encodeURIComponent(creativeId)}?region=anywhere&platform=SEARCH`,
       landingUrl,
     );
+    // Tín hiệu chặn chỉ tính từ chính ATC hoặc chuyển hướng tới trang captcha.
+    // Tệp phụ của máy chủ khác (vd. máy ghi nhật ký trả 429) không phải tín hiệu chặn.
     const detail = detailPage.waitForResponse(response => {
       const { status, url, redirectedTo, contentType } = responseMetadata(response);
       const matches = url.includes('LookupService/GetCreativeById');
-      assertUnblocked({ status, url, redirectedTo, contentType: matches ? contentType : '' });
+      let host = '';
+      try { host = new URL(url).hostname; } catch {}
+      if (matches || host === 'adstransparency.google.com') {
+        assertUnblocked({ status, url, redirectedTo, contentType: matches ? contentType : '' });
+      } else if (isBlockedResponse({ url: redirectedTo })) {
+        throw new BlockedError(blockedMessage);
+      }
       return matches;
     }, { timeout: detailTimeout });
     markRequest();
