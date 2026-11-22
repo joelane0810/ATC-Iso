@@ -13,13 +13,14 @@
       <h1>ATC Iso</h1>
       <form id="watch-form">
         <span class="search-icon" aria-hidden="true"></span>
-        <input name="input" aria-label="Dán tên miền hoặc đường dẫn nhà quảng cáo"
-          placeholder="Dán tên miền hoặc đường dẫn nhà quảng cáo" required disabled>
+        <input name="input" aria-label="Tìm nhà quảng cáo hoặc tên miền" autocomplete="off"
+          placeholder="Tìm nhà quảng cáo hoặc dán đường dẫn" required disabled>
         <div class="watch-kinds" role="group" aria-label="Loại theo dõi">
           <button id="kind-competitor" type="button" aria-pressed="true" disabled>Đối thủ</button>
           <button id="kind-project" type="button" aria-pressed="false" disabled>Dự án</button>
         </div>
         <button type="submit" aria-label="Thêm theo dõi" title="Thêm theo dõi" disabled>↵</button>
+        <div id="suggestions" class="suggestions" aria-label="Gợi ý theo dõi" hidden></div>
       </form>
       <div class="toolbar">
         <select id="profile" aria-label="Hồ sơ" disabled></select>
@@ -32,7 +33,7 @@
           </form>
         </details>
         <div id="status" role="status">Đang tải trạng thái…</div>
-        <button id="scan" class="action" type="button">Quét ngay</button>
+        <button id="scan" class="action" type="button" title="Quét ngay tất cả mục theo dõi">Quét tất cả</button>
       </div>
     </header>
     <p id="error" role="alert" hidden></p>
@@ -59,31 +60,59 @@
         <p id="gallery-summary"></p>
         <p class="search-only">Chỉ quảng cáo Google Tìm kiếm</p>
         <div id="overview">
+          <label class="chip overview-period">Khoảng so sánh
+            <select id="period">
+              <option value="day">Hôm nay</option>
+              <option value="7d">7 ngày</option>
+              <option value="30d">30 ngày</option>
+            </select>
+          </label>
           <div id="totals" class="totals" role="group" aria-label="Lọc theo thay đổi"></div>
           <div id="overview-watches"></div>
         </div>
         <div id="watch-view" hidden>
-          <div class="filters">
-            <label class="chip">Trạng thái
-              <select id="filter">
-                <option value="all" selected>Tất cả</option>
-                <option value="new">Mới hôm nay</option>
-                <option value="running">Đang chạy</option>
-                <option value="stopped">Đã dừng</option>
-              </select>
-            </label>
-            <label class="chip">Định dạng
-              <select id="format">
-                <option value="">Tất cả</option>
-                <option value="text">Chữ</option>
-                <option value="image">Hình ảnh</option>
-                <option value="video">Video</option>
-              </select>
-            </label>
-            <input id="query" type="search" aria-label="Tìm theo chữ" placeholder="Tìm theo chữ">
+          <div class="watch-tools">
+            <div role="group" aria-label="Cách xem">
+              <button id="mode-groups" type="button" aria-pressed="true">Theo nhà QC/dự án</button>
+              <button id="mode-grid" type="button" aria-pressed="false">Lưới mẫu</button>
+            </div>
+            <button id="scan-watch" class="action" type="button">Quét mục này</button>
           </div>
-          <p id="empty" role="status" hidden></p>
-          <div id="ads" class="ads"></div>
+          <div id="watch-chart"></div>
+          <div id="group-view">
+            <label class="chip">Sắp xếp theo
+              <select id="group-sort">
+                <option value="runningNow">Đang chạy</option>
+                <option value="newAds">Mẫu mới</option>
+                <option value="delta">Thay đổi</option>
+                <option value="name">Tên</option>
+              </select>
+            </label>
+            <div id="watch-groups"></div>
+          </div>
+          <div id="grid-view" hidden>
+            <div class="filters">
+              <label class="chip">Trạng thái
+                <select id="filter">
+                  <option value="all" selected>Tất cả</option>
+                  <option value="new">Mới hôm nay</option>
+                  <option value="running">Đang chạy</option>
+                  <option value="stopped">Đã dừng</option>
+                </select>
+              </label>
+              <label class="chip">Định dạng
+                <select id="format">
+                  <option value="">Tất cả</option>
+                  <option value="text">Chữ</option>
+                  <option value="image">Hình ảnh</option>
+                  <option value="video">Video</option>
+                </select>
+              </label>
+              <input id="query" type="search" aria-label="Tìm theo chữ" placeholder="Tìm theo chữ">
+            </div>
+            <p id="empty" role="status" hidden></p>
+            <div id="ads" class="ads"></div>
+          </div>
         </div>
       </section>
       <section class="detail-panel" aria-labelledby="detail-heading">
