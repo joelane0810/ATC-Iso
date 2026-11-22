@@ -912,3 +912,6 @@ main {
   .overview-total-value strong { font-size: 18px; }
   .overview-total-block + .overview-total-block .overview-total-value { display: grid; }
 }
+
+#add-competitor, #add-project { display: none !important; }
+.watch-counts { display: flex; flex-wrap: wrap; gap: 4px; }

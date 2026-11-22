@@ -460,12 +460,19 @@ function renderWatchItem(watch, kind, management) {
   row.className = 'watch-item';
   const choose = button('', () => chooseWatch(watch.id), 'watch-choice');
   choose.setAttribute('aria-pressed', String(watchId === watch.id));
-  const { runningNow = 0, newAds = 0 } = watchCounts.get(watch.id) ?? {};
+  const { runningNow = 0, newAds = 0, groups = [] } = watchCounts.get(watch.id) ?? {};
   const counts = element('span');
   counts.className = 'watch-counts';
-  const running = element('span', formatCount.format(runningNow) + ' ads đang chạy');
+  // Nhà quảng cáo: số dự án đang chạy. Dự án: số nhà quảng cáo đang chạy (bỏ mẫu chưa rõ tên miền).
+  const activeGroups = groups.filter((group) => group.key && group.runningNow > 0).length;
+  const groupPill = element('span', formatCount.format(activeGroups)
+    + (watch.kind === 'project' ? ' nhà QC' : ' dự án'));
+  groupPill.className = 'count-pill count-groups';
+  groupPill.title = watch.kind === 'project' ? 'Số nhà quảng cáo đang chạy' : 'Số dự án đang chạy';
+  const running = element('span', formatCount.format(runningNow) + ' ads');
   running.className = 'count-pill';
-  counts.append(running);
+  running.title = 'Số ads đang chạy';
+  counts.append(groupPill, running);
   if (newAds > 0) {
     const fresh = element('span', formatCount.format(newAds) + ' ads mới');
     fresh.className = 'count-pill count-new';
