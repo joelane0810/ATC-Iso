@@ -589,7 +589,7 @@ main {
 #watch-stats-cards .total { border-radius: 8px; border-top-style: solid; }
 #watch-stats-unknown { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
 
-@media (width < 900px) {
+@media (width < 1280px) {
   .workspace { min-width: 0; }
   body.mobile-panel-open { overflow: hidden; }
   .topbar {
@@ -654,7 +654,7 @@ main {
 
   button, select, input, .detail-actions .action { min-height: 40px; }
   .watch-panel summary { min-height: 40px; align-content: center; }
-  .ads { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .ads { grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); gap: 12px; }
   .ad-badges { flex-wrap: wrap; }
   .totals { grid-template-columns: repeat(auto-fit, minmax(min(100%, 145px), 1fr)); }
   #overview-watches, .chart-table { overflow-x: auto; }
@@ -693,6 +693,6 @@ main {
   .range-footer { flex-wrap: wrap; padding-top: 8px; }
 }
 
-@media (width >= 900px) and (any-pointer: coarse) {
+@media (width >= 1280px) and (any-pointer: coarse) {
   button, select, .detail-actions .action { min-height: 40px; }
 }

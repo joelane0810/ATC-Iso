@@ -23,7 +23,7 @@ const trashError = byId('trash-error');
 const gallery = byId('gallery');
 const watchForm = byId('watch-form');
 const detail = byId('detail');
-const mobileLayout = typeof matchMedia === 'function' ? matchMedia('(width < 900px)') : null;
+const mobileLayout = typeof matchMedia === 'function' ? matchMedia('(width < 1280px)') : null;
 let mobilePanel;
 let mobilePanelTrigger;
 const dateFormat = new Intl.DateTimeFormat('vi-VN', {
