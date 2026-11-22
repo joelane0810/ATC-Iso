@@ -2070,9 +2070,11 @@ function scanButton(label, id, fullLabel) {
   const button = element('button', label);
   button.type = 'button';
   button.setAttribute('aria-label', fullLabel);
-  button.setAttribute('data-scan', '');
+  button.setAttribute('data-scan', id ?? '');
   button.title = fullLabel;
   button.disabled = scanning || startingScan;
+  const current = scanStatus?.scanningWatchId;
+  button.classList?.toggle('is-scanning', Boolean(button.disabled && (current ? id === current : true)));
   button.onclick = () => startScan(id);
   return button;
 }
@@ -2089,9 +2091,18 @@ function renderScanStatus() {
   if (scanning || startingScan) {
     message = 'Đang quét ' + (label || (scanningWatchId ? 'một mục' : 'tất cả')) + '…';
   }
-  byId('status').textContent = message;
+  const active = scanning || startingScan;
+  const status = byId('status');
+  status.textContent = message;
+  status.classList?.toggle('is-scanning', active);
   for (const button of [scan, byId('scan-watch'), ...document.querySelectorAll('[data-scan]')]) {
-    button.disabled = scanning || startingScan;
+    if (!button) continue;
+    button.disabled = active;
+    // Mục đang quét: nút quét xoay và cả dòng/thẻ nhấp nháy nhẹ. Quét tất cả: mọi mục cùng hiện.
+    const target = button === scan ? '' : button === byId('scan-watch') ? watchId : button.getAttribute?.('data-scan');
+    const mine = active && target != null && (scanningWatchId ? target === scanningWatchId : true);
+    button.classList?.toggle('is-scanning', mine);
+    button.closest?.('.watch-item, .overview-card')?.classList?.toggle('row-scanning', mine && button !== scan);
   }
 }
 
