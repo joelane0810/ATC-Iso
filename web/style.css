@@ -108,9 +108,6 @@ button:disabled { cursor: default; opacity: .55; }
 #watch-form input:focus { outline: none; }
 #watch-form button { border-radius: 50%; color: var(--accent); }
 #watch-form button:hover:not(:disabled) { background: var(--selected); }
-.watch-kinds { display: flex; gap: 2px; white-space: nowrap; }
-#watch-form .watch-kinds button { padding: 4px 8px; border-radius: 20px; color: var(--muted); font-size: 12px; }
-#watch-form .watch-kinds [aria-pressed="true"] { background: var(--kind-bg); color: var(--kind); }
 .search-icon {
   position: relative;
   width: 13px;
@@ -148,7 +145,7 @@ main {
 }
 #home[aria-pressed="true"] { background: var(--accent); color: var(--white); }
 #home span { font-size: 20px; }
-.watch-group { position: relative; margin-top: 16px; }
+.watch-group { position: relative; margin-top: 20px; }
 .watch-group summary {
   padding: 8px 12px;
   cursor: pointer;
@@ -174,8 +171,8 @@ main {
   border-radius: 4px;
   text-transform: uppercase;
 }
-.watch-group .watch-group-title { color: var(--kind); font-weight: 700; }
-.watch-group-title svg { width: 15px; height: 15px; margin-inline: 3px; vertical-align: -2px; }
+.watch-group .watch-group-title { color: var(--kind); font-size: 16px; font-weight: 700; }
+.watch-group-title svg { width: 18px; height: 18px; margin-inline: 3px; vertical-align: -2px; }
 .watch-item .watch-choice { border-left: 4px solid transparent; }
 .watch-item .watch-choice[aria-pressed="true"] {
   border-left-color: var(--kind);
@@ -319,10 +316,22 @@ main {
 
 [hidden] { display: none !important; }
 #watch-form { position: relative; }
-.suggestions {
+.watch-search-results {
   position: absolute;
   z-index: 2;
   inset: calc(100% + 5px) 0 auto;
+}
+#watch-type-hint {
+  margin: 0;
+  padding: 5px 12px;
+  border-radius: 8px;
+  background: var(--kind-bg);
+  color: var(--kind);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.suggestions {
+  margin-top: 4px;
   padding: 6px;
   background: white;
   border: 1px solid var(--line);
@@ -337,8 +346,9 @@ main {
   border-radius: 6px;
   text-align: left;
 }
-.suggestions strong { color: #202124; }
-.suggestions span { color: var(--muted); white-space: nowrap; }
+.suggestions h2 { margin: 6px 8px 2px; color: var(--kind); font-size: 13px; }
+.suggestions strong { flex: 1; color: var(--text); overflow-wrap: anywhere; }
+.suggestion-count { color: var(--muted); white-space: nowrap; }
 .sidebar-scan { padding: 0; color: #185abc; }
 
 .overview-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }

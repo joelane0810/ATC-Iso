@@ -86,7 +86,7 @@ async function boot({ reply, browser = {}, dates = { refDate, minDate }, storage
   get('query').value = get('format').value = '';
   await runInNewContext(script, {
     ...browser,
-    URLSearchParams, Option: class {}, Date: TestDate,
+    URL, URLSearchParams, Option: class {}, Date: TestDate,
     localStorage: {
       getItem: (key) => storage.get(key) ?? null,
       setItem: (key, value) => storage.set(key, value),
@@ -157,13 +157,15 @@ const groupToggle = (wrapper) => wrapper.children[0].children[0];
 test('overview selects the period, displays the seven totals and expands only five groups initially', async () => {
   const { get, rows, requests } = await boot();
   assert.equal(get('gallery-summary').textContent, dataNote);
+  assert.equal(get('count-competitor').textContent, '1');
+  assert.equal(get('count-project').textContent, '1');
   assert.equal(get('range-value').textContent, 'Hôm nay');
   await selectRange(get, '24 thg 10, 2026', '22 thg 11, 2026');
   const params = latestParams(requests, 'summary');
   assert.equal(params.get('from'), '2026-10-24');
   assert.equal(params.get('to'), refDate);
   assert.deepEqual(get('totals').children.map((card) => card.children[0].textContent),
-    ['Dự án mới', 'Nhà QC mới', 'Ads mới', 'Tăng', 'Giảm', 'Đã dừng', 'Ads đang chạy']);
+    ['Dự án mới', 'Nhà quảng cáo mới', 'Ads mới', 'Tăng', 'Giảm', 'Đã dừng', 'Ads đang chạy']);
   assert.equal(rows()[1].hidden, true);
   const [running, delta] = rows()[0].children[2].children[0].children;
   assert.equal(running.textContent, '2');
@@ -235,7 +237,7 @@ test('watch page sorts groups, plots running and new ads, and preserves the filt
   assert.equal(requests.findLast(({ url }) => url.pathname.endsWith('/ads')).url.searchParams.get('q'), 'example');
 });
 
-test('suggestions debounce and add with the chosen kind, including pasted links and group follow', async () => {
+test('suggestions debounce and fill the search, which submits without a kind', async () => {
   const { get, rows, requests, advance, timers } = await boot();
   const form = get('watch-form');
   const input = form.elements.input;
@@ -246,18 +248,21 @@ test('suggestions debounce and add with the chosen kind, including pasted links 
   assert.equal([...timers.values()].filter(({ delay }) => delay === 250).length, 1);
   await advance(250);
   assert.equal(requests.at(-1).url.searchParams.get('q'), 'Example');
-  get('kind-project').onclick();
-  await get('suggestions').children[0].onclick();
+  get('suggestions').children[0].children[1].onclick();
+  assert.equal(get('watch-type-hint').textContent, 'Sẽ thêm vào Nhà quảng cáo: Example');
+  assert.equal(requests.filter(({ method }) => method === 'POST').length, 0);
+  await form.onsubmit({ preventDefault() {} });
   const link = 'https://adstransparency.google.com/advertiser/AR1/creative/CR1?region=VN';
   input.value = link;
-  get('kind-competitor').onclick();
+  input.oninput();
+  assert.equal(get('watch-type-hint').textContent, 'Sẽ thêm vào Nhà quảng cáo: AR1');
   await form.onsubmit({ preventDefault() {} });
   toggle(rows()[0]).onclick();
   await rows()[1].children[0].children[0].children[0].children[1].onclick();
   toggle(rows()[2]).onclick();
   await rows()[3].children[0].children[0].children[0].children[1].onclick();
   assert.deepEqual(requests.filter(({ method }) => method === 'POST').map(({ body }) => body), [
-    { input: 'AR1', kind: 'project', region: null, groupId: null }, { input: link, kind: 'competitor', region: null, groupId: null },
+    { input: 'AR1', region: null }, { input: link, region: null },
     { input: 'example.com', kind: 'project', region: null, groupId: null }, { input: 'AR1', kind: 'competitor', region: null, groupId: null },
   ]);
 });
@@ -674,7 +679,7 @@ test('folders support create, rename, same-kind drop, menu moves, retained watch
   const body = get('overview-watches').children[0].children[1];
   const headings = body.children.filter((row) => row.className?.startsWith('overview-folder '));
   const overview = headings[0].children[0].children[0];
-  assert.match(overview.textContent, /Nhóm A · Đối thủ · 1 mục · 2 ads đang chạy · 1 ads mới/);
+  assert.match(overview.textContent, /Nhóm A · Nhà quảng cáo · 1 mục · 2 ads đang chạy · 1 ads mới/);
   overview.onclick();
   assert.equal(body.children[1].hidden, true);
   overview.onclick();
@@ -756,7 +761,7 @@ test('ad details follow a domain or advertiser with same-kind folders and update
     { input: 'example.com', kind: 'project', groupId: 'projects', region: null });
   assert.equal(get('trash-count').textContent, '0');
   assert.equal(action(follow(), 'Đang theo dõi').disabled, true);
-  action(follow(), '+ Theo dõi nhà QC Example').onclick();
+  action(follow(), '+ Theo dõi nhà quảng cáo Example').onclick();
   chooser = follow().children.at(-1);
   assert.deepEqual(chooser.children.slice(1).map((node) => node.textContent), ['Nhóm đối thủ', 'Không nhóm', 'Huỷ']);
   await action(chooser, 'Không nhóm').onclick();
