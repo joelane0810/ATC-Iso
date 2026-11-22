@@ -19,6 +19,7 @@ let draftPreset;
 const format = byId('format');
 const scan = byId('scan');
 const errorMessage = byId('error');
+const trashError = byId('trash-error');
 const gallery = byId('gallery');
 const watchForm = byId('watch-form');
 const detail = byId('detail');
@@ -66,6 +67,14 @@ let watchKind = 'competitor';
 let summary;
 let watchCounts = new Map();
 let watches = [];
+let watchGroups = [];
+let trashedWatches = [];
+let managementAvailable = false;
+let watchSelection;
+let undoNotice;
+const trashSelection = new Set();
+const collapsedFolders = new Set();
+const collapsedOverview = new Set();
 let loadVersion = 0;
 let pollTimer;
 
@@ -92,13 +101,23 @@ async function api(path, method = 'GET', data) {
   return body;
 }
 
+async function optionalList(path) {
+  try {
+    return await api(path);
+  } catch (error) {
+    if (error.status === 404) return null;
+    throw error;
+  }
+}
+
 function report(error) {
-  errorMessage.textContent = error.status ? error.message : 'Không tải được thông tin. Vui lòng thử lại.';
-  errorMessage.hidden = false;
+  const target = byId('trash-dialog').open ? trashError : errorMessage;
+  target.textContent = error.status ? error.message : 'Không tải được thông tin. Vui lòng thử lại.';
+  target.hidden = false;
 }
 
 function run(action) {
-  errorMessage.hidden = true;
+  errorMessage.hidden = trashError.hidden = true;
   return Promise.resolve().then(action).catch(report);
 }
 
@@ -128,6 +147,16 @@ async function selectProfile() {
   if (rangeDialog.open) rangeDialog.close();
   selectedAd = undefined;
   watches = [];
+  watchGroups = [];
+  trashedWatches = [];
+  managementAvailable = false;
+  watchSelection = undefined;
+  trashSelection.clear();
+  collapsedFolders.clear();
+  collapsedOverview.clear();
+  for (const kind of Object.keys(kindLabels)) setupGroupEditor(kind);
+  if (byId('trash-dialog').open) byId('trash-dialog').close();
+  clearUndo();
   ads = [];
   summary = undefined;
   watchCounts = new Map();
@@ -162,8 +191,9 @@ async function loadProfileData({ refreshChart = true, reopenGroup = false } = {}
   const range = rangeChoice?.from ? rangeChoice : null;
   // With no explicit range, the summary reports activity on the latest day
   // and still includes historical totals for each group.
-  const [list, data] = await Promise.all([
+  const [list, data, groups, trash] = await Promise.all([
     api(path + '/watchlist'), api(path + '/summary?' + withRange(new URLSearchParams(), range)),
+    optionalList(path + '/groups'), optionalList(path + '/trash'),
   ]);
   if (version !== loadVersion) return;
   summary = data;
@@ -172,6 +202,17 @@ async function loadProfileData({ refreshChart = true, reopenGroup = false } = {}
     : [];
   if (version !== loadVersion) return;
   watches = list;
+  watchGroups = groups ?? [];
+  trashedWatches = trash ?? [];
+  managementAvailable = Boolean(groups && trash);
+  if (watchSelection) {
+    for (const id of watchSelection.ids) {
+      if (!list.some((watch) => watch.id === id)) watchSelection.ids.delete(id);
+    }
+  }
+  for (const id of trashSelection) {
+    if (!trashedWatches.some((watch) => watch.watchId === id)) trashSelection.delete(id);
+  }
   ads = results.filter((ad) => ad.platform === 'search');
   watchCounts = new Map(summary.watches.map((watch) => [watch.watchId, watch]));
   if (watchId && !watches.some((watch) => watch.id === watchId)) return chooseWatch('');
@@ -214,34 +255,320 @@ function setWatchKind(kind) {
   }
 }
 
+function button(label, action, className = '') {
+  const node = element('button', label);
+  node.type = 'button';
+  node.className = className;
+  node.onclick = action;
+  return node;
+}
+
+function inlineActions(host, trigger, label, build) {
+  const panel = element('div');
+  panel.className = 'inline-actions';
+  panel.hidden = true;
+  const close = () => {
+    panel.hidden = true;
+    trigger.setAttribute('aria-expanded', 'false');
+    trigger.focus();
+  };
+  trigger.setAttribute('aria-expanded', 'false');
+  trigger.onclick = () => {
+    if (!panel.hidden) return close();
+    panel.replaceChildren(...(label ? [element('p', label)] : []), ...build(close));
+    panel.hidden = false;
+    trigger.setAttribute('aria-expanded', 'true');
+  };
+  panel.onkeydown = (event) => {
+    if (event.key === 'Escape') {
+      event.stopPropagation();
+      close();
+    }
+  };
+  host.append(panel);
+}
+
+function confirmAction(host, trigger, question, actionLabel, action) {
+  inlineActions(host, trigger, question, (close) => [
+    button('Huỷ', close), mutationButton(actionLabel, action, 'danger-action'),
+  ]);
+}
+
+function mutationButton(label, action, className) {
+  const control = button(label, () => run(async () => {
+    control.disabled = true;
+    try { await action(); } finally { control.disabled = false; }
+  }), className);
+  return control;
+}
+
+function watchBuckets(kind) {
+  const list = watches.filter((watch) => kindOf(watch) === kind);
+  const named = watchGroups.filter((group) => group.kind === kind).map((group) => ({
+    ...group, items: list.filter((watch) => watch.groupId === group.id),
+  }));
+  const ids = new Set(named.map((group) => group.id));
+  return [...named, { id: null, name: 'Không nhóm', kind, items: list.filter((watch) => !ids.has(watch.groupId)) }];
+}
+
+function groupChoices(kind, choose) {
+  return [...watchGroups.filter((group) => group.kind === kind), { id: null, name: 'Không nhóm' }]
+    .map(({ id, name }) => mutationButton(name, () => choose(id)));
+}
+
+async function editProfile(request, after = () => {}) {
+  const id = profile.value;
+  await request(profilePath(id));
+  if (profile.value !== id) return;
+  after();
+  await loadProfileData();
+}
+
+function groupEditor(host, trigger, kind, group, after) {
+  inlineActions(host, trigger, '', (close) => {
+    const form = element('form');
+    const name = element('input');
+    name.required = true;
+    name.value = group?.name ?? '';
+    name.setAttribute('aria-label', 'Tên nhóm');
+    const save = element('button', 'Lưu');
+    save.type = 'submit';
+    form.append(name, button('Huỷ', close), save);
+    form.onsubmit = (event) => {
+      event.preventDefault();
+      if (!name.value.trim() || save.disabled) return;
+      save.disabled = true;
+      return run(async () => {
+        try {
+          await editProfile((path) => group
+            ? api(path + '/groups/' + encodeURIComponent(group.id), 'PATCH', { name: name.value.trim() })
+            : api(path + '/groups', 'POST', { name: name.value.trim(), kind }), after);
+        } finally { save.disabled = false; }
+      });
+    };
+    return [form];
+  });
+}
+
+function moveWatches(ids, groupId) {
+  return editProfile(async (path) => {
+    const results = await Promise.allSettled(ids.map((id) =>
+      api(path + '/watchlist/' + encodeURIComponent(id), 'PATCH', { groupId })));
+    const failed = results.find((result) => result.status === 'rejected');
+    if (failed) {
+      if (profilePath(profile.value) === path) await loadProfileData();
+      throw failed.reason;
+    }
+  }, () => { watchSelection = undefined; });
+}
+
+function deleteWatches(ids, bulk = false) {
+  return editProfile((path) => bulk
+    ? api(path + '/watchlist/delete', 'POST', { ids })
+    : api(path + '/watchlist/' + encodeURIComponent(ids[0]), 'DELETE'), () => {
+    watchSelection = undefined;
+    if (ids.includes(watchId)) {
+      watchId = '';
+      watchBounds = undefined;
+      selectedAd = undefined;
+    }
+    showUndo(ids);
+  });
+}
+
+function showUndo(ids) {
+  const toast = byId('undo-toast');
+  const id = profile.value;
+  const pending = undoNotice?.profileId === id ? undoNotice.ids : [];
+  clearUndo();
+  const notice = { profileId: id, ids: [...new Set([...pending, ...ids])] };
+  undoNotice = notice;
+  toast.replaceChildren(element('span', 'Đã chuyển vào thùng rác ·'),
+    mutationButton('Hoàn tác', async () => {
+      if (profile.value !== id || undoNotice !== notice) return;
+      await editProfile((path) => api(path + '/trash/restore', 'POST', { ids: notice.ids }), () => {
+        if (undoNotice === notice) clearUndo();
+      });
+    }));
+  toast.hidden = false;
+  notice.timer = setTimeout(clearUndo, 8000);
+}
+
+function clearUndo() {
+  clearTimeout(undoNotice?.timer);
+  undoNotice = undefined;
+  byId('undo-toast').hidden = true;
+}
+
+function checkbox(label, selected, id, update) {
+  const check = element('input');
+  check.type = 'checkbox';
+  check.checked = selected.has(id);
+  check.setAttribute('aria-label', 'Chọn ' + label);
+  check.onchange = () => {
+    if (check.checked) selected.add(id);
+    else selected.delete(id);
+    update();
+  };
+  return check;
+}
+
+function renderWatchSelection(kind) {
+  const host = byId('selection-' + kind);
+  host.replaceChildren();
+  if (watchSelection?.kind !== kind) return;
+  const ids = [...watchSelection.ids];
+  const remove = button('Chuyển vào thùng rác');
+  const move = button('Chuyển vào nhóm…');
+  remove.disabled = move.disabled = !ids.length;
+  host.append(element('p', 'Đã chọn ' + formatCount.format(ids.length)), remove, move,
+    button('Huỷ', () => { watchSelection = undefined; renderWatches(); }));
+  confirmAction(host, remove, 'Chuyển ' + ids.length + ' mục vào thùng rác?',
+    'Chuyển vào thùng rác', () => deleteWatches(ids, true));
+  inlineActions(host, move, 'Chuyển vào nhóm…', (close) => [
+    ...groupChoices(kind, (id) => moveWatches(ids, id)), button('Huỷ', close),
+  ]);
+}
+
+function renderWatchItem(watch, kind, management) {
+  const item = element('li');
+  const row = element('div');
+  row.className = 'watch-item';
+  const choose = button('', () => chooseWatch(watch.id), 'watch-choice');
+  choose.setAttribute('aria-pressed', String(watchId === watch.id));
+  const { runningNow = 0 } = watchCounts.get(watch.id) ?? {};
+  const counts = element('span', formatCount.format(runningNow) + ' ads đang chạy');
+  counts.className = 'watch-counts';
+  choose.append(watchName('strong', watch.label, watch.id), counts);
+  const scanWatch = scanButton('⟳', watch.id, 'Quét ' + watch.label);
+  scanWatch.className = 'sidebar-scan';
+  const selecting = watchSelection?.kind === kind;
+  if (selecting) row.append(checkbox(watch.label, watchSelection.ids, watch.id, () => renderWatchSelection(kind)));
+  row.append(choose, scanWatch);
+  item.append(row);
+  if (!management || selecting) return item;
+  row.draggable = true;
+  row.ondragstart = (event) => {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('application/x-atc-watch', watch.id);
+  };
+  const menu = button('⋯', undefined, 'watch-item-menu');
+  menu.setAttribute('aria-label', 'Tuỳ chọn cho ' + watch.label);
+  const remove = button('×', undefined, 'remove-watch');
+  remove.setAttribute('aria-label', 'Xoá ' + watch.label);
+  row.append(menu, remove);
+  inlineActions(item, menu, '', (close) => {
+    const options = element('div');
+    const move = button('Chuyển vào nhóm…');
+    options.append(move);
+    inlineActions(options, move, '', (back) => [
+      ...groupChoices(kind, (id) => moveWatches([watch.id], id)), button('Huỷ', back),
+    ]);
+    return [options, button('Đóng', close)];
+  });
+  confirmAction(item, remove, 'Chuyển ' + watch.label + ' vào thùng rác?',
+    'Chuyển vào thùng rác', () => deleteWatches([watch.id]));
+  return item;
+}
+
+function renderWatchBucket(group, management) {
+  const item = element('li');
+  const folder = element('details');
+  folder.className = 'watch-folder';
+  const key = JSON.stringify([group.kind, group.id]);
+  folder.open = !collapsedFolders.has(key);
+  folder.ontoggle = () => {
+    if (folder.open) collapsedFolders.delete(key);
+    else collapsedFolders.add(key);
+  };
+  const title = element('summary', group.name + ' · ' + formatCount.format(group.items.length));
+  if (management) {
+    folder.ondragover = (event) => {
+      if (Array.from(event.dataTransfer.types).includes('application/x-atc-watch')) event.preventDefault();
+    };
+    folder.ondrop = (event) => {
+      event.preventDefault();
+      const id = event.dataTransfer.getData('application/x-atc-watch');
+      const watch = watches.find((entry) => entry.id === id && kindOf(entry) === group.kind);
+      if (watch && (watch.groupId ?? null) !== group.id) return run(() => moveWatches([id], group.id));
+    };
+  }
+  const list = element('ul');
+  list.append(...group.items.map((watch) => renderWatchItem(watch, group.kind, management)));
+  folder.append(title, list);
+  item.append(folder);
+  if (management && group.id !== null) {
+    const menu = button('⋯', undefined, 'folder-menu');
+    menu.setAttribute('aria-label', 'Tuỳ chọn nhóm ' + group.name);
+    item.append(menu);
+    inlineActions(item, menu, '', (close) => {
+      const actions = element('div');
+      const rename = button('Đổi tên');
+      const remove = button('Xoá nhóm (giữ các mục)');
+      actions.append(rename, remove);
+      groupEditor(actions, rename, group.kind, group);
+      confirmAction(actions, remove, 'Xoá nhóm ' + group.name + ' và giữ các mục?',
+        'Xoá nhóm (giữ các mục)', () => editProfile((path) =>
+          api(path + '/groups/' + encodeURIComponent(group.id), 'DELETE')));
+      return [actions, button('Đóng', close)];
+    });
+  }
+  return item;
+}
+
 function renderWatches() {
+  const management = managementAvailable && Boolean(profile.value);
   byId('home').setAttribute('aria-pressed', String(!watchId));
   for (const kind of Object.keys(kindLabels)) {
-    byId('watches-' + kind).replaceChildren(...watches.filter((watch) => kindOf(watch) === kind).map((watch) => {
-      const item = element('li');
-      const choose = element('button');
-      choose.className = 'watch-choice';
-      choose.setAttribute('aria-pressed', String(watchId === watch.id));
-      const { runningNow = 0 } = watchCounts.get(watch.id) ?? {};
-      const counts = element('span', formatCount.format(runningNow) + ' ads đang chạy');
-      counts.className = 'watch-counts';
-      choose.append(watchName('strong', watch.label, watch.id), counts);
-      choose.onclick = () => chooseWatch(watch.id);
-      const remove = element('button', '×');
-      remove.className = 'remove-watch';
-      remove.setAttribute('aria-label', 'Xoá ' + watch.label);
-      remove.title = 'Xoá ' + watch.label;
-      remove.onclick = () => run(async () => {
-        const id = profile.value;
-        await api(profilePath(id) + '/watchlist/' + encodeURIComponent(watch.id), 'DELETE');
-        if (profile.value === id) await loadProfileData();
-      });
-      const scanWatch = scanButton('⟳', watch.id, 'Quét ' + watch.label);
-      scanWatch.className = 'sidebar-scan';
-      item.append(choose, scanWatch, remove);
-      return item;
-    }));
+    const buckets = watchBuckets(kind);
+    byId('new-group-' + kind).disabled = !management;
+    const select = byId('select-' + kind);
+    select.disabled = !management || !buckets.some((group) => group.items.length);
+    select.setAttribute('aria-pressed', String(watchSelection?.kind === kind));
+    renderWatchSelection(kind);
+    byId('watches-' + kind).replaceChildren(...buckets.map((group) => renderWatchBucket(group, management)));
   }
+  byId('trash-open').disabled = !management;
+  byId('trash-count').textContent = formatCount.format(trashedWatches.length);
+  if (byId('trash-dialog').open) renderTrash();
+}
+
+function renderTrash() {
+  const host = byId('trash-content');
+  const controls = element('div');
+  const list = element('ul');
+  list.className = 'trash-list';
+  const update = () => {
+    const ids = [...trashSelection];
+    const restore = mutationButton('Khôi phục', () => changeTrash('restore', ids));
+    const purge = button('Xoá hẳn');
+    restore.disabled = purge.disabled = !ids.length;
+    controls.replaceChildren(element('span', 'Đã chọn ' + formatCount.format(ids.length)), restore, purge);
+    confirmAction(controls, purge, 'Xoá hẳn ' + ids.length + ' mục?', 'Xoá hẳn', () => changeTrash('purge', ids));
+  };
+  for (const item of trashedWatches) {
+    const row = element('li');
+    const remaining = Math.max(0, Math.ceil((Date.parse(item.purgeAt) - Date.now()) / dayMs));
+    const purge = button('Xoá hẳn');
+    row.append(checkbox(item.label, trashSelection, item.watchId, update), element('strong', item.label),
+      element('span', kindLabels[kindOf(item)] + ' · Đã xoá ' + displayDate(item.deletedAt)
+        + ' · Tự xoá sau ' + formatCount.format(remaining) + ' ngày'),
+      mutationButton('Khôi phục', () => changeTrash('restore', [item.watchId])), purge);
+    confirmAction(row, purge, 'Xoá hẳn ' + item.label + '?', 'Xoá hẳn', () => changeTrash('purge', [item.watchId]));
+    list.append(row);
+  }
+  update();
+  host.replaceChildren(...(trashedWatches.length ? [controls, list] : [element('p', 'Thùng rác trống.')]));
+}
+
+function changeTrash(action, ids) {
+  return editProfile((path) => api(path + '/trash/' + action, 'POST', { ids }), () => {
+    for (const id of ids) trashSelection.delete(id);
+    if (undoNotice) {
+      undoNotice.ids = undoNotice.ids.filter((id) => !ids.includes(id));
+      if (!undoNotice.ids.length) clearUndo();
+    }
+  });
 }
 
 function watchName(tag, label, id) {
@@ -588,6 +915,7 @@ function totalWatchAds(watch) {
 }
 
 function renderOverviewWatches() {
+  renderedGroups.clear();
   const allTime = isAllTime();
   const table = element('table');
   table.className = 'overview-table';
@@ -604,55 +932,98 @@ function renderOverviewWatches() {
   head.append(heading);
   const body = element('tbody');
   table.append(head, body);
-  for (const watch of summary?.watches ?? []) {
-    const groups = watch.groups.filter((group) => matchesTotal(watch, group));
-    if (overviewFilter && !groups.length) continue;
-    const row = element('tr');
-    const expansion = element('tr');
-    const panel = element('td');
-    panel.setAttribute('colspan', labels.length);
-    expansion.append(panel);
-    const open = expandedWatches.has(watch.watchId);
-    expansion.hidden = !open;
-    const toggle = element('button');
-    toggle.type = 'button';
-    toggle.className = 'watch-toggle';
-    toggle.setAttribute('aria-expanded', String(open));
-    toggle.append(element('span', open ? '▾' : '▸'), watchName('strong', watch.label, watch.watchId));
-    const update = () => {
-      closeGroup();
-      showDetail();
-      const expanded = !expandedWatches.has(watch.watchId);
-      if (expanded) expandedWatches.add(watch.watchId);
-      else expandedWatches.delete(watch.watchId);
-      toggle.children[0].textContent = expanded ? '▾' : '▸';
-      toggle.setAttribute('aria-expanded', String(expanded));
-      expansion.hidden = !expanded;
-      if (expanded) fillOverviewGroups(panel, watch, groups);
-    };
-    toggle.onclick = update;
-    row.onclick = (event) => {
-      if (!event.target.closest('button')) update();
-    };
-    const values = [
-      toggle, kindLabels[watch.kind],
-      ...(allTime ? [formatCount.format(totalWatchAds(watch)), formatCount.format(watch.runningNow)]
-        : [formatCount.format(watch.runningNow) + ' (' + signed(watch.delta) + ')',
-          formatCount.format(watch.newAds), sparkline(watch.spark)]),
-      scanButton('Quét', watch.watchId, 'Quét ' + watch.label),
-    ];
-    for (const value of values) {
+  const entries = new Map((summary?.watches ?? []).map((watch) => [watch.watchId, watch]));
+  for (const kind of Object.keys(kindLabels)) {
+    for (const folder of watchBuckets(kind)) {
+      const rows = folder.items.map(({ id }) => entries.get(id)).filter(Boolean).map((watch) => ({
+        watch, groups: watch.groups.filter((group) => matchesTotal(watch, group)),
+      })).filter(({ groups }) => !overviewFilter || groups.length);
+      if (!rows.length) continue;
+      const key = JSON.stringify([kind, folder.id]);
+      const header = element('tr');
+      header.className = 'overview-folder';
       const cell = element('td');
-      if (typeof value === 'string') cell.textContent = value;
-      else cell.append(value);
-      row.append(cell);
+      cell.setAttribute('colspan', labels.length);
+      const open = !collapsedOverview.has(key);
+      const total = (amount) => formatCount.format(rows.reduce((sum, { watch }) => sum + amount(watch), 0));
+      const label = [folder.name + ' · ' + kindLabels[kind], rows.length + ' mục',
+        total((watch) => watch.runningNow) + ' ads đang chạy',
+        allTime ? total(totalWatchAds) + ' ads trong dữ liệu' : total((watch) => watch.newAds) + ' ads mới',
+      ].join(' · ');
+      const content = rows.map(({ watch, groups }) => overviewWatchRows(watch, groups, labels.length, allTime));
+      const update = (expanded) => {
+        toggle.setAttribute('aria-expanded', String(expanded));
+        toggle.textContent = (expanded ? '▾ ' : '▸ ') + label;
+        for (const [watch, row, panel] of content) {
+          row.hidden = !expanded;
+          panel.hidden = !expanded || !expandedWatches.has(watch.watchId);
+        }
+      };
+      const toggle = button('', () => {
+        if (collapsedOverview.has(key)) collapsedOverview.delete(key);
+        else {
+          collapsedOverview.add(key);
+          if (content.some(([watch]) => watch.watchId === openGroup?.watchId)) {
+            closeGroup();
+            showDetail();
+          }
+        }
+        update(!collapsedOverview.has(key));
+      }, 'watch-toggle');
+      update(open);
+      cell.append(toggle);
+      header.append(cell);
+      body.append(header, ...content.flatMap(([, ...pair]) => pair));
     }
-    if (open) fillOverviewGroups(panel, watch, groups);
-    body.append(row, expansion);
   }
   const message = overviewFilter ? 'Không có mục phù hợp.'
     : profile.value ? 'Chưa có mục theo dõi.' : 'Thêm hồ sơ để bắt đầu theo dõi.';
   byId('overview-watches').replaceChildren(body.children.length ? table : element('p', message));
+}
+
+function overviewWatchRows(watch, groups, columns, allTime) {
+  const row = element('tr');
+  const expansion = element('tr');
+  const panel = element('td');
+  panel.setAttribute('colspan', columns);
+  expansion.append(panel);
+  const open = expandedWatches.has(watch.watchId);
+  expansion.hidden = !open;
+  const toggle = element('button');
+  toggle.type = 'button';
+  toggle.className = 'watch-toggle';
+  toggle.setAttribute('aria-expanded', String(open));
+  toggle.append(element('span', open ? '▾' : '▸'), watchName('strong', watch.label, watch.watchId));
+  const update = () => {
+    closeGroup();
+    showDetail();
+    const expanded = !expandedWatches.has(watch.watchId);
+    if (expanded) expandedWatches.add(watch.watchId);
+    else expandedWatches.delete(watch.watchId);
+    toggle.children[0].textContent = expanded ? '▾' : '▸';
+    toggle.setAttribute('aria-expanded', String(expanded));
+    expansion.hidden = !expanded;
+    if (expanded) fillOverviewGroups(panel, watch, groups);
+  };
+  toggle.onclick = update;
+  row.onclick = (event) => {
+    if (!event.target.closest('button')) update();
+  };
+  const values = [
+    toggle, kindLabels[watch.kind],
+    ...(allTime ? [formatCount.format(totalWatchAds(watch)), formatCount.format(watch.runningNow)]
+      : [formatCount.format(watch.runningNow) + ' (' + signed(watch.delta) + ')',
+        formatCount.format(watch.newAds), sparkline(watch.spark)]),
+    scanButton('Quét', watch.watchId, 'Quét ' + watch.label),
+  ];
+  for (const value of values) {
+    const cell = element('td');
+    if (typeof value === 'string') cell.textContent = value;
+    else cell.append(value);
+    row.append(cell);
+  }
+  if (open) fillOverviewGroups(panel, watch, groups);
+  return [watch, row, expansion];
 }
 
 function fillOverviewGroups(panel, watch, groups) {
@@ -1204,6 +1575,33 @@ function showDetail(ad) {
     actions.append(link, copy);
     detail.append(actions);
   }
+  const follow = element('div');
+  follow.className = 'detail-follow';
+  for (const [kind, value, label] of [
+    ['project', ad.domain, ad.domain],
+    ['competitor', ad.advertiserId, ad.advertiserName || ad.advertiserId],
+  ]) {
+    if (!value || !profile.value) continue;
+    const normalized = (input) => (kind === 'project'
+      ? input.toLowerCase().replace(/^www\./, '').replace(/\.$/, '')
+      : input.toUpperCase());
+    const followed = watches.some((watch) => kindOf(watch) === kind && watch.value
+      && normalized(watch.value) === normalized(value));
+    const action = followed ? 'Đang theo dõi' : '+ Theo dõi ' + (kind === 'project' ? 'dự án ' : 'nhà QC ') + label;
+    const add = async (groupId) => {
+      await addWatch(value, kind, groupId, true);
+    };
+    const control = mutationButton(action, () => add(null));
+    control.disabled = followed;
+    if (followed) control.setAttribute('aria-label', 'Đang theo dõi ' + label);
+    follow.append(control);
+    if (!followed && watchGroups.some((group) => group.kind === kind)) {
+      inlineActions(follow, control, 'Chọn nhóm cho ' + label, (close) => [
+        ...groupChoices(kind, add), button('Huỷ', close),
+      ]);
+    }
+  }
+  if (follow.children.length) detail.append(follow);
 }
 
 function svgElement(tag, attributes = {}, label) {
@@ -1214,7 +1612,7 @@ function svgElement(tag, attributes = {}, label) {
 }
 
 function sparkline(points) {
-  const svg = svgElement('svg', { viewBox: '0 0 96 24', class: 'sparkline', role: 'img',
+  const svg = svgElement('svg', { width: 96, height: 24, class: 'sparkline', role: 'img',
     'aria-label': 'Số ads đang chạy trong phạm vi ngày đã chọn' });
   const max = Math.max(1, ...points.map(({ running }) => running));
   if (points.length === 1) {
@@ -1256,14 +1654,6 @@ function renderChart(container, series, name) {
   }
 
   const labels = ['Ads đang chạy', 'Ads mới'];
-  const width = 700;
-  const height = 290;
-  const left = 56;
-  const right = 680;
-  const step = (right - left) / points.length;
-  const x = (index) => left + (index + .5) * step;
-  const svg = svgElement('svg', { viewBox: [0, 0, width, height].join(' '), class: 'series-chart',
-    role: 'group', 'aria-label': labels.join(' và ') });
   const plot = element('div');
   plot.className = 'chart-plot';
   const table = element('table');
@@ -1290,6 +1680,54 @@ function renderChart(container, series, name) {
   };
   header.append(toggle);
 
+  for (const point of points) {
+    const row = element('tr');
+    row.append(element('td', displayDate(point.date)), ...['running', 'newAds'].map(
+      (key) => element('td', formatCount.format(point[key])),
+    ));
+    body.append(row);
+  }
+  container.replaceChildren(header, plot, table);
+  const draw = (width) => drawChart(plot, points, bucket, range, labels, width);
+  draw(Math.round(plot.getBoundingClientRect().width));
+  chartDraws.set(plot, draw);
+  chartSizes?.observe(plot);
+}
+
+const chartDraws = new WeakMap();
+const chartSizes = typeof ResizeObserver === 'function' ? new ResizeObserver((changes) => {
+  for (const { target, contentRect } of changes) {
+    const width = Math.round(contentRect.width);
+    if (width > 0 && width !== Number(target.firstElementChild?.getAttribute('width'))) {
+      chartDraws.get(target)?.(width);
+    }
+  }
+}) : null;
+
+if (chartSizes && typeof MutationObserver === 'function') {
+  new MutationObserver((changes) => {
+    for (const { removedNodes } of changes) {
+      for (const node of removedNodes) {
+        if (node.isConnected || node.nodeType !== 1) continue;
+        if (chartDraws.has(node)) chartSizes.unobserve(node);
+        for (const plot of node.querySelectorAll('.chart-plot')) chartSizes.unobserve(plot);
+      }
+    }
+  }).observe(document.body, { childList: true, subtree: true });
+}
+
+function drawChart(plot, points, bucket, range, labels, width) {
+  if (width <= 0) return;
+  const runningHeight = 180;
+  const newHeight = 90;
+  const runningBottom = runningHeight - 8;
+  const newBottom = runningHeight + newHeight - 22;
+  const left = 56;
+  const right = Math.max(left + 1, width - 20);
+  const step = (right - left) / points.length;
+  const x = (index) => left + (index + .5) * step;
+  const svg = svgElement('svg', { width, height: runningHeight + newHeight, class: 'series-chart',
+    role: 'group', 'aria-label': labels.join(' và ') });
   const drawAxis = (key, label, top, bottom) => {
     const scale = axisScale(points, key);
     const y = (value) => bottom - value / scale.max * (bottom - top);
@@ -1300,34 +1738,29 @@ function renderChart(container, series, name) {
     }
     return y;
   };
-  const runY = drawAxis('running', labels[0], 30, 138);
+  const runY = drawAxis('running', labels[0], 30, runningBottom);
   const runPoints = points.map(({ running }, index) => [x(index), runY(running)].join(','));
   if (points.length === 1) {
     svg.append(svgElement('circle', { cx: x(0), cy: runY(points[0].running), r: 3, class: 'chart-point' }));
   } else {
     svg.append(svgElement('polygon', { class: 'chart-area',
-      points: [x(0) + ',138', ...runPoints, x(points.length - 1) + ',138'].join(' ') }),
+      points: [[x(0), runningBottom], ...runPoints, [x(points.length - 1), runningBottom]].join(' ') }),
     svgElement('polyline', { class: 'chart-line', points: runPoints.join(' ') }));
   }
-  const barY = drawAxis('newAds', labels[1], 173, 263);
+  const barY = drawAxis('newAds', labels[1], runningHeight + 28, newBottom);
   const barWidth = Math.min(38, Math.max(1, step - 2));
   for (const [index, point] of points.entries()) {
     const y = barY(point.newAds);
     const barLeft = x(index) - barWidth / 2;
     const barRight = barLeft + barWidth;
-    const radius = Math.min(2, barWidth / 2, 263 - y);
+    const radius = Math.min(2, barWidth / 2, newBottom - y);
     svg.append(svgElement('path', { class: 'chart-bar', d:
-      `M ${barLeft} 263 V ${y + radius} Q ${barLeft} ${y} ${barLeft + radius} ${y}
-       H ${barRight - radius} Q ${barRight} ${y} ${barRight} ${y + radius} V 263 Z` }));
-    const row = element('tr');
-    row.append(element('td', displayDate(point.date)), ...['running', 'newAds'].map(
-      (key) => element('td', formatCount.format(point[key])),
-    ));
-    body.append(row);
+      `M ${barLeft} ${newBottom} V ${y + radius} Q ${barLeft} ${y} ${barLeft + radius} ${y}
+       H ${barRight - radius} Q ${barRight} ${y} ${barRight} ${y + radius} V ${newBottom} Z` }));
   }
 
   const duration = (Date.parse(range.to) - Date.parse(range.from)) / dayMs;
-  const tickCount = Math.min(points.length, duration <= 10 ? 7 : 6);
+  const tickCount = Math.min(points.length, 8, Math.max(1, Math.floor((right - left) / 65)));
   let previousLabel;
   for (let tick = 0; tick < tickCount; tick++) {
     const index = Math.round(tick * (points.length - 1) / Math.max(1, tickCount - 1));
@@ -1336,12 +1769,12 @@ function renderChart(container, series, name) {
     const label = duration > 60 ? date.slice(5, 7) + '/' + date.slice(0, 4) : displayDate(date, shortDate);
     if (label === previousLabel) continue;
     previousLabel = label;
-    svg.append(svgElement('text', { x: x(index), y: 282, 'text-anchor': anchor }, label));
+    svg.append(svgElement('text', { x: x(index), y: runningHeight + newHeight - 5, 'text-anchor': anchor }, label));
   }
 
-  const selection = svgElement('rect', { y: 30, height: 233, class: 'chart-selection', visibility: 'hidden' });
-  const highlight = svgElement('line', { y1: 30, y2: 263, class: 'chart-highlight', visibility: 'hidden' });
-  const hit = svgElement('rect', { x: left, y: 30, width: right - left, height: 233,
+  const selection = svgElement('rect', { y: 30, height: newBottom - 30, class: 'chart-selection', visibility: 'hidden' });
+  const highlight = svgElement('line', { y1: 30, y2: newBottom, class: 'chart-highlight', visibility: 'hidden' });
+  const hit = svgElement('rect', { x: left, y: 30, width: right - left, height: newBottom - 30,
     class: 'chart-hit', tabindex: 0, 'aria-label': 'Dùng phím mũi tên để xem từng mốc ngày' });
   svg.append(selection, highlight, hit);
   const tooltip = element('div');
@@ -1356,7 +1789,7 @@ function renderChart(container, series, name) {
     tooltip.textContent = (bucket === 'week' ? 'Tuần từ ' : '') + displayDate(point.date)
       + '\n' + labels[0] + ': ' + formatCount.format(point.running)
       + '\n' + labels[1] + ': ' + formatCount.format(point.newAds);
-    tooltip.style.left = (x(index) / width * 100) + '%';
+    tooltip.style.left = x(index) + 'px';
     tooltip.className = 'chart-tooltip' + (x(index) > width * .65 ? ' tooltip-left' : '');
     tooltip.hidden = false;
     highlight.setAttribute('x1', x(index));
@@ -1371,7 +1804,7 @@ function renderChart(container, series, name) {
   };
   const indexAt = (event) => {
     const box = svg.getBoundingClientRect();
-    const position = (event.clientX - box.left) * width / box.width;
+    const position = event.clientX - box.left;
     return Math.max(0, Math.min(points.length - 1, Math.floor((position - left) / step)));
   };
   hit.onpointermove = (event) => {
@@ -1407,8 +1840,7 @@ function renderChart(container, series, name) {
     event.preventDefault();
     read(Math.max(0, Math.min(points.length - 1, cursor + (event.key === 'ArrowLeft' ? -1 : 1))));
   };
-  plot.append(svg, tooltip);
-  container.replaceChildren(header, plot, table);
+  plot.replaceChildren(svg, tooltip);
 }
 
 function loadSeries(path, id, group, range) {
@@ -1503,11 +1935,19 @@ function clearSuggestions() {
   return ++suggestionVersion;
 }
 
-async function addWatch(input, kind) {
+async function addWatch(input, kind, groupId = null, keepDetail = false) {
   const id = profile.value;
   if (!id || !input.trim()) return;
-  await api(profilePath(id) + '/watchlist', 'POST', { input: input.trim(), region: null, kind });
-  if (profile.value === id) await loadProfileData();
+  const group = openGroup;
+  const ad = selectedAd;
+  await api(profilePath(id) + '/watchlist', 'POST', { input: input.trim(), region: null, kind, groupId });
+  if (profile.value !== id) return;
+  const keep = keepDetail && ad && selectedAd === ad && group === openGroup;
+  await loadProfileData({ refreshChart: false, reopenGroup: keep });
+  if (keep && group && profile.value === id && openGroup?.watchId === group.watchId && openGroup?.key === group.key) {
+    selectedAd = ad;
+    showDetail(ad);
+  }
 }
 
 watchInput.oninput = () => {
@@ -1581,9 +2021,31 @@ byId('profile-form').onsubmit = (event) => {
   });
 };
 
+byId('trash-open').onclick = () => run(async () => {
+  const id = profile.value;
+  const items = await api(profilePath(id) + '/trash');
+  if (profile.value !== id || byId('trash-dialog').open) return;
+  trashedWatches = items;
+  byId('trash-count').textContent = formatCount.format(items.length);
+  trashSelection.clear();
+  renderTrash();
+  byId('trash-dialog').showModal();
+});
+byId('trash-close').onclick = () => byId('trash-dialog').close();
+
+function setupGroupEditor(kind) {
+  const host = byId('group-editor-' + kind);
+  host.replaceChildren();
+  groupEditor(host, byId('new-group-' + kind), kind, undefined, () => setupGroupEditor(kind));
+}
+
 byId('home').onclick = () => chooseWatch('');
 for (const kind of Object.keys(kindLabels)) {
   byId('kind-' + kind).onclick = () => setWatchKind(kind);
+  byId('select-' + kind).onclick = () => {
+    watchSelection = watchSelection?.kind === kind ? undefined : { kind, ids: new Set() };
+    renderWatches();
+  };
   byId('add-' + kind).onclick = () => {
     setWatchKind(kind);
     watchForm.elements.input.focus();

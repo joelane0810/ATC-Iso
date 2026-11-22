@@ -3,6 +3,9 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 
+const sidebarRow = (get, kind) =>
+  get('watches-' + kind).children.at(-1).children[0].children[1].children[0].children[0];
+
 const script = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
 
 class Element {
@@ -122,6 +125,7 @@ async function loadGrid(results, groupResponse, storage = new Map(), browser = {
             { date: refDate, running: 3, newAds: 1 },
           ].filter(({ date }) => date >= (searchParams.get('from') ?? '') && date <= (searchParams.get('to') ?? refDate)),
         };
+        if (pathname.endsWith('/groups') || pathname.endsWith('/trash')) return [];
         if (path === '/api/profiles') return [{ id: 'dai', name: 'Dai' }];
         if (path.endsWith('/watchlist')) {
           if (options.method === 'POST') posts.push(JSON.parse(options.body));
@@ -163,7 +167,7 @@ async function loadGrid(results, groupResponse, storage = new Map(), browser = {
     ...browser,
   });
   assert.equal(nodes.get('error').hidden, true);
-  const rows = () => nodes.get('overview-watches').children[0].children[1].children;
+  const rows = () => nodes.get('overview-watches').children[0].children[1].children.filter((row) => row.className !== 'overview-folder');
   const expand = (index = 0) => {
     rows()[index * 2].children[0].children[0].onclick();
     return rows()[index * 2 + 1].children[0].children;
@@ -381,10 +385,10 @@ test('the add buttons choose a kind and the form sends the active chip', async (
   assert.equal(calls.at(-1).url.searchParams.get('q'), 'Example');
   await nodes.get('suggestions').children[0].onclick();
   assert.deepEqual(posts, [
-    { input: 'competitor.example', region: null, kind: 'competitor' },
-    { input: 'project.example', region: null, kind: 'project' },
-    { input: 'another.example', region: null, kind: 'competitor' },
-    { input: 'AR1', region: null, kind: 'competitor' },
+    { input: 'competitor.example', region: null, kind: 'competitor', groupId: null },
+    { input: 'project.example', region: null, kind: 'project', groupId: null },
+    { input: 'another.example', region: null, kind: 'competitor', groupId: null },
+    { input: 'AR1', region: null, kind: 'competitor', groupId: null },
   ]);
 });
 
@@ -437,7 +441,7 @@ test('overview shows grouped changes, stable watch colors and all seven totals',
   assert.equal(competitor.children[2].textContent, '5 (−2)');
   assert.equal(competitor.children[4].children[0].attributes.get('role'), 'img');
   assert.equal(project.children[1].textContent, 'Dự án');
-  const sidebar = nodes.get('watches-competitor').children[0].children[0];
+  const sidebar = sidebarRow((id) => nodes.get(id), 'competitor').children[0];
   const dotStyle = (name) => name.children[0].attributes.get('style');
   assert.match(dotStyle(sidebar.children[0]), /^--watch-color: #[a-f0-9]{6}$/);
   assert.equal(dotStyle(sidebar.children[0]), dotStyle(competitor.children[0].children[0].children[1]));
@@ -494,7 +498,7 @@ test('group opens inline and loads only the selected watch and group', async () 
   assert.equal(requests[1].get('watchId'), 'project');
   assert.equal(requests[1].get('group'), projectGroup.key);
   assert.equal(projectPanel.children[1].textContent, 'Chưa có mẫu phù hợp.');
-  await nodes.get('watches-competitor').children[0].children[0].onclick();
+  await sidebarRow((id) => nodes.get(id), 'competitor').children[0].onclick();
   assert.equal(nodes.get('overview').hidden, true);
   assert.equal(nodes.get('home').attributes.get('aria-pressed'), 'false');
   await nodes.get('mode-grid').onclick();
@@ -503,7 +507,7 @@ test('group opens inline and loads only the selected watch and group', async () 
   assert.equal(nodes.get('overview').hidden, false);
   assert.equal(nodes.get('watch-view').hidden, true);
   assert.equal(nodes.get('home').attributes.get('aria-pressed'), 'true');
-  await nodes.get('watches-competitor').children[0].children[1].onclick();
+  await sidebarRow((id) => nodes.get(id), 'competitor').children[1].onclick();
   assert.deepEqual(calls.find(({ url }) => url.pathname === '/api/scan').body, { watchId: 'example-com' });
 });
 
@@ -524,7 +528,7 @@ test('an ads response arriving after the group is closed cannot reopen it', asyn
 test('the calendar validates dates, applies a range to every view and persists it', async () => {
   const storage = new Map();
   const { nodes, calls, requests } = await loadGrid([creative], undefined, storage);
-  await nodes.get('watches-competitor').children[0].children[0].onclick();
+  await sidebarRow((id) => nodes.get(id), 'competitor').children[0].onclick();
   assert.equal(nodes.get('range-value').textContent, 'Mọi lúc');
   nodes.get('range-open').onclick();
   assert.equal(nodes.get('calendar-title').textContent, 'THG 10 2026');
@@ -566,7 +570,7 @@ test('the calendar validates dates, applies a range to every view and persists i
 
 test('the chart shares a tooltip, switches to a table and applies a dragged range', async () => {
   const { nodes, calls } = await loadGrid([creative]);
-  await nodes.get('watches-competitor').children[0].children[0].onclick();
+  await sidebarRow((id) => nodes.get(id), 'competitor').children[0].onclick();
   const [header, plot, table] = nodes.get('watch-chart').children;
   const [svg, tooltip] = plot.children;
   const hit = svg.children.at(-1);
