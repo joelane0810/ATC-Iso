@@ -96,6 +96,7 @@
           </form>
         </dialog>
         <div id="overview">
+          <p id="comparison-note" hidden>Chọn khoảng ngày để so sánh</p>
           <div id="totals" class="totals" role="group" aria-label="Lọc theo thay đổi"></div>
           <div id="overview-watches"></div>
         </div>
@@ -112,8 +113,9 @@
             <label class="chip">Sắp xếp theo
               <select id="group-sort">
                 <option value="runningNow">Đang chạy</option>
-                <option value="newAds">Ads mới</option>
-                <option value="delta">Thay đổi</option>
+                <option id="sort-total" value="totalAds" hidden disabled>Tổng ads</option>
+                <option id="sort-new" value="newAds">Ads mới</option>
+                <option id="sort-change" value="delta">Thay đổi</option>
                 <option value="name">Tên</option>
               </select>
             </label>

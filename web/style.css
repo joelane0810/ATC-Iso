@@ -366,7 +366,7 @@ main {
 .chart-bar { fill: #188038; }
 .chart-highlight { stroke: #5f6368; pointer-events: none; }
 .chart-selection { fill: #1a73e8; opacity: .13; pointer-events: none; }
-.chart-hit { fill: transparent; cursor: crosshair; touch-action: none; }
+.chart-hit { fill: transparent; pointer-events: all; cursor: crosshair; touch-action: none; }
 .chart-hit:focus-visible { outline-offset: -1px; }
 .chart-header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .chart-header h3 { flex: 1; margin: 0; font-size: 15px; }

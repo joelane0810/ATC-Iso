@@ -367,13 +367,14 @@ test('the calendar validates dates, applies a range to every view and persists i
   await nodes.get('watches-competitor').children[0].children[0].onclick();
   assert.equal(nodes.get('range-value').textContent, 'Mọi lúc');
   nodes.get('range-open').onclick();
-  assert.equal(nodes.get('calendar-title').textContent, 'THG 11 2026');
+  assert.equal(nodes.get('calendar-title').textContent, 'THG 10 2026');
   const [october, november] = nodes.get('calendar-months').children;
   const day = (month, label) => month.children[1].children.find((node) => node.textContent === label);
   assert.equal(day(october, '21').disabled, true);
   assert.equal(day(november, '22').disabled, true);
+  nodes.get('calendar-next').onclick();
+  assert.equal(nodes.get('calendar-title').textContent, 'THG 11 2026');
   nodes.get('calendar-prev').onclick();
-  assert.equal(nodes.get('calendar-title').textContent, 'THG 10 2026');
   day(october, '22').onclick();
   day(november, '10').onclick();
   assert.match(day(october, '22').className, /range-start/);
@@ -387,6 +388,9 @@ test('the calendar validates dates, applies a range to every view and persists i
   await submit();
   assert.equal(nodes.get('range-dialog').open, false);
   assert.equal(nodes.get('range-value').textContent, '22 thg 10 – 10 thg 11, 2026');
+  nodes.get('range-open').onclick();
+  assert.equal(nodes.get('calendar-title').textContent, 'THG 10 2026');
+  nodes.get('range-cancel').onclick();
   await nodes.get('mode-grid').onclick();
   assert.equal(requests.at(-1).get('from'), '2026-10-22');
   assert.equal(requests.at(-1).get('to'), '2026-11-10');
@@ -427,7 +431,7 @@ test('the chart shares a tooltip, switches to a table and applies a dragged rang
 });
 
 
-test('reset to all time uses the profile minimum after returning to the overview and reloading', async () => {
+test('reset to all time persists and the calendar still starts at the profile minimum', async () => {
   const storage = new Map();
   const { nodes } = await loadGrid([], undefined, storage);
   nodes.get('range-open').onclick();
@@ -438,6 +442,8 @@ test('reset to all time uses the profile minimum after returning to the overview
   const reloaded = await loadGrid([], undefined, storage);
   assert.equal(reloaded.nodes.get('range-value').textContent, 'Mọi lúc');
   const request = reloaded.calls.findLast(({ url }) => url.pathname.endsWith('/summary'));
-  assert.equal(request.url.searchParams.get('from'), '2026-10-01');
-  assert.equal(request.url.searchParams.get('to'), refDate);
+  assert.equal(request.url.searchParams.get('from'), null);
+  assert.equal(request.url.searchParams.get('to'), null);
+  reloaded.nodes.get('range-open').onclick();
+  assert.equal(reloaded.nodes.get('range-from').value, '1 thg 10, 2026');
 });

@@ -158,22 +158,16 @@ async function loadProfileData({ refreshChart = true, reopenGroup = false } = {}
   const chart = await series;
   if (version !== loadVersion) return;
   if (chart?.data) watchBounds = chart.data;
-  const range = currentWatch || rangeChoice?.from ? activeRange() : null;
-  const fetchSummary = (dates) => api(path + '/summary?' + withRange(new URLSearchParams(), dates));
-  const [list, overview] = await Promise.all([
-    api(path + '/watchlist'), fetchSummary(range),
+  const range = rangeChoice?.from ? rangeChoice : null;
+  // With no explicit range, the summary reports activity on the latest day
+  // and still includes historical totals for each group.
+  const [list, data] = await Promise.all([
+    api(path + '/watchlist'), api(path + '/summary?' + withRange(new URLSearchParams(), range)),
   ]);
-  if (version !== loadVersion) return;
-
-  // The unbounded summary supplies the latest date and profile minimum.
-  const allOverview = !currentWatch && rangeChoice === 'all' && overview.minDate;
-  const data = allOverview
-    ? await fetchSummary({ from: overview.minDate, to: overview.refDate })
-    : overview;
   if (version !== loadVersion) return;
   summary = data;
   const results = currentWatch && mode === 'grid'
-    ? await api(path + '/ads?' + withRange(filters, range ?? activeRange()))
+    ? await api(path + '/ads?' + withRange(filters, range))
     : [];
   if (version !== loadVersion) return;
   watches = list;
@@ -364,10 +358,25 @@ function renderAds() {
 function renderOverview() {
   byId('gallery-heading').textContent = 'Tổng quan thay đổi';
   byId('gallery-summary').textContent = summary?.dataNote ?? '';
+  const allTime = isAllTime();
   const prevFrom = summary?.prevFrom ?? summary?.prevDate;
   const prevTo = summary?.prevTo ?? prevFrom;
-  byId('comparison').textContent = prevFrom ? 'So với ' + displayDate(prevFrom, shortDate)
+  byId('comparison').textContent = !allTime && prevFrom ? 'So với ' + displayDate(prevFrom, shortDate)
     + ' – ' + displayDate(prevTo, shortDate) : '';
+  byId('comparison-note').hidden = !allTime;
+  if (allTime) {
+    byId('totals').replaceChildren(...[
+      ['Tổng ads trong dữ liệu', summary?.watches.reduce((sum, watch) => sum + totalWatchAds(watch), 0) ?? 0],
+      ['Ads đang chạy (ngày dữ liệu mới nhất)', summary?.totals.runningAds ?? 0],
+    ].map(([label, count]) => {
+      const card = element('div');
+      card.className = 'total tone-steady';
+      card.append(element('span', label), element('strong', formatCount.format(count)));
+      return card;
+    }));
+    renderOverviewWatches();
+    return;
+  }
   byId('totals').replaceChildren(...overviewTotals.map(([key, label, tone]) => {
     const button = element('button');
     button.type = 'button';
@@ -405,11 +414,19 @@ function matchesTotal(watch, group) {
   }
 }
 
+function totalWatchAds(watch) {
+  return watch.groups.reduce((sum, group) => sum + group.totalAds, 0);
+}
+
 function renderOverviewWatches() {
+  const allTime = isAllTime();
   const table = element('table');
   table.className = 'overview-table';
   const heading = element('tr');
-  heading.append(...['Mục theo dõi', 'Loại', 'Đang chạy (±)', 'Mới', 'Xu hướng', 'Quét'].map((label) => {
+  const labels = allTime
+    ? ['Mục theo dõi', 'Loại', 'Tổng ads trong dữ liệu', 'Ads đang chạy (ngày dữ liệu mới nhất)', 'Quét']
+    : ['Mục theo dõi', 'Loại', 'Đang chạy (±)', 'Mới', 'Xu hướng', 'Quét'];
+  heading.append(...labels.map((label) => {
     const cell = element('th', label);
     cell.setAttribute('scope', 'col');
     return cell;
@@ -424,7 +441,7 @@ function renderOverviewWatches() {
     const row = element('tr');
     const expansion = element('tr');
     const panel = element('td');
-    panel.setAttribute('colspan', '6');
+    panel.setAttribute('colspan', labels.length);
     expansion.append(panel);
     const open = expandedWatches.has(watch.watchId);
     expansion.hidden = !open;
@@ -449,8 +466,11 @@ function renderOverviewWatches() {
       if (!event.target.closest('button')) update();
     };
     const values = [
-      toggle, kindLabels[watch.kind], formatCount.format(watch.runningNow) + ' (' + signed(watch.delta) + ')',
-      formatCount.format(watch.newAds), sparkline(watch.spark), scanButton('Quét', watch.watchId, 'Quét ' + watch.label),
+      toggle, kindLabels[watch.kind],
+      ...(allTime ? [formatCount.format(totalWatchAds(watch)), formatCount.format(watch.runningNow)]
+        : [formatCount.format(watch.runningNow) + ' (' + signed(watch.delta) + ')',
+          formatCount.format(watch.newAds), sparkline(watch.spark)]),
+      scanButton('Quét', watch.watchId, 'Quét ' + watch.label),
     ];
     for (const value of values) {
       const cell = element('td');
@@ -486,8 +506,18 @@ function fillOverviewGroups(panel, watch, groups) {
 
 function renderWatchGroups() {
   const watch = watchCounts.get(watchId);
-  const key = byId('group-sort').value || 'runningNow';
-  const groups = [...(watch?.groups ?? [])].filter((group) => group.runningNow > 0 || group.runningPrev > 0 || group.newAds > 0);
+  const allTime = isAllTime();
+  const sort = byId('group-sort');
+  for (const id of ['sort-new', 'sort-change']) {
+    byId(id).hidden = byId(id).disabled = allTime;
+  }
+  byId('sort-total').hidden = byId('sort-total').disabled = !allTime;
+  if ((allTime && ['newAds', 'delta'].includes(sort.value)) || (!allTime && sort.value === 'totalAds')) {
+    sort.value = 'runningNow';
+  }
+  const key = sort.value || 'runningNow';
+  const groups = (watch?.groups ?? []).filter((group) => allTime
+    || group.runningNow > 0 || group.runningPrev > 0 || group.newAds > 0);
   groups.sort((a, b) =>
     (key === 'name' ? 0 : b[key] - a[key]) || a.name.localeCompare(b.name, 'vi'));
   byId('watch-groups').replaceChildren(...(groups.length
@@ -504,12 +534,18 @@ function groupRow(watch, group) {
   renderedGroups.get(watch.watchId).set(group.key, row);
   const heading = element('span');
   heading.className = 'group-heading';
-  heading.append(badge(group.status === 'new' ? (group.groupType === 'advertiser' ? 'Nhà QC mới' : 'Dự án mới') : groupLabels[group.status], group.status), element('strong', group.name));
+  if (!isAllTime()) heading.append(badge(group.status === 'new' ? (group.groupType === 'advertiser' ? 'Nhà QC mới' : 'Dự án mới') : groupLabels[group.status], group.status));
+  heading.append(element('strong', group.name));
   const counts = element('span');
   counts.className = 'group-counts';
-  counts.append(element('span', formatCount.format(group.runningPrev) + ' → ' + formatCount.format(group.runningNow)),
-    badge(signed(group.delta), group.delta > 0 ? 'increase' : group.delta < 0 ? group.status : 'steady'),
-    element('span', formatCount.format(group.newAds) + ' ads mới'));
+  if (isAllTime()) {
+    counts.append(element('span', 'Tổng ads trong dữ liệu ' + formatCount.format(group.totalAds)),
+      element('span', 'Ads đang chạy (ngày dữ liệu mới nhất) ' + formatCount.format(group.runningNow)));
+  } else {
+    counts.append(element('span', formatCount.format(group.runningPrev) + ' → ' + formatCount.format(group.runningNow)),
+      badge(signed(group.delta), group.delta > 0 ? 'increase' : group.delta < 0 ? group.status : 'steady'),
+      element('span', formatCount.format(group.newAds) + ' ads mới'));
+  }
   const samples = element('span');
   samples.className = 'group-samples';
   samples.setAttribute('aria-hidden', 'true');
@@ -567,7 +603,7 @@ function closeGroup() {
 async function loadGroupAds(request, name, message) {
   const { watchId: id, key } = request;
   const range = activeRange();
-  const params = withRange(new URLSearchParams({ filter: 'all', watchId: id, group: key }), range);
+  const params = withRange(new URLSearchParams({ filter: 'all', watchId: id, group: key }), isAllTime() ? null : range);
   const path = profilePath(profile.value);
   const chart = element('div', 'Đang tải biểu đồ…');
   request.panel.replaceChildren(chart, message);
@@ -659,6 +695,10 @@ function dateBounds() {
   return ref ? { from: min && min <= ref ? min : ref, to: ref } : null;
 }
 
+function isAllTime() {
+  return rangeChoice === 'all' || (!rangeChoice && Boolean(watchId));
+}
+
 function activeRange() {
   if (rangeChoice?.from) return rangeChoice;
   const bounds = dateBounds();
@@ -695,13 +735,14 @@ function parseDateText(value) {
 function renderRangeControl() {
   const range = activeRange();
   rangeOpen.disabled = !dateBounds();
-  byId('range-value').textContent = range && rangeChoice !== 'all' && (rangeChoice || !watchId)
+  byId('range-value').textContent = range && !isAllTime()
     ? rangeText(range) : 'Mọi lúc';
   byId('comparison').hidden = Boolean(watchId);
 }
 
 function applyRange(choice) {
   rangeChoice = choice;
+  overviewFilter = '';
   try { localStorage.setItem(rangeStorage, JSON.stringify(choice)); } catch {}
   if (rangeDialog.open) rangeDialog.close();
   renderRangeControl();
@@ -791,8 +832,8 @@ rangeOpen.onclick = () => {
   buildCalendar(bounds);
   paintCalendar();
   rangeDialog.showModal();
-  const index = calendarMonths.findIndex(({ month }) => month === range.to.slice(0, 7));
-  setCalendarMonth(index < 0 ? calendarMonths.length - 1 : index);
+  const index = calendarMonths.findIndex(({ month }) => month === range.from.slice(0, 7));
+  setCalendarMonth(index < 0 && range.from > bounds.to ? calendarMonths.length - 1 : index);
   rangeFrom.focus({ preventScroll: true });
 };
 

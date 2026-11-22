@@ -9,6 +9,12 @@ class Node {
   children = [];
   attributes = new Map();
   textContent = '';
+  style = {};
+  offsetTop = 0;
+  showModal() { this.open = true; }
+  close() { this.open = false; }
+  getBoundingClientRect() { return { left: 10, width: 350 }; }
+  dispatchEvent(event) { this['on' + event.type]?.(event); }
   constructor(tag) { this.tag = tag; }
   append(...nodes) { this.children.push(...nodes); }
   replaceChildren(...nodes) { this.children = nodes; }
@@ -27,6 +33,7 @@ class Node {
   }
 }
 
+const minDate = '2026-09-15';
 const refDate = '2026-11-22';
 const dataNote = 'Dữ liệu đến ngày 22/11 — ATC cập nhật quảng cáo hôm nay sau khoảng 20:00';
 const ad = {
@@ -97,11 +104,11 @@ async function boot({ reply, storage = new Map(), initialStatus = { scanning: fa
         case 'profiles': return success([{ id: 'dai', name: 'Dai' }]);
         case 'watchlist': return success(watches.map(({ watchId: id, label, kind }) => ({ id, label, kind })));
         case 'summary': return success({
-          refDate, prevDate: '2026-11-21', window: url.searchParams.get('window'), dataNote, lastScan: null,
+          refDate, minDate, prevDate: '2026-11-21', dataNote, lastScan: null,
           totals: { newProjects: 1, newAdvertisers: 1, newAds: 2, increased: 1, decreased: 1, stopped: 1, runningAds: 4 },
           watches,
         });
-        case 'series': return success({ refDate, points });
+        case 'series': return success({ refDate, minDate, points });
         case 'ads': return success([ad, { ...ad, creativeId: 'CR2', platform: 'display' }]);
         case 'suggest': return success([{ type: 'advertiser', value: 'AR1', name: 'Example', ads: 1 }]);
         case 'status': return success(status);
@@ -123,14 +130,24 @@ async function boot({ reply, storage = new Map(), initialStatus = { scanning: fa
 }
 
 const toggle = (row) => row.children[0].children[0];
+const selectRange = (get, from, to) => {
+  get('range-open').onclick();
+  get('range-from').value = from;
+  get('range-to').value = to;
+  return get('range-form').onsubmit({ preventDefault() {} });
+};
+const latestParams = (requests, endpoint) =>
+  requests.findLast(({ url }) => url.pathname.endsWith('/' + endpoint)).url.searchParams;
 const groupToggle = (wrapper) => wrapper.children[0].children[0];
 
 test('overview selects the period, displays the seven totals and expands only five groups initially', async () => {
   const { get, rows, requests } = await boot();
   assert.equal(get('gallery-summary').textContent, dataNote);
-  assert.equal(requests.find(({ url }) => url.pathname.endsWith('/summary')).url.searchParams.get('window'), 'day');
-  await get('period').onchange({ currentTarget: { value: '30d' } });
-  assert.equal(requests.at(-1).url.searchParams.get('window'), '30d');
+  assert.equal(get('range-value').textContent, '22 thg 11, 2026');
+  await selectRange(get, '24 thg 10, 2026', '22 thg 11, 2026');
+  const params = latestParams(requests, 'summary');
+  assert.equal(params.get('from'), '2026-10-24');
+  assert.equal(params.get('to'), refDate);
   assert.deepEqual(get('totals').children.map((card) => card.children[0].textContent),
     ['Dự án mới', 'Nhà QC mới', 'Ads mới', 'Tăng', 'Giảm', 'Đã dừng', 'Ads đang chạy']);
   assert.equal(rows()[1].hidden, true);
@@ -156,20 +173,41 @@ test('watch page sorts groups, plots running and new ads, and preserves the filt
   await get('watches-competitor').children[0].children[0].onclick();
   assert.equal(get('grid-view').hidden, true);
   assert.equal(get('watch-groups').children.length, 7);
-  const [legend, chart, readout] = get('watch-chart').children;
-  assert.deepEqual(legend.children.map((entry) => entry.textContent), ['Đang chạy', 'Ads mới']);
-  assert.equal(chart.children.filter((node) => node.attributes.get('class') === 'chart-bar').length, 2);
-  chart.children.at(-1).onmouseenter();
-  assert.equal(readout.textContent, '22/11 · 1 đang chạy · 1 ads mới');
+  const checkChart = (container) => {
+    const [, plot, table] = container.children;
+    const [chart, tooltip] = plot.children;
+    const labels = table.children[0].children[0].children.map((entry) => entry.textContent);
+    assert.deepEqual(labels, ['Ngày', 'Ads đang chạy', 'Ads mới']);
+    assert.ok(chart.children.some((node) => node.attributes.get('class') === 'chart-line'));
+    assert.equal(chart.children.filter((node) => node.attributes.get('class') === 'chart-bar').length, 2);
+    const [, line, hit] = chart.children.slice(-3);
+    assert.equal(line.attributes.get('visibility'), 'hidden');
+    assert.equal(tooltip.hidden, true);
+    for (const clientY of [50, 120]) {
+      hit.dispatchEvent({ type: 'pointermove', clientX: 272, clientY });
+      assert.equal(tooltip.hidden, false);
+      assert.equal(tooltip.textContent, '22/11/2026\nAds đang chạy: 1\nAds mới: 1');
+      assert.equal(line.attributes.get('visibility'), 'visible');
+      assert.equal(line.attributes.get('x1'), '524');
+      assert.equal(line.attributes.get('x2'), '524');
+      assert.equal(line.attributes.get('y1'), '30');
+      assert.equal(line.attributes.get('y2'), '263');
+      hit.dispatchEvent({ type: 'pointerleave' });
+      assert.equal(tooltip.hidden, true);
+      assert.equal(line.attributes.get('visibility'), 'hidden');
+    }
+  };
+  checkChart(get('watch-chart'));
   get('group-sort').value = 'name';
   get('group-sort').onchange();
   const first = get('watch-groups').children[0];
-  assert.equal(groupToggle(first).children[0].children[1].textContent, 'Dự án 0');
+  assert.equal(groupToggle(first).children[0].children[0].textContent, 'Dự án 0');
   await groupToggle(first).onclick();
+  checkChart(first.children[1].children[0]);
   assert.equal(first.children[1].children[1].children[0].children[0].src, '/images/CR1.png');
   const seriesRequests = requests.filter(({ url }) => url.pathname.endsWith('/series'));
   assert.equal(seriesRequests[0].url.searchParams.get('watchId'), 'rival');
-  assert.equal(seriesRequests[0].url.searchParams.get('days'), '90');
+  assert.equal(seriesRequests[0].url.searchParams.get('days'), null);
   assert.equal(seriesRequests[1].url.searchParams.get('group'), 'example.com');
   await get('mode-grid').onclick();
   assert.equal(get('group-view').hidden, true);
@@ -300,41 +338,86 @@ test('Vietnamese date ranges filter grids and groups by overlap and survive relo
   const reply = ({ url }) => {
     if (!url.pathname.endsWith('/ads')) return;
     assert.equal(url.searchParams.get('watchId'), 'rival');
-    assert.deepEqual([...url.searchParams.keys()].filter((key) => ['from', 'to', 'window'].includes(key)), []);
-    const all = [spanning, older, recent, earliest, undated];
-    return { ok: true, json: async () => url.searchParams.has('group') ? [spanning, undated] : all };
+    const from = url.searchParams.get('from');
+    const to = url.searchParams.get('to');
+    const localDay = (value) => value && new Date(Date.parse(value) + 7 * 3_600_000).toISOString().slice(0, 10);
+    const all = url.searchParams.has('group') ? [spanning, undated] : [spanning, older, recent, earliest, undated];
+    const visible = from ? all.filter(({ firstShown, lastShown }) =>
+      firstShown && localDay(firstShown) <= to && localDay(lastShown) >= from) : all;
+    return { ok: true, json: async () => visible };
   };
-  const { get } = await boot({ storage, reply });
+  const { get, requests } = await boot({ storage, reply });
   const choose = (page) => page('watches-competitor').children[0].children[0].onclick();
   await choose(get);
-  const period = get('ad-period');
-  const select = async (value) => {
-    period.value = value;
-    await period.onchange();
-  };
+  assert.equal(get('range-value').textContent, 'Mọi lúc');
   assert.equal(get('watch-groups').children.length, 7);
-  await select('today');
-  assert.equal(get('watch-groups').children.length, 1);
-  const wrapper = get('watch-groups').children[0];
+  await selectRange(get, '22 thg 11, 2026', '22 thg 11, 2026');
+  const wrapper = get('watch-groups').children.find((row) =>
+    groupToggle(row).children[0].lastElementChild.textContent === 'Dự án 0');
   await groupToggle(wrapper).onclick();
   assert.equal(wrapper.children[1].children[1].children.length, 1);
+  assert.equal(latestParams(requests, 'ads').get('group'), 'example.com');
   await get('mode-grid').onclick();
   assert.equal(get('ads').children.length, 1);
-  await select('7d');
+  await selectRange(get, '16 thg 11, 2026', '22 thg 11, 2026');
   assert.equal(get('ads').children.length, 3);
-  await select('30d');
+  await selectRange(get, '24 thg 10, 2026', '22 thg 11, 2026');
   assert.equal(get('ads').children.length, 4);
-  await select('all');
-  assert.equal(get('ads').children.length, 5);
-  await select('custom');
-  assert.equal(get('ad-dates').hidden, false);
-  get('ad-from').value = get('ad-to').value = '2026-11-22';
-  await get('ad-to').onchange();
-  assert.equal(get('ads').children.length, 1);
+  assert.equal(latestParams(requests, 'ads').get('from'), '2026-10-24');
+  assert.equal(latestParams(requests, 'ads').get('to'), refDate);
+  assert.equal(latestParams(requests, 'ads').get('window'), null);
+
   const reloaded = await boot({ storage, reply });
   await choose(reloaded.get);
-  assert.equal(reloaded.get('ad-period').value, 'custom');
-  assert.equal(reloaded.get('ad-from').value, '2026-11-22');
-  assert.equal(reloaded.get('ad-to').value, '2026-11-22');
-  assert.equal(reloaded.get('watch-groups').children.length, 1);
+  assert.equal(reloaded.get('range-value').textContent, '24 thg 10 – 22 thg 11, 2026');
+  await reloaded.get('mode-grid').onclick();
+  assert.equal(reloaded.get('ads').children.length, 4);
+  await reloaded.get('range-reset').onclick();
+  assert.equal(reloaded.get('ads').children.length, 5);
+});
+
+test('all time displays historical totals and latest-day counts without comparisons', async () => {
+  const { get, rows, requests } = await boot();
+  get('totals').children[1].onclick();
+  await get('range-reset').onclick();
+  assert.equal(get('range-value').textContent, 'Mọi lúc');
+  assert.equal(get('comparison-note').hidden, false);
+  assert.equal(get('comparison').textContent, '');
+  assert.deepEqual(get('totals').children.map((card) => card.children.map((child) => child.textContent)), [
+    ['Tổng ads trong dữ liệu', '29'], ['Ads đang chạy (ngày dữ liệu mới nhất)', '4'],
+  ]);
+  assert.deepEqual(rows()[0].children.slice(2, 4).map((cell) => cell.textContent), ['28', '2']);
+  toggle(rows()[0]).onclick();
+  const [heading, counts] = groupToggle(rows()[1].children[0].children[0]).children;
+  assert.deepEqual(heading.children.map((child) => child.textContent), ['Dự án 0']);
+  assert.deepEqual(counts.children.map((child) => child.textContent), [
+    'Tổng ads trong dữ liệu 1', 'Ads đang chạy (ngày dữ liệu mới nhất) 0',
+  ]);
+  await get('watches-competitor').children[0].children[0].onclick();
+  assert.equal(latestParams(requests, 'summary').get('from'), null);
+  assert.equal(get('watch-groups').children.length, 7);
+  assert.ok(get('watch-groups').children.every((row) => groupToggle(row).children[0].children.length === 1));
+});
+
+test('the calendar opens at the selected start month and keeps every month scrollable', async () => {
+  const { get } = await boot({
+    storage: new Map([['atc-iso-date-range', JSON.stringify({ from: '2026-10-15', to: refDate })]]),
+  });
+  const calendar = get('calendar-months');
+  const replaceChildren = calendar.replaceChildren.bind(calendar);
+  calendar.replaceChildren = (...months) => {
+    months.forEach((month, index) => { month.offsetTop = index * 300; });
+    replaceChildren(...months);
+  };
+  get('range-open').onclick();
+  assert.deepEqual(calendar.children.map((month) => month.children[0].textContent),
+    ['THG 9 2026', 'THG 10 2026', 'THG 11 2026']);
+  assert.equal(get('calendar-title').textContent, 'THG 10 2026');
+  assert.equal(calendar.scrollTop, 300);
+  calendar.scrollTop = 600;
+  calendar.onscroll();
+  assert.equal(get('calendar-title').textContent, 'THG 11 2026');
+  calendar.scrollTop = 0;
+  calendar.onscroll();
+  assert.equal(get('calendar-title').textContent, 'THG 9 2026');
 });
