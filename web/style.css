@@ -1,0 +1,60 @@
+:root {
+  font: 16px/1.5 system-ui, sans-serif;
+  color: #172b29;
+  background: #eff4f1;
+  --line: #c9d8d2;
+  --accent: #126653;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+.workspace { min-width: 1280px; }
+.topbar {
+  background: #193b34;
+  color: white;
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+.topbar h1 { margin: 0 auto 0 0; font-size: 24px; }
+main {
+  display: grid;
+  grid-template-columns: 268px minmax(0, 1fr) 342px;
+  gap: 16px;
+  padding: 16px;
+  align-items: start;
+}
+.panel { padding: 16px; background: white; border: 1px solid var(--line); border-radius: 12px; }
+h2 { font-size: 19px; margin: 0 0 12px; }
+aside h2 { margin-top: 22px; }
+aside label { display: block; font-weight: 650; margin-bottom: 6px; }
+input, select, button {
+  font: inherit;
+  color: inherit;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 7px 10px;
+  background: white;
+  min-width: 0;
+}
+button { cursor: pointer; }
+button:disabled { cursor: default; opacity: .65; }
+form button { justify-self: start; }
+#scan, form button { background: var(--accent); border-color: var(--accent); color: white; }
+#profile { width: 100%; }
+form { display: grid; gap: 8px; margin-top: 10px; }
+.filters { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; }
+ul { padding: 0; list-style: none; }
+li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px; margin-bottom: 6px; }
+li button:first-child { text-align: left; overflow-wrap: anywhere; }
+.ads { margin-top: 16px; display: grid; grid-template-columns: repeat(auto-fill, minmax(172px, 1fr)); gap: 12px; }
+.ad { padding: 0; overflow: hidden; text-align: left; }
+.ad span { display: block; padding: 7px 10px; overflow-wrap: anywhere; }
+.preview { width: 100%; aspect-ratio: 4 / 3; display: grid; place-items: center; object-fit: contain; background: #edf3ef; }
+[aria-pressed="true"] { outline: 2px solid var(--accent); outline-offset: -2px; }
+#detail { overflow-wrap: anywhere; }
+#detail dd { margin: 0 0 8px; }
+#detail dt { font-weight: 650; }
+#error { padding: 8px 24px; color: #8c241c; }
+a { color: var(--accent); }

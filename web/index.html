@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ATC Iso · Theo dõi quảng cáo</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <div class="workspace">
+    <header class="topbar">
+      <h1>Theo dõi quảng cáo</h1>
+      <div id="status" role="status">Đang tải trạng thái…</div>
+      <button id="scan" type="button">Quét ngay</button>
+    </header>
+    <p id="error" role="alert" hidden></p>
+    <main>
+      <aside class="panel">
+        <label for="profile">Hồ sơ</label>
+        <select id="profile"></select>
+        <form id="profile-form">
+          <input name="name" aria-label="Tên hồ sơ mới" placeholder="Tên hồ sơ mới" required>
+          <button>Thêm hồ sơ</button>
+        </form>
+        <h2>Đối thủ</h2>
+        <form id="watch-form">
+          <input name="input" aria-label="Tên miền hoặc link nhà quảng cáo"
+            placeholder="Tên miền hoặc link nhà quảng cáo" required>
+          <button>Thêm đối thủ</button>
+        </form>
+        <ul id="watches"></ul>
+      </aside>
+      <section class="panel">
+        <h2>Mẫu quảng cáo</h2>
+        <div class="filters">
+          <select id="filter" aria-label="Lọc mẫu quảng cáo">
+            <option value="new">Mới hôm nay</option>
+            <option value="running">Đang chạy</option>
+            <option value="stopped">Đã dừng</option>
+            <option value="all" selected>Tất cả</option>
+          </select>
+          <input id="query" type="search" aria-label="Tìm mẫu quảng cáo" placeholder="Tìm mẫu quảng cáo">
+          <select id="format" aria-label="Định dạng">
+            <option value="">Mọi định dạng</option>
+            <option value="image">Hình ảnh</option>
+            <option value="text">Chữ</option>
+            <option value="video">Video</option>
+          </select>
+        </div>
+        <p id="empty" hidden></p>
+        <div id="ads" class="ads"></div>
+      </section>
+      <section class="panel" aria-labelledby="detail-heading">
+        <h2 id="detail-heading">Chi tiết mẫu</h2>
+        <div id="detail">Chọn một mẫu quảng cáo để xem chi tiết.</div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
