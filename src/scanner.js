@@ -7,11 +7,12 @@ import {
 
 const MAX_PAGES_FIRST = 5;
 const MAX_PAGES_LATER = 10;
-const MAX_DETAILS = 60;
+// Mặc định tắt: yêu cầu chi tiết (quốc gia) cần mã xác thực trang (22/11).
+const DEFAULT_MAX_DETAILS = 0;
 const RUNNING_WINDOW = 2 * 24 * 60 * 60 * 1000;
 
 export async function runScan({
-  store, client, now = () => new Date(), log = console.log,
+  store, client, now = () => new Date(), log = console.log, maxDetails = DEFAULT_MAX_DETAILS,
   record = entry => store.appendScanLog(entry), waitForCapture = delay,
 }) {
   const scannedAt = now();
@@ -27,8 +28,8 @@ export async function runScan({
   try {
     const watches = await store.allWatches();
     const watchCount = watches.length || 1;
-    const baseQuota = Math.floor(MAX_DETAILS / watchCount);
-    const extra = MAX_DETAILS % watchCount;
+    const baseQuota = Math.floor(maxDetails / watchCount);
+    const extra = maxDetails % watchCount;
     const offset = Math.floor(scannedAt.getTime() / 86_400_000) % watchCount;
     for (const [index, watch] of watches.entries()) {
       const quota = baseQuota + Number((index - offset + watches.length) % watches.length < extra);

@@ -132,13 +132,13 @@ fi
 sleep 4
 for job in server scan; do
   echo "== com.atciso.$job"
-  launchctl print "$domain/com.atciso.$job" 2>&1 | grep -E "state =|last exit code|pid =" | head -5
+  launchctl print "$domain/com.atciso.$job" 2>&1 | grep -E "state =|last exit code|pid =" | head -5 || true
 done
-if curl -s -m 3 -o /dev/null http://127.0.0.1:4317/api/profiles; then
+if command -v curl >/dev/null && curl -s -m 3 -o /dev/null http://127.0.0.1:4317/api/profiles; then
   echo "Máy chủ web: đang chạy."
 else
   echo "Máy chủ web: CHƯA chạy." >&2
   echo "== thử chạy trực tiếp 5 giây" >&2
   ( cd "$root" && "$node_path" bin/server.js > /tmp/atciso-try.log 2>&1 & p=$!; sleep 5; kill $p 2>/dev/null; tail -5 /tmp/atciso-try.log ) || true
-  echo "== nhật ký nền:" >&2; tail -n 8 "$log_dir/server-error.log" 2>/dev/null >&2
+  echo "== nhật ký nền:" >&2; tail -n 8 "$log_dir/server-error.log" 2>/dev/null >&2 || true
 fi

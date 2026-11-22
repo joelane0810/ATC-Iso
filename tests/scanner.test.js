@@ -70,7 +70,7 @@ function setup(respond, { watches = [first], previous = [], capture, saved = {},
   const waits = [];
   const waitForCapture = async ms => { waits.push(ms); };
   return {
-    scan: () => runScan({ store, client, now, log: () => {}, waitForCapture }),
+    scan: () => runScan({ store, client, now, log: () => {}, waitForCapture, maxDetails: 60 }),
     files, logs, requests, captures, images, waits,
   };
 }
@@ -235,9 +235,9 @@ test('later scans stop after 10 pages even when every page has new ads', async (
   let n = 0;
   const page = () => { const id = `CR${n++}`; return { ads: [{ creativeId: id, advertiserId: 'AR1', format: 'text', firstShown: '2026-11-20T00:00:00Z', lastShown: '2026-11-22T00:00:00Z', domain: 'cap.com' }], nextToken: `t${n}` }; };
   const client = { calls: 0, async rpc(method) { if (method.startsWith('LookupService/')) return []; this.calls++; return page(); }, async captureImage() { return null; }, async close() {} };
-  await runScan({ store, client, log: () => {} });
+  await runScan({ store, client, log: () => {}, maxDetails: 60 });
   client.calls = 0;
-  await runScan({ store, client, log: () => {} });
+  await runScan({ store, client, log: () => {}, maxDetails: 60 });
   assert.equal(client.calls, 10);
 });
 
@@ -267,7 +267,7 @@ test('details prioritize new ads per watch and share a limit of 60 across watche
     },
   };
 
-  assert.equal((await runScan({ store, client, now, log: () => {} })).status, 'ok');
+  assert.equal((await runScan({ store, client, now, log: () => {}, maxDetails: 60 })).status, 'ok');
   assert.equal(calls.length, 62);
   assert.equal(calls[0], first.id);
   assert.ok(calls.slice(1, 31).every(id => id.startsWith(first.id + '-')));
@@ -294,7 +294,7 @@ test('a creative detail block stops all further requests', async t => {
       return { ads: [{ creativeId: 'CR1', advertiserId: 'AR1', lastShown: now().toISOString() }] };
     },
   };
-  assert.equal((await runScan({ store, client, now, log: () => {} })).status, 'blocked');
+  assert.equal((await runScan({ store, client, now, log: () => {}, maxDetails: 60 })).status, 'blocked');
   assert.deepEqual(calls, ['SearchService/SearchCreatives', 'LookupService/GetCreativeById']);
   assert.equal(store.getAds(first.id).ads.CR1.creativeId, 'CR1');
   assert.equal(store.getSummary(id, now()).lastScan.status, 'blocked');
@@ -318,7 +318,7 @@ test('a missing country response is retried next scan while a confirmed empty re
     },
   };
   for (; date <= 24; date++) {
-    const result = await runScan({ store, client, now: () => new Date(`2026-11-${date}T02:00:00Z`), log: () => {} });
+    const result = await runScan({ store, client, now: () => new Date(`2026-11-${date}T02:00:00Z`), log: () => {}, maxDetails: 60 });
     assert.equal(result.status, 'ok');
   }
   assert.equal(detailCalls, 2);
