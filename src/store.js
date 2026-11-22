@@ -9,6 +9,9 @@ import { scanResumeAt } from './scan-rest.js';
 import { createWebStore } from './web-store.js';
 
 const DAY = 24 * 60 * 60 * 1000;
+const missingDomain = "coalesce(trim(domain), '') = ''";
+const ocrDue = '(domain_ocr_attempted_at IS NULL OR domain_ocr_attempted_at <= ?)';
+const ocrCutoff = at => new Date(+new Date(at) - 7 * DAY).toISOString();
 const watchFields = 'w.id, w.type, w.value, w.region, p.label, p.kind, p.added_at AS addedAt, p.group_id AS groupId';
 const groupTypeFor = (kind) => kind === 'project' ? 'advertiser' : 'domain';
 const kindForWatchType = (type) => type === 'domain' ? 'project' : 'competitor';
@@ -257,7 +260,14 @@ export function createStore(root, options) {
             image: previous?.image ?? null,
             firstSeenByUs: previous?.firstSeenByUs ?? lastScanAt,
           };
-          saveAd(watch.id, ad);
+          const suppliedDomain = raw.domain?.trim();
+          const storedDomain = get('SELECT domain, domain_source FROM creatives WHERE id = ?', raw.creativeId);
+          const domain = suppliedDomain || previous?.domain || storedDomain?.domain;
+          if (domain) ad.domain = domain;
+          saveAd(watch.id, ad, suppliedDomain || null);
+          if (suppliedDomain && storedDomain?.domain_source && suppliedDomain !== storedDomain.domain) {
+            run('UPDATE creatives SET domain_source = NULL WHERE id = ?', raw.creativeId);
+          }
           ads[raw.creativeId] = ad;
         }
         const savedLabel = previousFile?.watch.label;
@@ -274,6 +284,35 @@ export function createStore(root, options) {
         const { groupId, ...sharedWatch } = watch;
         return { file: { watch: { ...sharedWatch, label }, lastScanAt, ads: { ...ads } }, newIds };
       });
+    },
+    setCreativeDomain(creativeId, domain, source = 'ocr') {
+      return transaction(() => {
+        if (!get(`SELECT 1 FROM creatives WHERE id = ? AND ${missingDomain}`, creativeId)) return false;
+        run('INSERT OR IGNORE INTO domains VALUES (?)', domain);
+        run('UPDATE creatives SET domain = ?, domain_source = ? WHERE id = ?', domain, source, creativeId);
+        run(`UPDATE watch_creatives SET observation = json_set(observation, '$.domain', ?)
+          WHERE creative_id = ?`, domain, creativeId);
+        return true;
+      });
+    },
+    creativesNeedingDomains(limit, { watchId = null, now: at = now(), remoteOnly = false, localOnly = false } = {}) {
+      const legacyImage = "preview_url GLOB 'https://tpc.googlesyndication.com/archive/simgad/*'";
+      const remoteImage = `coalesce(nullif(trim(image_url), ''), CASE WHEN ${legacyImage} THEN preview_url END)`;
+      const imageFilter = localOnly ? 'image IS NOT NULL'
+        : `${remoteImage} IS NOT NULL ${remoteOnly ? '' : 'OR image IS NOT NULL'}`;
+      const watchFilter = watchId == null ? '' : `AND EXISTS (
+        SELECT 1 FROM watch_creatives WHERE watch_id = ? AND creative_id = c.id)`;
+      return all(`SELECT id AS creativeId, image, ${remoteImage} AS imageUrl FROM creatives c
+        WHERE ${missingDomain} AND ${ocrDue}
+          AND (${imageFilter})
+          ${watchFilter}
+        ORDER BY domain_ocr_attempted_at, first_seen_by_us DESC, id LIMIT ?`,
+      ocrCutoff(at), ...(watchId == null ? [] : [watchId]), limit);
+    },
+    claimDomainOcr(creativeId, at = now()) {
+      return Boolean(transaction(() => run(`UPDATE creatives SET domain_ocr_attempted_at = ?
+        WHERE id = ? AND ${missingDomain} AND ${ocrDue}`,
+      new Date(at).toISOString(), creativeId, ocrCutoff(at)).changes));
     },
     setAdImage(wid, cr, relPath) {
       transaction(() => run(`UPDATE creatives SET image = ? WHERE id = ? AND EXISTS (

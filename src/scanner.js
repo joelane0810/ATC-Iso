@@ -1,8 +1,11 @@
+import { readFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import { BlockedError, buildSearchCreativesReq, parseCreatives } from './atc.js';
+import { createDomainReader } from './domain-ocr.js';
 
+const MAX_DOMAIN_ATTEMPTS = 200;
 const MAX_PAGES_FIRST = 5;
 const MAX_PAGES_LATER = 10;
 const DEFAULT_MAX_DETAILS = 20;
@@ -12,6 +15,7 @@ export async function runScan({
   store, client, now = () => new Date(), log = console.log,
   maxDetails = typeof client.lookupRegions === 'function' ? DEFAULT_MAX_DETAILS : 0,
   onlyWatchIds = null, maxPages = null, skipCaptures = false, scanId,
+  createReader = createDomainReader,
   record = entry => store.appendScanLog(entry), waitForCapture = delay,
 }) {
   const scannedAt = now();
@@ -24,6 +28,17 @@ export async function runScan({
   let retries = 0;
   let captures = 0;
   let nextCaptureAt = 0;
+  let reader;
+  let ocrAttempts = 0;
+  let ocrUnavailable = false;
+  async function capture(ad, id, watchId) {
+    const waitMs = Math.ceil(nextCaptureAt - performance.now());
+    if (waitMs > 0) await waitForCapture(waitMs);
+    if (store.isWatchActive && !store.isWatchActive(watchId)) return null;
+    const image = await client.captureImage(ad, join(store.imagesDir(), id));
+    nextCaptureAt = performance.now() + 1500;
+    return image;
+  }
   try {
     await store.purgeExpiredTrash?.(scannedAt);
     const watches = (await store.allWatches()).filter(w => !onlyWatchIds || onlyWatchIds.includes(w.id));
@@ -112,9 +127,10 @@ export async function runScan({
         }
       }
 
-      if (skipCaptures) continue;
       const fresh = new Set(newIds);
-      for (const id of [...newIds, ...Object.keys(file.ads).filter(id => !fresh.has(id))]) {
+      const captureIds = skipCaptures ? [] : [...newIds, ...Object.keys(file.ads).filter(id => !fresh.has(id))];
+      const attemptedImages = new Set();
+      for (const id of captureIds) {
         if (captures >= 40) break;
         if (basename(id) !== id || id === '..' || id === '.') continue;
         const saved = file.ads[id];
@@ -128,19 +144,50 @@ export async function runScan({
           if (retries >= 20) continue;
           retries++;
         }
-        const waitMs = Math.ceil(nextCaptureAt - performance.now());
-        if (waitMs > 0) await waitForCapture(waitMs);
         if (store.isWatchActive && !store.isWatchActive(watch.id)) continue watchesLoop;
         captures++;
-        const image = await client.captureImage(ad, join(store.imagesDir(), id));
-        nextCaptureAt = performance.now() + 1500;
+        attemptedImages.add(id);
+        const image = await capture(ad, id, watch.id);
         if (image) await store.setAdImage(watch.id, id, `images/${basename(image)}`);
+      }
+
+      if (ocrUnavailable || ocrAttempts >= MAX_DOMAIN_ATTEMPTS || !store.creativesNeedingDomains) continue;
+      const pending = await store.creativesNeedingDomains(MAX_DOMAIN_ATTEMPTS - ocrAttempts, {
+        watchId: watch.id, now: now(), localOnly: skipCaptures,
+      });
+      for (const ad of pending) {
+        const { creativeId: id, image, imageUrl } = ad;
+        if (store.isWatchActive && !store.isWatchActive(watch.id)) continue watchesLoop;
+        if (!await store.claimDomainOcr(id, now())) continue;
+        ocrAttempts++;
+        let input = image && await readFile(join(store.imagesDir(), basename(image))).catch(() => null);
+        if (!input && imageUrl && !skipCaptures && !attemptedImages.has(id)
+          && basename(id) === id && id !== '.' && id !== '..') {
+          input = await capture(ad, id, watch.id);
+          if (input) await store.setAdImage(watch.id, id, `images/${basename(input)}`);
+        }
+        if (!input) continue;
+        try {
+          reader ??= await createReader();
+        } catch (error) {
+          log(`Không mở được bộ đọc tên miền: ${error.message}`);
+          ocrUnavailable = true;
+          break;
+        }
+        const domain = await reader.read(input).catch(() => null);
+        if (domain) await store.setCreativeDomain(id, domain);
       }
     }
   } catch (error) {
     result.status = error instanceof BlockedError ? 'blocked' : 'error';
     result.error = error instanceof Error ? error.message : String(error);
     log(result.error);
+  } finally {
+    try {
+      await reader?.close();
+    } catch (error) {
+      log(`Không đóng được bộ đọc tên miền: ${error.message}`);
+    }
   }
 
   // The logging callback finalizes the same scan row that owns the watch snapshots.

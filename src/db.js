@@ -36,7 +36,7 @@ function jsonFiles(path) {
   }
 }
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 export const TRASH_RETENTION_MS = 60 * 24 * 60 * 60 * 1000;
 const retryWait = new Int32Array(new SharedArrayBuffer(4));
 
@@ -109,8 +109,8 @@ export function openDb(data, { readOnly = false, web = false, now = () => new Da
     watch.kind ?? 'competitor', watch.addedAt ?? null);
   }
 
-  function saveAd(wid, ad) {
-    const { creativeId, advertiserId, advertiserName, domain, format, previewUrl,
+  function saveAd(wid, ad, domain = ad.domain) {
+    const { creativeId, advertiserId, advertiserName, format, previewUrl,
       imageUrl, image, firstShown, lastShown, platform, firstSeenByUs, detailsUrl } = ad;
     if (advertiserId) {
       run(`INSERT INTO advertisers VALUES (?, ?) ON CONFLICT(id)
@@ -340,6 +340,10 @@ export function openDb(data, { readOnly = false, web = false, now = () => new Da
           SET kind = CASE type WHEN 'domain' THEN 'project' ELSE 'competitor' END
           WHERE (type = 'domain' AND kind = 'competitor') OR
                 (type = 'advertiser' AND kind = 'project');
+        `);
+        if (previous < 6) db.exec(`
+          ALTER TABLE creatives ADD COLUMN domain_source TEXT;
+          ALTER TABLE creatives ADD COLUMN domain_ocr_attempted_at TEXT;
         `);
         db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
       });

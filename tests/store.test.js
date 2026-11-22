@@ -522,6 +522,8 @@ test('version 1 upgrade keeps historical snapshots only for watches listed as co
     ALTER TABLE profile_watches DROP COLUMN group_id;
     ALTER TABLE profile_watches DROP COLUMN deleted_at;
     DROP TABLE watch_groups;
+    ALTER TABLE creatives DROP COLUMN domain_source;
+    ALTER TABLE creatives DROP COLUMN domain_ocr_attempted_at;
     PRAGMA user_version = 1;
   `);
   const upgraded = createStore(root);
@@ -562,6 +564,8 @@ test('opening a version 2 DB backfills domain watches only once', async t => {
   legacy.run('ALTER TABLE profile_watches DROP COLUMN group_id');
   legacy.run('ALTER TABLE profile_watches DROP COLUMN deleted_at');
   legacy.run('DROP TABLE watch_groups');
+  legacy.run('ALTER TABLE creatives DROP COLUMN domain_source');
+  legacy.run('ALTER TABLE creatives DROP COLUMN domain_ocr_attempted_at');
   legacy.run('PRAGMA user_version = 2');
   legacy.close();
 
@@ -662,6 +666,8 @@ test('nâng DB phiên bản 3 giữ mục theo dõi và quảng cáo đã lưu',
     ALTER TABLE profile_watches DROP COLUMN group_id;
     ALTER TABLE profile_watches DROP COLUMN deleted_at;
     DROP TABLE watch_groups;
+    ALTER TABLE creatives DROP COLUMN domain_source;
+    ALTER TABLE creatives DROP COLUMN domain_ocr_attempted_at;
     PRAGMA user_version = 3;
   `);
   legacy.close();
@@ -690,6 +696,8 @@ test('nâng DB phiên bản 4 phân loại lại mục theo dõi đúng một l�
     .run(advertisers.id, domain.id);
   db.prepare("UPDATE profile_watches SET kind = 'project' WHERE watch_id = ?").run(advertiser.id);
   db.exec(`UPDATE watches SET kind = CASE type WHEN 'domain' THEN 'competitor' ELSE 'project' END;
+    ALTER TABLE creatives DROP COLUMN domain_source;
+    ALTER TABLE creatives DROP COLUMN domain_ocr_attempted_at;
     PRAGMA user_version = 4;`);
 
   const upgraded = createStore(root);
@@ -697,7 +705,7 @@ test('nâng DB phiên bản 4 phân loại lại mục theo dõi đúng một l�
   const [trashed] = upgraded.getTrash(id);
   assert.equal(trashed.kind, 'competitor');
   assert.equal(trashed.groupId, advertisers.id);
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 5);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 6);
   const kind = db.prepare('SELECT kind FROM watches WHERE id = ?');
   assert.equal(kind.get(domain.id).kind, 'project');
   assert.equal(kind.get(advertiser.id).kind, 'competitor');

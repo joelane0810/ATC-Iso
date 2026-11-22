@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isScanLocked, ScanBusyError } from '../src/lock.js';
 import { startServer } from '../src/server.js';
+import { backfillDomains } from '../src/domain-backfill.js';
 import { createStore } from '../src/store.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -29,12 +30,16 @@ function triggerScan(acquired, watchId) {
 
 import { networkInterfaces } from 'node:os';
 const host = process.env.ATC_HOST || '0.0.0.0';
+const store = createStore(root);
 const server = await startServer({
   host,
-  store: createStore(root),
+  store,
   triggerScan,
   waitForAcquisition: true,
   isScanning: () => isScanLocked(join(root, 'data', '.scan.lock')),
 });
 const lan = Object.values(networkInterfaces()).flat().filter((a) => a && a.family === 'IPv4' && !a.internal).map((a) => a.address);
 console.log(`Mở http://127.0.0.1:${server.address().port}` + (host === '0.0.0.0' ? ` · máy cùng wifi: ${lan.map((ip) => `http://${ip}:${server.address().port}`).join(' ')}` : ''));
+setImmediate(() => {
+  void backfillDomains({ store }).catch(error => console.error(`Đọc bù tên miền: ${error.message}`));
+});

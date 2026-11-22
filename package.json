@@ -3,11 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22.13" },
+  "engines": {
+    "node": ">=22.13"
+  },
   "scripts": {
     "test": "node --test",
     "start": "node bin/server.js",
     "scan": "node bin/scan.js"
   },
-  "dependencies": { "playwright-core": "^1.49.0" }
+  "dependencies": {
+    "playwright-core": "^1.49.0",
+    "tesseract.js": "^5.1.1"
+  }
 }
