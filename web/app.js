@@ -346,7 +346,7 @@ function previewDocument(url) {
     function report() {
       if (!dimensions || !target.querySelector(':not(script, style, link, template):not([hidden])')
           && !target.textContent.trim()) return;
-      parent.postMessage({ type: 'atc-preview-ready', ...dimensions }, window.origin);
+      parent.postMessage({ type: 'atc-preview-ready', ...dimensions }, '*');
       observer.disconnect();
     }
     window.atcPreviewReady = ({ previewMetadata } = {}) => {
@@ -382,7 +382,7 @@ function drainPreviews() {
     const frame = element('iframe');
     frame.title = 'Xem trước mẫu quảng cáo';
     frame.className = 'live-preview-frame';
-    frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups');
+    frame.setAttribute('sandbox', 'allow-scripts allow-popups allow-popups-to-escape-sandbox');
     if (!entry.large) frame.tabIndex = -1;
     frame.srcdoc = previewDocument(entry.url);
     entry.frame = frame;
@@ -429,7 +429,10 @@ if (previewVisibility) {
   }).observe(document.body, { childList: true, subtree: true });
 
   window.addEventListener('message', ({ source, origin, data }) => {
-    if (origin !== window.location.origin || data?.type !== 'atc-preview-ready') return;
+    // Khung xem trước bị cách ly (sandbox, không same-origin) nên có nguồn "null";
+    // chỉ nhận tin từ đúng khung mình đã tạo.
+    if (origin !== 'null' && origin !== window.location.origin) return;
+    if (data?.type !== 'atc-preview-ready') return;
     const entry = loadingPreviews.get(source);
     if (!entry?.box.isConnected) return;
     const { width, height } = data;

@@ -292,7 +292,7 @@ test('live previews preserve URL parameters and load at most four visible frames
   live.visibility(boxes, true);
   assert.equal(frames().filter(Boolean).length, 4);
   const [first, second] = frames();
-  assert.equal(first.attributes.get('sandbox'), 'allow-scripts allow-same-origin allow-popups');
+  assert.equal(first.attributes.get('sandbox'), 'allow-scripts allow-popups allow-popups-to-escape-sandbox');
   const src = first.srcdoc.match(/<script src="([^"]+)"/)[1].replaceAll('&amp;', '&');
   const url = new URL(src);
   assert.ok(src.startsWith(liveUrl + '&'));
@@ -314,7 +314,7 @@ test('live previews preserve URL parameters and load at most four visible frames
       disconnect() {}
     },
     parent: { postMessage(message, targetOrigin) {
-      assert.equal(targetOrigin, origin);
+      assert.equal(targetOrigin, '*'); // khung cách ly có nguồn "null"
       assert.equal(message.type, 'atc-preview-ready');
       live.ready(first.contentWindow, message.width, message.height);
     } },
