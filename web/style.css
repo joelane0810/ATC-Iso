@@ -576,7 +576,13 @@ main {
   background: #202124;
   color: white;
 }
-.undo-toast button { margin-left: 8px; }
+.undo-toast:not([hidden]) { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.undo-toast { bottom: calc(16px + env(safe-area-inset-bottom)); font-size: 14px; }
+.undo-toast button {
+  margin-left: 8px; min-height: 32px; padding: 4px 10px; border: 0; border-radius: 6px;
+  background: transparent; color: #8ab4f8; font-weight: 600; font-size: 14px; -webkit-appearance: none; appearance: none;
+}
+.undo-toast button:hover:not(:disabled) { background: #ffffff1f; }
 
 .lan-urls { margin: 8px 16px; font-size: 12px; color: var(--muted, #5f6368); user-select: all; word-break: break-all; }
 
