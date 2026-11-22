@@ -5,7 +5,8 @@ const query = byId('query');
 const format = byId('format');
 const scan = byId('scan');
 const errorMessage = byId('error');
-const adsGrid = byId('ads');
+const gallery = byId('gallery');
+const watchForm = byId('watch-form');
 const detail = byId('detail');
 const dateFormat = new Intl.DateTimeFormat('vi-VN', {
   day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'Asia/Ho_Chi_Minh',
@@ -15,7 +16,18 @@ const formats = { image: 'Hình ảnh', text: 'Chữ', video: 'Video' };
 let watchId = '';
 let selectedAd;
 let ads = [];
-let allAds = [];
+const kindLabels = { competitor: 'Đối thủ', project: 'Dự án' };
+const countKeys = ['new', 'stopped', 'running'];
+const formatCount = new Intl.NumberFormat('vi-VN');
+const previousTime = new Intl.DateTimeFormat('vi-VN', {
+  hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'Asia/Ho_Chi_Minh',
+});
+const previousDay = new Intl.DateTimeFormat('en-GB', {
+  day: '2-digit', month: '2-digit', timeZone: 'Asia/Ho_Chi_Minh',
+});
+let watchKind = 'competitor';
+let summary;
+let watchCounts = new Map();
 let watches = [];
 let loadVersion = 0;
 let pollTimer;
@@ -62,9 +74,10 @@ async function loadProfiles(preferred) {
   profile.replaceChildren(...profiles.map(({ id, name }) => new Option(name, id)));
   if (profiles.some(({ id }) => id === preferred)) profile.value = preferred;
   profile.disabled = !profiles.length;
-  byId('watch-form').querySelectorAll('input, button').forEach((node) => {
+  watchForm.querySelectorAll('input, button').forEach((node) => {
     node.disabled = !profiles.length;
   });
+  for (const kind of Object.keys(kindLabels)) byId('add-' + kind).disabled = !profiles.length;
   await selectProfile();
 }
 
@@ -73,7 +86,8 @@ async function selectProfile() {
   selectedAd = undefined;
   watches = [];
   ads = [];
-  allAds = [];
+  summary = undefined;
+  watchCounts = new Map();
   renderWatches();
   renderAds();
   try { localStorage.setItem('atc-iso-profile', profile.value); } catch {}
@@ -86,47 +100,58 @@ async function loadProfileData() {
   if (!id) return;
   const filters = new URLSearchParams({ filter: filter.value, q: query.value, format: format.value });
   const path = profilePath(id);
-  const unfiltered = api(path + '/ads');
-  const [watchlist, results, totals] = await Promise.all([
+  const [watchlist, results, overview] = await Promise.all([
     api(path + '/watchlist'),
-    filter.value === 'all' && !query.value.trim() && !format.value
-      ? unfiltered : api(path + '/ads?' + filters),
-    unfiltered,
+    api(path + '/ads?' + filters),
+    api(path + '/summary'),
   ]);
   if (version !== loadVersion) return;
   watches = watchlist;
-  ads = results;
-  allAds = totals;
+  ads = results.filter((ad) => ad.platform === 'search');
+  summary = overview;
+  watchCounts = new Map(summary.byWatch.map((row) => [row.watchId, row]));
   if (!watches.some((watch) => watch.id === watchId)) watchId = '';
   renderWatches();
   renderAds();
 }
 
-function belongsTo(ad, id) {
-  return !id || ad.watchId === id || ad.watchIds?.includes(id);
+function chooseWatch(id) {
+  watchId = id;
+  selectedAd = undefined;
+  if (id) {
+    const watch = watches.find((watch) => watch.id === id);
+    if (watch) byId('group-' + kindOf(watch)).open = true;
+  }
+  renderWatches();
+  renderAds();
+  byId('gallery-heading').focus({ preventScroll: true });
+}
+
+function kindOf(watch) {
+  return watch.kind ?? 'competitor';
+}
+
+function setWatchKind(kind) {
+  watchKind = kind;
+  for (const value of Object.keys(kindLabels)) {
+    byId('kind-' + value).setAttribute('aria-pressed', String(value === kind));
+  }
 }
 
 function renderWatches() {
-  byId('watches').replaceChildren(...[{ id: '', label: 'Tất cả đối thủ' }, ...watches].map((watch) => {
-    const item = element('li');
-    const choose = element('button');
-    choose.className = 'watch-choice';
-    choose.setAttribute('aria-pressed', String(watchId === watch.id));
-    const matching = allAds.filter((ad) => belongsTo(ad, watch.id));
-    const newCount = matching.filter((ad) => ad.isNew).length;
-    const counts = element('span', matching.length + ' mẫu');
-    counts.className = 'watch-counts';
-    if (newCount) counts.append(badge(newCount + ' mới', true));
-    choose.append(element('strong', watch.label), counts);
-    choose.onclick = () => {
-      watchId = watch.id;
-      for (const row of byId('watches').children) {
-        row.children[0].setAttribute('aria-pressed', String(row === item));
-      }
-      renderAds();
-    };
-    item.append(choose);
-    if (watch.id) {
+  byId('home').setAttribute('aria-pressed', String(!watchId));
+  for (const kind of Object.keys(kindLabels)) {
+    byId('watches-' + kind).replaceChildren(...watches.filter((watch) => kindOf(watch) === kind).map((watch) => {
+      const item = element('li');
+      const choose = element('button');
+      choose.className = 'watch-choice';
+      choose.setAttribute('aria-pressed', String(watchId === watch.id));
+      const { total = 0, new: newCount = 0 } = watchCounts.get(watch.id) ?? {};
+      const counts = element('span', formatCount.format(total) + ' mẫu');
+      counts.className = 'watch-counts';
+      if (newCount) counts.append(badge(formatCount.format(newCount) + ' mới', true));
+      choose.append(element('strong', watch.label), counts);
+      choose.onclick = () => chooseWatch(watch.id);
       const remove = element('button', '×');
       remove.className = 'remove-watch';
       remove.setAttribute('aria-label', 'Xoá ' + watch.label);
@@ -136,10 +161,10 @@ function renderWatches() {
         await api(profilePath(id) + '/watchlist/' + encodeURIComponent(watch.id), 'DELETE');
         if (profile.value === id) await loadProfileData();
       });
-      item.append(remove);
-    }
-    return item;
-  }));
+      item.append(choose, remove);
+      return item;
+    }));
+  }
 }
 
 function badge(label, highlighted = false) {
@@ -174,20 +199,69 @@ function preview(ad) {
 }
 
 function renderAds() {
-  const visible = ads.filter((ad) => belongsTo(ad, watchId));
   const watch = watches.find(({ id }) => id === watchId);
-  const matching = allAds.filter((ad) => belongsTo(ad, watchId));
-  const domain = watch?.type === 'domain' ? watch.value : matching.find((ad) => ad.domain)?.domain;
-  byId('gallery-heading').textContent = watch?.label || 'Tất cả đối thủ';
-  byId('gallery-summary').textContent = [
-    watch && domain,
-    matching.length.toLocaleString('vi-VN') + ' mẫu quảng cáo',
-  ].filter(Boolean).join(' · ');
-  const empty = byId('empty');
-  empty.hidden = visible.length > 0;
-  empty.textContent = profile.value ? 'Chưa có mẫu phù hợp.' : 'Thêm hồ sơ để bắt đầu theo dõi.';
-  selectedAd = visible.find((ad) => ad.creativeId === selectedAd?.creativeId);
-  adsGrid.replaceChildren(...visible.map((ad) => {
+  byId('overview').hidden = Boolean(watch);
+  byId('watch-view').hidden = !watch;
+  const newAds = (summary?.newAds ?? []).filter((ad) => ad.platform === 'search')
+    .map((ad) => ({ ...ad, isNew: true }));
+  const stoppedAds = (summary?.stoppedAds ?? []).filter((ad) => ad.platform === 'search')
+    .map((ad) => ({ ...ad, isRunning: false }));
+  const visible = watch ? ads.filter((ad) => ad.watchId === watchId || ad.watchIds?.includes(watchId)) : [];
+  const candidates = watch ? visible : [...newAds, ...stoppedAds];
+  selectedAd = candidates.find((ad) => ad.creativeId === selectedAd?.creativeId && ad.watchId === selectedAd?.watchId);
+  if (watch) {
+    const domain = watch.type === 'domain' ? watch.value : visible.find((ad) => ad.domain)?.domain;
+    byId('gallery-heading').textContent = watch.label;
+    byId('gallery-summary').textContent = [
+      domain,
+      formatCount.format(watchCounts.get(watchId)?.total ?? 0) + ' mẫu quảng cáo',
+    ].filter(Boolean).join(' · ');
+    byId('empty').hidden = visible.length > 0;
+    byId('empty').textContent = 'Chưa có mẫu phù hợp.';
+    renderGrid('ads', visible);
+  } else {
+    renderOverview(newAds, stoppedAds);
+  }
+  showDetail(selectedAd);
+}
+
+function renderOverview(newAds, stoppedAds) {
+  byId('gallery-heading').textContent = 'Tổng quan thay đổi';
+  const previous = summary?.previousScanAt;
+  byId('gallery-summary').textContent = previous
+    ? 'So với lượt quét trước lúc ' + displayDate(previous, previousTime) + ' ' + displayDate(previous, previousDay)
+    : 'Chưa có lượt quét trước';
+  for (const key of countKeys) {
+    byId('total-' + key).textContent = summary ? formatCount.format(summary.totals[key]) : '—';
+  }
+  const rows = (summary?.byWatch ?? []).map((watch) => {
+    const row = element('tr');
+    const name = element('th');
+    name.setAttribute('scope', 'row');
+    const button = element('button', watch.label);
+    button.type = 'button';
+    name.append(button);
+    row.onclick = () => chooseWatch(watch.watchId);
+    row.append(name, element('td', kindLabels[kindOf(watch)]),
+      ...[...countKeys, 'total'].map((key) => element('td', formatCount.format(watch[key]))));
+    return row;
+  });
+  if (!rows.length) {
+    const row = element('tr');
+    const message = element('td', profile.value ? 'Chưa có mục theo dõi.' : 'Thêm hồ sơ để bắt đầu theo dõi.');
+    message.colSpan = 6;
+    row.append(message);
+    rows.push(row);
+  }
+  byId('changes').replaceChildren(...rows);
+  byId('new-empty').hidden = newAds.length > 0;
+  byId('stopped-empty').hidden = stoppedAds.length > 0;
+  renderGrid('new-ads', newAds);
+  renderGrid('stopped-ads', stoppedAds);
+}
+
+function renderGrid(id, visible) {
+  byId(id).replaceChildren(...visible.map((ad) => {
     const button = element('button');
     button.className = 'ad';
     button.type = 'button';
@@ -201,12 +275,12 @@ function renderAds() {
     const badges = element('span');
     badges.className = 'ad-badges';
     if (ad.isNew) badges.append(badge('Mới', true));
-    if (!ad.isRunning) badges.append(badge('Đã dừng'));
+    if (ad.isRunning === false) badges.append(badge('Đã dừng'));
     info.append(badges);
     button.append(preview(ad), info);
     button.setAttribute('aria-pressed', String(ad === selectedAd));
     button.onclick = () => {
-      adsGrid.querySelector('[aria-pressed="true"]')?.setAttribute('aria-pressed', 'false');
+      gallery.querySelector('.ad[aria-pressed="true"]')?.setAttribute('aria-pressed', 'false');
       button.setAttribute('aria-pressed', 'true');
       selectedAd = ad;
       showDetail(ad);
@@ -214,7 +288,6 @@ function renderAds() {
     };
     return button;
   }));
-  showDetail(selectedAd);
 }
 
 function displayDate(value, formatter = dateFormat) {
@@ -239,7 +312,7 @@ function showDetail(ad) {
     ['Bắt đầu chạy', displayDate(ad.firstShown)],
     ['Lần chạy gần nhất', displayDate(ad.lastShown)],
     ['Số ngày chạy', duration > 0 ? String(duration) : 'Chưa rõ'],
-    ['Trạng thái', ad.isRunning ? 'Đang chạy' : 'Đã dừng'],
+    ['Trạng thái', ad.isRunning === undefined ? 'Chưa rõ' : ad.isRunning ? 'Đang chạy' : 'Đã dừng'],
   ]) {
     fields.append(element('dt', label), element('dd', value));
   }
@@ -319,13 +392,25 @@ byId('profile-form').onsubmit = (event) => {
   });
 };
 
-byId('watch-form').onsubmit = (event) => {
+byId('home').onclick = () => chooseWatch('');
+for (const kind of Object.keys(kindLabels)) {
+  byId('kind-' + kind).onclick = () => setWatchKind(kind);
+  byId('add-' + kind).onclick = () => {
+    setWatchKind(kind);
+    watchForm.elements.input.focus();
+  };
+}
+
+watchForm.onsubmit = (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   const id = profile.value;
-  run(async () => {
-    await api(profilePath(id) + '/watchlist', 'POST', { input: form.elements.input.value });
-    form.reset();
+  if (!id) return;
+  const input = form.elements.input.value;
+  const kind = watchKind;
+  return run(async () => {
+    await api(profilePath(id) + '/watchlist', 'POST', { input, region: null, kind });
+    if (form.elements.input.value === input) form.elements.input.value = '';
     if (profile.value === id) await loadProfileData();
   });
 };
