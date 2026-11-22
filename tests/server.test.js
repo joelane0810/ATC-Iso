@@ -78,16 +78,19 @@ test('Task 3 HTTP API and static files', async (t) => {
       assert.ok(now);
       return [filters];
     },
-    getScanLog: () => [{ status: 'error' }, last],
+    getLastScan: () => last,
+    getScanningWatchId: () => null,
     imagesDir: () => images,
   };
   const lockPath = join(images, '.scan.lock');
   let scheduledWins = false;
   let finishScan;
+  let target;
   const scan = new Promise((resolve) => { finishScan = resolve; });
   const options = {
     store, port: 0,
-    triggerScan: acquired => {
+    triggerScan: (acquired, watchId) => {
+      target = watchId;
       if (scheduledWins) throw new ScanBusyError();
       acquired();
       return scan;
@@ -118,15 +121,17 @@ test('Task 3 HTTP API and static files', async (t) => {
   assert.deepEqual(await (await get(watchlist)).json(), []);
   assert.deepEqual(await (await get('/api/profiles/dai/ads?filter=new&q=%C3%A1o&format=image')).json(),
     [{ filter: 'new', q: 'áo', format: 'image' }]);
-  assert.deepEqual(await (await get('/api/status')).json(), { scanning: false, last });
+  assert.deepEqual(await (await get('/api/status')).json(), { scanning: false, scanningWatchId: null, last });
   await withLock(lockPath, async () => {
-    assert.deepEqual(await (await get('/api/status')).json(), { scanning: true, last });
+    assert.deepEqual(await (await get('/api/status')).json(), { scanning: true, scanningWatchId: null, last });
     assert.equal((await post('/api/scan')).status, 409);
   });
   scheduledWins = true;
   assert.equal((await post('/api/scan')).status, 409);
   scheduledWins = false;
-  assert.equal((await post('/api/scan')).status, 202);
+  assert.equal((await post('/api/scan', { watchId: 'example-com' })).status, 202);
+  assert.equal(target, 'example-com');
+  assert.deepEqual(await (await get('/api/status')).json(), { scanning: true, scanningWatchId: target, last });
   assert.equal((await post('/api/scan')).status, 409);
   finishScan();
 
@@ -149,16 +154,14 @@ test('profile summary and group filters follow the API contract', async t => {
   const at = new Date().toISOString();
   const request = await startRequest(t, { store, port: 0 });
   const summary = '/api/profiles/dai/summary';
-  const emptyWatch = watch => ({
-    watchId: watch.id, label: watch.label, kind: watch.kind, runningNow: 0, runningBefore: 0, groups: [],
-  });
-  assert.deepEqual(await (await request(summary)).json(), {
-    lastScan: null, previousScanAt: null,
-    totals: { newGroups: 0, increased: 0, decreased: 0, stopped: 0, runningAds: 0 },
-    watches: [emptyWatch(project), emptyWatch(competitor)],
-  });
-
-  const ad = { creativeId: 'CR1', advertiserId: 'AR1', domain: 'example.com', lastShown: at, format: 'text' };
+  const empty = await (await request(summary)).json();
+  assert.equal(empty.lastScan, null);
+  assert.equal(empty.window, 'day');
+  assert.equal(empty.watches.length, 2);
+  assert.ok(empty.watches.every(watch => watch.spark.length === 30 && watch.groups.length === 0));
+  const firstShown = `${empty.refDate}T00:00:00Z`;
+  const ad = { creativeId: 'CR1', advertiserId: 'AR1', advertiserName: 'Áo Đẹp',
+    domain: 'example.com', firstShown, lastShown: at, format: 'text' };
   const scanId = store.beginScan(at);
   store.mergeAds(project, [ad], at, scanId);
   store.mergeAds(competitor, [ad], at, scanId);
@@ -168,8 +171,14 @@ test('profile summary and group filters follow the API contract', async t => {
 
   const result = await (await request(summary)).json();
   assert.deepEqual(result.lastScan, { at, status: 'ok' });
-  assert.equal(result.previousScanAt, null);
-  assert.deepEqual(result.totals, { newGroups: 2, increased: 0, decreased: 0, stopped: 0, runningAds: 2 });
+  assert.deepEqual(result.totals, { newProjects: 1, newAdvertisers: 1, newAds: 2,
+    increased: 0, decreased: 0, stopped: 0, runningAds: 2 });
+  assert.equal((await (await request(summary + '?window=7d')).json()).window, '7d');
+  const series = await (await request(`/api/profiles/dai/series?watchId=${project.id}&group=AR1&days=2`)).json();
+  assert.equal(series.points.length, 2);
+  assert.deepEqual(series.points.at(-1), { date: result.refDate, running: 1, newAds: 1 });
+  assert.deepEqual(await (await request('/api/suggest?q=%C3%81O')).json(),
+    [{ type: 'advertiser', value: 'AR1', name: 'Áo Đẹp', ads: 2 }]);
   assert.deepEqual(result.watches.map(watch => watch.groups[0].key), ['AR1', 'example.com']);
   const adsUrl = '/api/profiles/dai/ads';
   const ads = await (await request(`${adsUrl}?watchId=${project.id}&group=AR1&format=text&q=example`)).json();

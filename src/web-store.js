@@ -1,6 +1,6 @@
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 
-const readMethods = ['listProfiles', 'getWatchlist', 'getScanLog', 'getSummary', 'listAdsForProfile', 'imagesDir'];
+const readMethods = ['listProfiles', 'getWatchlist', 'getScanLog', 'getLastScan', 'getScanningWatchId', 'getSummary', 'getSeries', 'suggest', 'listAdsForProfile', 'imagesDir'];
 const writeMethods = ['addProfile', 'addWatch', 'removeWatch'];
 
 export function createWebStore(root) {

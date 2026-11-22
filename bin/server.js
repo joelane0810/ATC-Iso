@@ -8,9 +8,9 @@ import { createStore } from '../src/store.js';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const scanScript = fileURLToPath(new URL('./scan.js', import.meta.url));
 
-function triggerScan(acquired) {
+function triggerScan(acquired, watchId) {
   return new Promise((resolve, reject) => {
-    const child = fork(scanScript, { cwd: root, stdio: ['inherit', 'inherit', 'inherit', 'ipc'] });
+    const child = fork(scanScript, watchId ? [`--watch=${watchId}`] : [], { cwd: root, stdio: ['inherit', 'inherit', 'inherit', 'ipc'] });
     let busy = false;
     child.once('message', state => {
       if (state === 'acquired') acquired();

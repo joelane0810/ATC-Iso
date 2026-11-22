@@ -3,11 +3,15 @@ const DAY = 24 * 60 * 60 * 1000;
 export const runningAt = (lastShown, at) => Date.parse(lastShown) >= at - 2 * DAY;
 export const groupTypes = ['domain', 'advertiser'];
 
+export function domainKey(domain) {
+  return domain?.trim().toLowerCase().replace(/^www\./, '').replace(/\.$/, '') || '';
+}
+
 export function groupIdentity(ad, groupType) {
   if (groupType === 'advertiser') {
     return { key: ad.advertiserId || '', name: ad.advertiserName || ad.advertiserId || 'Chưa rõ nhà quảng cáo' };
   }
-  const key = ad.domain?.trim().toLowerCase().replace(/^www\./, '').replace(/\.$/, '') || '';
+  const key = domainKey(ad.domain);
   return { key, name: key || 'Chưa rõ tên miền' };
 }
 

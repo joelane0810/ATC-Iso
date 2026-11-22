@@ -2,11 +2,12 @@ import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseWatchInput, regionIdToIso, slugify } from './atc.js';
 import { openDb } from './db.js';
-import { groupAds, groupIdentity, runningAt } from './groups.js';
+import { groupIdentity, runningAt } from './groups.js';
+import { createTimeReport } from './time-report.js';
+import { scanResumeAt } from './scan-rest.js';
 import { createWebStore } from './web-store.js';
 
 const DAY = 24 * 60 * 60 * 1000;
-const groupOrder = ['new', 'increase', 'decrease', 'stopped', 'steady'];
 const watchFields = 'w.id, w.type, w.value, w.region, p.label, p.kind, p.added_at AS addedAt';
 const groupTypeFor = (kind) => kind === 'project' ? 'advertiser' : 'domain';
 
@@ -38,8 +39,10 @@ export function createStore(root, options) {
     return { watch, lastScanAt, ads };
   };
 
-  const getScanLog = () => all("SELECT entry FROM scans WHERE status IS NOT NULL AND status != 'running' ORDER BY id DESC LIMIT 30")
+  const scanHistory = (at) => all(`SELECT entry FROM scans WHERE status IS NOT NULL AND status != 'running'
+    AND (? IS NULL OR julianday(at) <= julianday(?)) ORDER BY id DESC LIMIT 30`, at, at)
     .reverse().map(({ entry }) => JSON.parse(entry));
+  const getScanLog = () => scanHistory(null);
   function regionsByCreative(rows) {
     const result = new Map();
     for (const { creativeId, regionId, lastShown } of rows) {
@@ -69,8 +72,20 @@ export function createStore(root, options) {
     getWatchlist,
     addWatch(pid, input, region = null, kind = 'competitor') {
       if (kind !== 'competitor' && kind !== 'project') throw new Error('Loại theo dõi không hợp lệ.');
-      const { type, value } = parseWatchInput(input);
       return transaction(() => {
+        const named = get(`SELECT a.id, a.name FROM advertisers a JOIN creatives c ON c.advertiser_id = a.id
+          WHERE fold_name(a.name) = fold_name(?) AND fold_name(a.name) != ''
+          GROUP BY a.id ORDER BY count(*) DESC, a.id LIMIT 1`, input);
+        let parsed;
+        try {
+          parsed = parseWatchInput(input);
+        } catch (error) {
+          if (!named) throw error;
+        }
+        const { type, value } = named && parsed?.type !== 'advertiser'
+          ? { type: 'advertiser', value: named.id } : parsed;
+        const label = type === 'advertiser'
+          ? get('SELECT name FROM advertisers WHERE id = ?', value)?.name || value : value;
         const watches = getWatchlist(pid);
         if (!get('SELECT 1 FROM profiles WHERE id = ?', pid)) throw new Error('Không tìm thấy hồ sơ.');
         const existing = watches.find(watch => watch.type === type && watch.value === value && watch.region === region);
@@ -86,7 +101,7 @@ export function createStore(root, options) {
         if (!shared) {
           for (let suffix = 2; get('SELECT 1 FROM watches WHERE id = ?', id); suffix++) id = `${base}-${suffix}`;
         }
-        const watch = { id, type, value, label: value, region, kind, addedAt: new Date().toISOString() };
+        const watch = { id, type, value, label, region, kind, addedAt: new Date().toISOString() };
         linkWatch(pid, watch);
         return watch;
       });
@@ -118,6 +133,7 @@ export function createStore(root, options) {
           const ad = {
             ...raw,
             platform: 'search',
+            firstShown: raw.firstShown ?? previous?.firstShown ?? null,
             lastShown: Date.parse(previous?.lastShown) > Date.parse(raw.lastShown)
               ? previous.lastShown : raw.lastShown ?? previous?.lastShown ?? null,
             imageUrl: raw.imageUrl ?? previous?.imageUrl ?? null,
@@ -145,8 +161,8 @@ export function createStore(root, options) {
       transaction(() => run(`UPDATE creatives SET image = ? WHERE id = ? AND EXISTS (
         SELECT 1 FROM watch_creatives WHERE watch_id = ? AND creative_id = ?)`, relPath, cr, pathId(wid), cr));
     },
-    beginScan(at) {
-      return transaction(() => saveScan({ at, status: 'running' }));
+    beginScan(at, watchId = null) {
+      return transaction(() => saveScan({ at, status: 'running', watchId }));
     },
     appendScanLog(entry) {
       return transaction(() => {
@@ -200,75 +216,31 @@ export function createStore(root, options) {
       ...(watchId ? [watchId, at, cutoff, refresh, cutoff, at, limit] : [at, cutoff, refresh, cutoff, at, limit]))
         .map(row => ({ ...row }));
     },
-    getSummary(pid, now) {
-      const cutoff = new Date(now ?? Date.now()).toISOString();
-      const [latest, previous] = all(`SELECT id, at, status FROM scans
-        WHERE status IN ('ok', 'blocked', 'error') AND julianday(at) <= julianday(?) ORDER BY id DESC LIMIT 2`, cutoff);
-      const currentScan = get(`SELECT id FROM scans WHERE status IS NOT NULL AND status != 'cooldown' AND julianday(at) <= julianday(?) ORDER BY id DESC LIMIT 1`, cutoff);
-      const totals = { newGroups: 0, increased: 0, decreased: 0, stopped: 0, runningAds: 0 };
-      const statusTotals = { new: 'newGroups', increase: 'increased', decrease: 'decreased', stopped: 'stopped' };
-      const watches = getWatchlist(pid).map(watch => {
-        const file = getAds(watch.id);
-        const groupType = groupTypeFor(watch.kind);
-        const [current, prior] = all(`SELECT ws.scan_id, ws.at, s.status FROM watch_scans ws
-          JOIN scans s ON s.id = ws.scan_id WHERE ws.watch_id = ? AND julianday(ws.at) <= julianday(?)
-          ORDER BY ws.scan_id DESC LIMIT 2`, watch.id, cutoff);
-        const snapshot = scan => new Map((scan ? all(`SELECT group_key, name, running, total
-          FROM group_snapshots WHERE scan_id = ? AND watch_id = ? AND group_type = ?`,
-        scan.scan_id, watch.id, groupType) : []).map(row => [row.group_key, row]));
-        const currentGroups = snapshot(current);
-        const priorGroups = snapshot(prior);
-        const skipped = current && (current.status == null || current.scan_id < currentScan?.id);
-        const historical = new Set((current ? all(`SELECT DISTINCT group_key FROM group_snapshots
-          WHERE scan_id < ? AND watch_id = ? AND group_type = ?`, current.scan_id, watch.id, groupType) : [])
-          .map(row => row.group_key));
-        const live = file?.lastScanAt === current?.at
-          ? groupAds(Object.values(file?.ads ?? {}), groupType) : new Map();
-        const regionCutoff = new Date(Date.parse(current?.at ?? cutoff) - 2 * DAY).toISOString().slice(0, 10);
-        const byCreative = regionsByCreative(all(`SELECT wc.creative_id AS creativeId,
-          r.region_id AS regionId, r.last_shown AS lastShown FROM watch_creatives wc
-          JOIN creative_regions r ON r.creative_id = wc.creative_id
-          WHERE wc.watch_id = ? AND wc.platform = 'search' ORDER BY r.region_id`, watch.id));
-        const groups = [];
-        for (const key of new Set([...currentGroups.keys(), ...priorGroups.keys()])) {
-          const currentGroup = currentGroups.get(key);
-          const priorGroup = priorGroups.get(key);
-          const ads = live.get(key)?.ads ?? [];
-          ads.sort((a, b) => Date.parse(b.firstSeenByUs) - Date.parse(a.firstSeenByUs));
-          const runningNow = currentGroup?.running ?? 0;
-          const runningBefore = skipped ? runningNow : priorGroup?.running ?? 0;
-          const delta = runningNow - runningBefore;
-          let status = 'steady';
-          if (!skipped && !historical.has(key)) status = 'new';
-          else if (delta > 0) status = 'increase';
-          else if (delta < 0) status = runningNow === 0 ? 'stopped' : 'decrease';
-          const regionsById = new Map();
-          for (const ad of ads) {
-            for (const region of byCreative.get(ad.creativeId) ?? []) {
-              if (region.lastShown.slice(0, 10) < regionCutoff) continue;
-              const entry = regionsById.get(region.regionId) ?? { regionId: region.regionId, iso: region.iso, running: 0 };
-              entry.running++;
-              regionsById.set(region.regionId, entry);
-            }
-          }
-          const regions = [...regionsById.values()].sort((a, b) => b.running - a.running || a.regionId - b.regionId);
-          const newAds = skipped ? 0 : ads.filter(ad => !prior || Date.parse(ad.firstSeenByUs) > Date.parse(prior.at)).length;
-          groups.push({ key, name: currentGroup?.name ?? live.get(key)?.name ?? priorGroup?.name ?? (key || 'Chưa rõ'),
-            groupType, status, runningNow, runningBefore, delta, newAds,
-            totalAds: currentGroup?.total ?? 0, firstSeen: ads.at(-1)?.firstSeenByUs ?? null, regions,
-            sampleAds: ads.slice(0, 4).map(ad => ({ ...ad, watchId: watch.id, watchLabel: watch.label,
-              watchKind: watch.kind, regions: byCreative.get(ad.creativeId) ?? [] })) });
-          if (statusTotals[status]) totals[statusTotals[status]]++;
-          totals.runningAds += runningNow;
-        }
-        groups.sort((a, b) => groupOrder.indexOf(a.status) - groupOrder.indexOf(b.status)
-          || Math.abs(b.delta) - Math.abs(a.delta));
-        return { watchId: watch.id, label: watch.label, kind: watch.kind,
-          runningNow: groups.reduce((sum, group) => sum + group.runningNow, 0),
-          runningBefore: groups.reduce((sum, group) => sum + group.runningBefore, 0), groups };
-      });
-      return { lastScan: latest ? { at: latest.at, status: latest.status } : null,
-        previousScanAt: previous?.at ?? null, totals, watches };
+    ...createTimeReport({ all, scanHistory }),
+    getLastScan() {
+      const history = getScanLog();
+      const last = history.at(-1);
+      if (!last) return null;
+      const { resumeAt: storedResume, ...entry } = last;
+      const resumeAt = scanResumeAt(history);
+      return resumeAt ? { ...entry, resumeAt } : entry;
+    },
+    getScanningWatchId() {
+      const scan = get("SELECT status, entry FROM scans ORDER BY id DESC LIMIT 1");
+      return scan?.status === 'running' ? JSON.parse(scan.entry).watchId ?? null : null;
+    },
+    suggest(q) {
+      return all(`WITH suggestions AS (
+        SELECT 'advertiser' AS type, a.id AS value, coalesce(nullif(a.name, ''), a.id) AS name, count(*) AS ads
+        FROM creatives c JOIN advertisers a ON a.id = c.advertiser_id
+        WHERE instr(fold_name(a.name), fold_name(?)) OR instr(fold_name(a.id), fold_name(?))
+        GROUP BY a.id
+        UNION ALL
+        SELECT 'domain', domain_key(domain), NULL, count(*) FROM creatives
+        WHERE domain_key(domain) != '' AND instr(domain_key(domain), fold_name(?))
+        GROUP BY domain_key(domain)
+      ) SELECT * FROM suggestions ORDER BY ads DESC, value, type LIMIT 10`, q, q, q)
+        .map(({ name, ...row }) => name == null ? row : { ...row, name });
     },
     listAdsForProfile(pid, { filter = 'all', q = '', format = '', watchId = '', group } = {}, now = new Date()) {
       const currentTime = new Date(now).getTime();

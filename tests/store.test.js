@@ -128,59 +128,101 @@ test('legacy JSON migrates once with all rows and leaves the originals intact', 
   }
 });
 
-test('summary compares group snapshots and uses the profile watch kind', (t) => {
+test('summary uses Vietnamese dates, all windows, and ATC dates after repeat scans', t => {
   const { store } = setup(t);
   const { id } = store.addProfile('Dai');
   const competitor = store.addWatch(id, 'AR123');
-  const project = store.addWatch(id, 'project.com', null, 'project');
-  const at = '2026-11-20T00:00:00.000Z';
-  const now = '2026-11-22T00:00:00.000Z';
-  const old = '2026-11-19T00:00:00.000Z';
-  const ad = (creativeId, domain, lastShown, advertiserId = 'AR123') =>
-    ({ creativeId, domain, lastShown, advertiserId, advertiserName: advertiserId });
-  const firstScan = store.beginScan(at);
-  store.mergeAds(competitor, [
-    ad('i1', 'increase.com', at), ad('d1', 'decrease.com', at), ad('d2', 'decrease.com', old),
-    ad('s1', 'stopped.com', old), ad('t1', 'steady.com', at),
-  ], at, firstScan);
-  store.mergeAds(project, [ad('p1', 'project.com', at), ad('p2', 'other.com', at)], at, firstScan);
-  store.appendScanLog({ at, status: 'ok', scanId: firstScan });
-  const nextScan = store.beginScan(now);
+  const project = store.addWatch(id, 'new.com', null, 'project');
+  const before = '2026-11-22T12:59:59Z';
+  const now = '2026-11-22T13:00:00Z';
+  const ad = (creativeId, domain, firstShown, lastShown = now, advertiserId = 'AR123') =>
+    ({ creativeId, domain, firstShown, lastShown, advertiserId });
+  const fresh = ad('today', 'www.New.com', '2026-11-21T17:00:00Z');
+  const ads = [
+    fresh,
+    ad('week', 'week.com', '2026-11-16T00:00:00Z'),
+    ad('month', 'month.com', '2026-10-24T00:00:00Z'),
+    ad('old', 'older.com', '2026-10-23T00:00:00Z'),
+    ad('old-interval', 'increase.com', '2026-10-01T00:00:00Z'),
+    ad('extra', 'increase.com', '2026-11-22T00:00:00Z'),
+    ad('gone', 'stopped.com', '2026-11-01T00:00:00Z', '2026-11-21T16:59:59Z'),
+    ad('dec-old', 'decrease.com', '2026-11-01T00:00:00Z', '2026-11-21T16:59:59Z'),
+    ad('dec-still', 'decrease.com', '2026-11-01T00:00:00Z'),
+    ad('future', 'future.com', '2026-11-22T17:00:00Z', '2026-11-23T00:00:00Z'),
+  ];
+  store.mergeAds(competitor, ads, before);
+  store.mergeAds(project, [fresh, ad('new-advertiser', 'new.com', fresh.firstShown, now, 'AR456')], before);
+  assert.equal(store.getSummary(id, { now: before }).refDate, '2026-11-21');
+  const summary = () => store.getSummary(id, { now });
+  const first = summary();
+  assert.equal(first.refDate, '2026-11-22');
+  assert.equal(first.prevDate, '2026-11-21');
+  assert.deepEqual(first.totals, { newProjects: 1, newAdvertisers: 2, newAds: 4,
+    increased: 1, decreased: 1, stopped: 1, runningAds: 9 });
+  assert.deepEqual(first.watches[0].groups.slice(0, 4).map(g => [g.key, g.status, g.delta, g.followed]), [
+    ['new.com', 'new', 1, true], ['increase.com', 'increase', 1, false],
+    ['decrease.com', 'decrease', -1, false], ['stopped.com', 'stopped', -1, false],
+  ]);
+  assert.equal(first.watches[1].groups.find(g => g.key === 'AR123').followed, true);
+  assert.equal(first.watches[0].spark.length, 30);
+  assert.deepEqual(first.watches[0].spark.at(-1), { date: first.refDate, running: 7 });
+  for (const [window, prevDate, projects, newAds] of [
+    ['7d', '2026-11-15', 2, 5], ['30d', '2026-10-23', 5, 9],
+  ]) {
+    const result = store.getSummary(id, { window, now });
+    assert.deepEqual([result.window, result.prevDate, result.totals.newProjects, result.totals.newAds],
+      [window, prevDate, projects, newAds]);
+  }
+  for (const at of [before, now]) {
+    const scanId = store.beginScan(at);
+    store.mergeAds(competitor, ads, at, scanId);
+    store.appendScanLog({ at, status: 'ok', scanId });
+    assert.deepEqual(summary().totals, first.totals);
+  }
+  assert.deepEqual(summary().lastScan, { at: now, status: 'ok' });
+  const points = store.getSeries(id, { now, watchId: competitor.id, group: 'new.com' }).points;
+  assert.equal(points.length, 90);
+  assert.deepEqual(points[0], { date: '2026-08-25', running: 0, newAds: 0 });
+  assert.deepEqual(points.at(-2), { date: '2026-11-21', running: 0, newAds: 0 });
+  assert.deepEqual(points.at(-1), { date: first.refDate, running: 1, newAds: 1 });
+  assert.deepEqual(store.getSeries(id, { now, watchId: competitor.id, days: 2 }).points, [
+    { date: '2026-11-21', running: 7, newAds: 0 },
+    { date: '2026-11-22', running: 7, newAds: 2 },
+  ]);
+  assert.deepEqual(store.getSeries(id, { now, days: 1, group: undefined }).points,
+    [{ date: first.refDate, running: 8, newAds: 3 }]);
+});
 
-  store.mergeAds(competitor, [
-    ad('i2', 'increase.com', now), ad('i3', 'increase.com', now), ad('i4', 'increase.com', now),
-    ad('i5', 'increase.com', now), ad('n1', 'www.New.com', now),
-  ], now, nextScan);
-  store.mergeAds(project, [ad('p3', 'project.com', now, 'AR456')], now, nextScan);
-  const region = (regionId, lastShown = at) => ({ regionId, lastShown, firstShown: null });
-  store.setCreativeRegions('i1', [region(2840), region(2704, old)]);
-  store.setCreativeRegions('i2', [region(2840), region(2380)]);
-  store.appendScanLog({ at: now, status: 'ok', scanId: nextScan });
-
-  const summary = store.getSummary(id, now);
-  assert.deepEqual(summary.lastScan, { at: now, status: 'ok' });
-  assert.equal(summary.previousScanAt, at);
-  assert.deepEqual(summary.totals, { newGroups: 2, increased: 1, decreased: 1, stopped: 1, runningAds: 11 });
-  const [opponent, initiative] = summary.watches;
-  assert.equal(opponent.runningNow, 8);
-  assert.equal(opponent.runningBefore, 5);
-  assert.deepEqual(opponent.groups.map(g => [g.key, g.groupType, g.status, g.delta, g.newAds]), [
-    ['new.com', 'domain', 'new', 1, 1],
-    ['increase.com', 'domain', 'increase', 4, 4],
-    ['decrease.com', 'domain', 'decrease', -1, 0],
-    ['stopped.com', 'domain', 'stopped', -1, 0],
-    ['steady.com', 'domain', 'steady', 0, 0],
+test('suggest counts known domains and advertisers and addWatch resolves exact names and ATC links', t => {
+  const { store } = setup(t);
+  const { id } = store.addProfile('Dai');
+  const watch = store.addWatch(id, 'seed.com');
+  store.mergeAds(watch, [
+    { creativeId: 'a', advertiserId: 'AR123', advertiserName: 'Áo Đẹp', domain: 'www.Shop.com' },
+    { creativeId: 'b', advertiserId: 'AR123', advertiserName: 'Áo Đẹp', domain: 'shop.com' },
+    { creativeId: 'c', advertiserId: 'AR456', advertiserName: 'Áo khác', domain: 'shop.vn' },
+    ...Array.from({ length: 10 }, (_, i) => ({ creativeId: `extra-${i}`, domain: `extra${i}.com` })),
+  ], new Date());
+  assert.deepEqual(store.suggest('ÁO'), [
+    { type: 'advertiser', value: 'AR123', name: 'Áo Đẹp', ads: 2 },
+    { type: 'advertiser', value: 'AR456', name: 'Áo khác', ads: 1 },
   ]);
-  const increased = opponent.groups[1];
-  assert.equal(increased.firstSeen, at);
-  assert.equal(increased.totalAds, 5);
-  assert.deepEqual(increased.regions, [
-    { regionId: 2840, iso: 'US', running: 2 }, { regionId: 2380, iso: 'IT', running: 1 },
+  assert.deepEqual(store.suggest('WWW.SHOP'), []);
+  assert.deepEqual(store.suggest('shop'), [
+    { type: 'domain', value: 'shop.com', ads: 2 }, { type: 'domain', value: 'shop.vn', ads: 1 },
   ]);
-  assert.deepEqual(increased.sampleAds.map(ad => ad.creativeId), ['i2', 'i3', 'i4', 'i5']);
-  assert.deepEqual(initiative.groups.map(g => [g.key, g.groupType, g.status, g.totalAds]), [
-    ['AR456', 'advertiser', 'new', 1], ['AR123', 'advertiser', 'steady', 2],
-  ]);
+  assert.equal(store.suggest('').length, 10);
+  assert.deepEqual(store.suggest('missing'), []);
+  const named = store.addWatch(id, '  áo ĐẸP ');
+  assert.equal(named.label, 'Áo Đẹp');
+  for (const input of ['ar123', 'https://adstransparency.google.com/advertiser/AR123?region=VN',
+    'adstransparency.google.com/advertiser/AR123/creative/CR1',
+    '//www.adstransparency.google.com/intl/vi/advertiser/AR123/creative/CR1#top']) {
+    assert.deepEqual(store.addWatch(id, input), named);
+  }
+  const domain = store.addWatch(id, 'www.Shop.com/path');
+  assert.deepEqual(store.addWatch(id, 'https://shop.com'), domain);
+  assert.throws(() => store.addWatch(id, 'Áo'), /Không nhận ra/);
 });
 
 test('scan log retains the latest 30 entries', (t) => {
@@ -281,57 +323,37 @@ test('JSON import separates colliding watch IDs and establishes the first compar
   const scanId = store.beginScan(next);
   store.mergeAds(b, [{ creativeId: 'CR1', domain: right.value, lastShown: next }], next, scanId);
   store.appendScanLog({ at: next, status: 'ok', scanId });
-  const [group] = store.getSummary('dai', next).watches[1].groups;
+  const [group] = store.getSummary('dai', { now: next }).watches[1].groups;
   assert.deepEqual([group.status, group.delta, group.newAds], ['steady', 0, 0]);
 });
 
-test('watch snapshots roll back with ads, preserve skipped watches, and mark vanished groups stopped', t => {
+test('watch snapshots and ads still roll back together on write failure', t => {
   const { store } = setup(t);
   const { id } = store.addProfile('Dai');
-  const a = store.addWatch(id, 'AR1');
-  const b = store.addWatch(id, 'AR2');
-  const ad = (creativeId, domain, lastShown) => ({ creativeId, domain, lastShown });
-  const day = n => `2026-11-${n}T10:00:00.000Z`;
-  const scan = (at, watched, status = 'ok') => {
-    const scanId = store.beginScan(at);
-    for (const [watch, ads] of watched) store.mergeAds(watch, ads, at, scanId);
-    store.appendScanLog({ at, status, scanId });
-  };
-  scan(day(19), [[a, [ad('CR1', 'old.com', day(19))]], [b, [ad('CR3', 'b.com', day(19))]]]);
-  scan(day(20), [[a, [ad('CR2', 'old.com', day(20))]]]);
-  assert.equal(store.getSummary(id, day(20)).watches[0].groups[0].status, 'increase');
-
-  assert.throws(() => store.mergeAds(a, [ad('bad', 'bad.com', day(21))], day(21), 9999), /FOREIGN KEY/);
-  scan(day(21), [[b, []]], 'blocked');
-  assert.equal(store.getAds(a.id).ads.bad, undefined);
-  assert.equal(store.getAds(a.id).lastScanAt, day(20));
-  const [unchanged] = store.getSummary(id, day(21)).watches[0].groups;
-  assert.deepEqual([unchanged.status, unchanged.runningNow, unchanged.delta, unchanged.newAds], ['steady', 2, 0, 0]);
-
-  scan(day(22), [[a, [ad('CR1', 'new.com', day(22)), ad('CR2', 'new.com', day(19))]]]);
-  assert.equal(store.getAds(a.id).ads.CR2.lastShown, day(20));
-  const groups = store.getSummary(id, day(22)).watches[0].groups;
-  const vanished = groups.find(group => group.key === 'old.com');
-  assert.deepEqual([vanished.status, vanished.runningBefore, vanished.runningNow, vanished.totalAds], ['stopped', 2, 0, 0]);
-  assert.equal(groups.find(group => group.key === 'new.com').runningNow, 2);
+  const watch = store.addWatch(id, 'AR1');
+  const date = '2026-11-22T13:00:00.000Z';
+  assert.throws(() => store.mergeAds(watch, [{ creativeId: 'bad', domain: 'bad.com',
+    firstShown: date, lastShown: date }], date, 9999), /FOREIGN KEY/);
+  assert.equal(store.getAds(watch.id), null);
+  assert.deepEqual(store.getSummary(id, { now: date }).watches[0].groups, []);
 });
 
-test('country refresh is due after seven days and the cutoff includes the full UTC day', t => {
+test('country refresh is due after seven days and summary uses the reference date', t => {
   const { store } = setup(t);
   const { id } = store.addProfile('Dai');
   const watch = store.addWatch(id, 'site.com');
   const at = '2026-11-22T21:00:00.000Z';
   const scanId = store.beginScan(at);
-  store.mergeAds(watch, [{ creativeId: 'CR1', advertiserId: 'AR1', domain: 'site.com', lastShown: at }], at, scanId);
+  store.mergeAds(watch, [{ creativeId: 'CR1', advertiserId: 'AR1', domain: 'site.com', firstShown: '2026-11-22T00:00:00Z', lastShown: at }], at, scanId);
   store.setCreativeRegions('CR1', [
-    { regionId: 2840, lastShown: '2026-11-20T00:00:00.000Z' },
+    { regionId: 2840, lastShown: '2026-11-23T00:00:00.000Z' },
     { regionId: 2704, lastShown: '2026-11-19T00:00:00.000Z' },
   ], '2026-11-15T21:00:00.000Z');
   store.appendScanLog({ at, status: 'ok', scanId });
   const pending = now => store.creativesNeedingRegions(5, { watchId: watch.id, now });
   assert.deepEqual(pending('2026-11-22T20:59:59.999Z'), []);
   assert.equal(pending(at)[0].creativeId, 'CR1');
-  assert.deepEqual(store.getSummary(id, at).watches[0].groups[0].regions, [
+  assert.deepEqual(store.getSummary(id, { now: at }).watches[0].groups[0].regions, [
     { regionId: 2840, iso: 'US', running: 1 },
   ]);
 });
@@ -341,21 +363,23 @@ test('summary groups 5,000 ads with country data in under 1,500 ms', async t => 
   const { DatabaseSync } = await import('node:sqlite');
   const { id } = store.addProfile('Dai');
   const watch = store.addWatch(id, 'site.com');
-  const at = second.toISOString();
+  const at = '2026-11-22T13:00:00.000Z';
   const scanId = store.beginScan(at);
   store.mergeAds(watch, Array.from({ length: 5_000 }, (_, i) => ({
-    creativeId: `CR${i}`, advertiserId: 'AR1', domain: 'site.com', lastShown: at,
+    creativeId: `CR${i}`, advertiserId: 'AR1', domain: 'site.com', firstShown: '2026-10-24T00:00:00Z', lastShown: at,
   })), at, scanId);
   store.appendScanLog({ at, status: 'ok', scanId });
   const db = new DatabaseSync(join(root, 'data', 'atc.db'));
   db.prepare('INSERT INTO creative_regions (creative_id, region_id, last_shown) SELECT id, 2840, ? FROM creatives').run(at);
   db.close();
   const start = performance.now();
-  const { watches } = store.getSummary(id, at);
+  const { watches } = store.getSummary(id, { now: at });
   const elapsed = performance.now() - start;
   t.diagnostic(`Tổng quan 5.000 mẫu: ${elapsed.toFixed(1)} ms`);
   assert.ok(elapsed < 1500);
   assert.equal(watches[0].groups[0].regions[0].running, 5000);
+  assert.equal(watches[0].groups[0].sampleAds.length, 4);
+  assert.ok(watches[0].spark.every(point => point.running === 5000));
 });
 
 test('journal configuration verifies WAL and logs the switch to DELETE', async () => {

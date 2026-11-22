@@ -21,7 +21,7 @@ function json(res, status, value) {
   res.end(JSON.stringify(value));
 }
 
-async function readBody(req) {
+async function readBody(req, allowEmpty = false) {
   const chunks = [];
   let size = 0;
   for await (const chunk of req) {
@@ -29,6 +29,7 @@ async function readBody(req) {
     if (size <= 16384) chunks.push(chunk);
   }
   if (size > 16384) throw new Error('Thông tin gửi quá dài.');
+  if (allowEmpty && !size) return {};
   try {
     const value = JSON.parse(Buffer.concat(chunks).toString('utf8'));
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error();
@@ -62,6 +63,7 @@ export async function startServer({
   const webStore = store.forWeb?.();
   store = webStore ?? store;
   let scanPending = false;
+  let pendingWatchId = null;
   const scanning = () => scanPending || isScanning();
 
   const server = createServer(async (req, res) => {
@@ -78,25 +80,35 @@ export async function startServer({
         }
       }
       if (method === 'GET' && path === '/api/status') {
-        const last = (await store.getScanLog()).at(-1) ?? null;
-        return json(res, 200, { scanning: await scanning(), last });
+        const active = await scanning();
+        const last = await store.getLastScan();
+        const scanningWatchId = active ? (scanPending ? pendingWatchId : await store.getScanningWatchId()) : null;
+        return json(res, 200, { scanning: active, scanningWatchId, last });
+      }
+      if (method === 'GET' && path === '/api/suggest') {
+        return json(res, 200, await store.suggest(params.get('q') ?? ''));
       }
       if (method === 'POST' && path === '/api/scan') {
+        const { watchId = null } = await readBody(req, true);
+        if (watchId !== null && (typeof watchId !== 'string' || !/^[a-z0-9-]+$/i.test(watchId))) {
+          throw new Error('Mục theo dõi không hợp lệ.');
+        }
         if (await scanning() || scanPending) return json(res, 409, { error: 'Đang có lượt quét.' });
         scanPending = true;
+        pendingWatchId = watchId;
         const accepted = new Promise((resolve, reject) => {
           let acknowledged = false;
           const acquired = () => {
             acknowledged = true;
             resolve(202);
           };
-          Promise.resolve().then(() => triggerScan(acquired)).then(acquired, (error) => {
+          Promise.resolve().then(() => triggerScan(acquired, watchId)).then(acquired, (error) => {
             if (error.code === 'SCAN_BUSY') resolve(409);
             else {
               reject(Object.assign(new Error(error.message), { code: 'SCAN_START_FAILED' }));
               if (!waitForAcquisition || acknowledged) console.error('Không thể hoàn tất lượt quét:', error.message);
             }
-          }).finally(() => { scanPending = false; });
+          }).finally(() => { scanPending = false; pendingWatchId = null; });
           if (!waitForAcquisition) acquired();
         });
         const status = await accepted;
@@ -104,7 +116,7 @@ export async function startServer({
         return json(res, status, { scanning: true });
       }
 
-      const profile = path.match(/^\/api\/profiles\/([\w-]+)\/(watchlist|ads|summary)(?:\/([\w.-]+))?$/);
+      const profile = path.match(/^\/api\/profiles\/([\w-]+)\/(watchlist|ads|summary|series)(?:\/([\w.-]+))?$/);
       if (profile) {
         const [, pid, resource, wid] = profile;
         if (resource === 'watchlist') {
@@ -126,7 +138,13 @@ export async function startServer({
           }
         }
         if (method === 'GET' && resource === 'summary' && !wid) {
-          return json(res, 200, await store.getSummary(pid));
+          return json(res, 200, await store.getSummary(pid, { window: params.get('window') ?? 'day' }));
+        }
+        if (method === 'GET' && resource === 'series' && !wid) {
+          return json(res, 200, await store.getSeries(pid, {
+            watchId: params.get('watchId') || null, group: params.get('group'),
+            days: Number(params.get('days') ?? 90),
+          }));
         }
         if (method === 'GET' && resource === 'ads' && !wid) {
           const filters = {

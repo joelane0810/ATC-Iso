@@ -18,7 +18,7 @@ function parseUrl(input) {
 }
 
 export function parseWatchInput(str) {
-  const input = str.trim();
+  const input = str.trim().replace(/^\/\//, '');
   if (/^AR\d+$/i.test(input)) {
     return { type: 'advertiser', value: input.toUpperCase() };
   }
@@ -26,7 +26,7 @@ export function parseWatchInput(str) {
   const url = parseUrl(/^[a-z][a-z\d+.-]*:\/\//i.test(input) ? input : `https://${input}`);
   if (url && ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password) {
     const domain = url.hostname.replace(/^www\./, '').replace(/\.$/, '');
-    const advertiser = url.pathname.match(/^\/advertiser\/(AR\d+)(?:\/|$)/i);
+    const advertiser = url.pathname.match(/\/advertiser\/(AR\d+)(?:\/|$)/i);
     if (domain === 'adstransparency.google.com' && advertiser) {
       return { type: 'advertiser', value: advertiser[1].toUpperCase() };
     }

@@ -1,4 +1,4 @@
-import { groupAds, groupTypes, runningAt } from './groups.js';
+import { domainKey, groupAds, groupTypes, runningAt } from './groups.js';
 import { mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -58,6 +58,8 @@ export function configureJournal(get, log = console.warn) {
 export function openDb(data, { readOnly = false, web = false } = {}) {
   if (!readOnly) mkdirSync(data, { recursive: true });
   const db = new DatabaseSync(join(data, 'atc.db'), { readOnly });
+  db.function('domain_key', { deterministic: true }, domainKey);
+  db.function('fold_name', { deterministic: true }, value => value?.trim().normalize('NFC').toLowerCase() ?? '');
   const statements = new Map();
   function prepare(sql) {
     if (!statements.has(sql)) statements.set(sql, db.prepare(sql));

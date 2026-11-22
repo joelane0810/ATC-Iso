@@ -11,7 +11,7 @@ const RUNNING_WINDOW = 2 * 24 * 60 * 60 * 1000;
 export async function runScan({
   store, client, now = () => new Date(), log = console.log,
   maxDetails = typeof client.lookupRegions === 'function' ? DEFAULT_MAX_DETAILS : 0,
-  onlyWatchIds = null, maxPages = null,
+  onlyWatchIds = null, maxPages = null, skipCaptures = false, scanId,
   record = entry => store.appendScanLog(entry), waitForCapture = delay,
 }) {
   const scannedAt = now();
@@ -20,7 +20,7 @@ export async function runScan({
   const runningSince = scannedAt.getTime() - RUNNING_WINDOW;
 
   const attemptedDetails = new Set();
-  const scanId = await store.beginScan?.(scannedAt.toISOString());
+  scanId ??= await store.beginScan?.(scannedAt.toISOString());
   let retries = 0;
   let captures = 0;
   let nextCaptureAt = 0;
@@ -106,6 +106,7 @@ export async function runScan({
         }
       }
 
+      if (skipCaptures) continue;
       const fresh = new Set(newIds);
       for (const id of [...newIds, ...Object.keys(file.ads).filter(id => !fresh.has(id))]) {
         if (captures >= 40) break;
