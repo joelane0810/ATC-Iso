@@ -18,20 +18,44 @@ class Element {
   focus() { this.focused = true; }
   querySelector(selector) {
     assert.equal(selector, '.ad[aria-pressed="true"]');
-    return this.children.flatMap((grid) => grid.children)
-      .find((child) => child.attributes.get('aria-pressed') === 'true');
+    for (const child of this.children) {
+      if (child.className === 'ad' && child.attributes.get('aria-pressed') === 'true') return child;
+      const selected = child.querySelector(selector);
+      if (selected) return selected;
+    }
   }
   scrollIntoView() { this.scrolled = true; }
 }
 
+const scanAt = '2026-11-22T02:00:00Z';
 const creative = {
-  creativeId: 'CR1', platform: 'search', watchIds: ['example-com'], domain: 'example.com', advertiserName: 'Example',
+  creativeId: 'CR1', platform: 'search', watchId: 'example-com', watchLabel: 'example.com',
+  watchKind: 'competitor', domain: 'example.com', advertiserName: 'Example', advertiserId: 'AR1',
   format: 'image', firstShown: '2026-11-08T00:00:00Z', lastShown: '2026-11-10T00:00:00Z',
-  isNew: true, isRunning: false, detailsUrl: 'https://adstransparency.google.com/advertiser/AR1/creative/CR1',
+  firstSeenByUs: '2026-11-22T00:00:00Z',
+  detailsUrl: 'https://adstransparency.google.com/advertiser/AR1/creative/CR1',
+  regions: [
+    { regionId: 2840, iso: 'US', lastShown: '2026-11-10T00:00:00Z' },
+    { regionId: 2704, iso: 'VN', lastShown: '2026-11-08T00:00:00Z' },
+  ],
 };
 
-async function loadGrid(results, overview = {}) {
+const groupKey = 'domain:example.com';
+const group = {
+  key: groupKey, name: 'example.com', groupType: 'domain', status: 'new',
+  runningNow: 3, runningBefore: 0, delta: 3, newAds: 3, totalAds: 3, firstSeen: scanAt,
+  regions: ['US', 'VN', 'JP', 'DE', 'GB', 'FR', 'AU'].map((iso, index) => ({
+    regionId: [2840, 2704, 2392, 2276, 2826, 2250, 2036][index], iso, running: index === 0 ? 3 : 1,
+  })),
+};
+const projectGroup = {
+  ...group, key: 'advertiser:AR1', name: 'Example', groupType: 'advertiser', status: 'increase',
+  runningNow: 2, runningBefore: 1, delta: 1, regions: [], sampleAds: [],
+};
+
+async function loadGrid(results, overview = {}, groupResponse) {
   const posts = [];
+  const requests = [];
   const nodes = new Map();
   const document = {
     createElement: (tag) => new Element(tag),
@@ -45,7 +69,7 @@ async function loadGrid(results, overview = {}) {
   const clipboard = [];
   const form = document.getElementById('watch-form');
   form.elements = { input: new Element('input') };
-  document.getElementById('gallery').children = ['ads', 'new-ads', 'stopped-ads'].map(document.getElementById);
+  document.getElementById('gallery').children = ['ads', 'overview-watches'].map(document.getElementById);
   await runInNewContext(script, {
     document, URLSearchParams, clearTimeout,
     navigator: { clipboard: { writeText: async (value) => clipboard.push(value) } },
@@ -64,83 +88,155 @@ async function loadGrid(results, overview = {}) {
         }
         if (path.endsWith('/summary')) {
           return {
-            previousScanAt: null, totals: { new: 1, stopped: 1, running: 2 },
-            byWatch: [
-              { watchId: 'example-com', label: 'example.com', new: 1, stopped: 1, running: 1, total: 2 },
-              { watchId: 'project', label: 'Dự án A', kind: 'project', new: 0, stopped: 0, running: 1, total: 1 },
+            lastScan: { at: scanAt, status: 'ok' }, previousScanAt: null,
+            totals: { newGroups: 1, increased: 1, decreased: 1, stopped: 1, runningAds: 7 },
+            watches: [
+              { watchId: 'example-com', label: 'example.com', kind: 'competitor', runningNow: 5, runningBefore: 7,
+                groups: [
+                  { ...group, sampleAds: results.slice(0, 4) },
+                  { ...group, key: 'domain:fewer.example', name: 'fewer.example', status: 'decrease',
+                    runningNow: 1, runningBefore: 3, delta: -2, regions: [], sampleAds: [] },
+                  { ...group, key: 'domain:stopped.example', name: 'stopped.example', status: 'stopped',
+                    runningNow: 0, runningBefore: 3, delta: -3, regions: [], sampleAds: [] },
+                  { ...group, key: 'domain:steady.example', name: 'steady.example', status: 'steady',
+                    runningNow: 1, runningBefore: 1, delta: 0, regions: [], sampleAds: [] },
+                ] },
+              { watchId: 'project', label: 'Dự án A', kind: 'project', runningNow: 2, runningBefore: 1,
+                groups: [projectGroup] },
             ],
-            newAds: results, stoppedAds: [], ...overview,
+            ...overview,
           };
         }
-        return results;
+        const url = new URL(path, 'http://localhost');
+        assert.equal(url.pathname, '/api/profiles/dai/ads');
+        const params = url.searchParams;
+        requests.push(params);
+        if (params.has('group') && groupResponse) return groupResponse(params);
+        return results.filter((ad) => ad.watchId === params.get('watchId'));
       },
     }),
   });
   assert.equal(nodes.get('error').hidden, true);
-  return { cards: nodes.get('new-ads').children, detail: nodes.get('detail'), nodes, clipboard, posts };
+  const blocks = () => nodes.get('overview-watches').children;
+  const open = async () => {
+    const [row, panel] = blocks()[0].children[2].children;
+    await row.onclick();
+    return panel.children[0].children;
+  };
+  return { open, blocks, detail: nodes.get('detail'), nodes, clipboard, posts, requests };
 }
 
 test('grid prefers a local image, then a remote image, then the placeholder', async () => {
   const imageUrl = 'https://example.com/remote.png';
-  const { cards } = await loadGrid([
+  const { open } = await loadGrid([
     { ...creative, image: 'images/CR1.png', imageUrl },
     { ...creative, creativeId: 'CR2', imageUrl },
     { ...creative, creativeId: 'CR3' },
   ]);
+  const cards = await open();
   assert.equal(cards[0].children[0].src, '/images/CR1.png');
   assert.equal(cards[1].children[0].src, imageUrl);
   assert.equal(cards[2].children[0].children[1].textContent, 'Chưa có ảnh xem trước');
 });
 
 test('cards show advertiser, website, Vietnamese dates and applicable badges', async () => {
-  const { cards } = await loadGrid([
+  const { open } = await loadGrid([
     creative,
-    { ...creative, creativeId: 'CR2', domain: null, format: 'video', isNew: false, isRunning: true },
+    { ...creative, creativeId: 'CR2', domain: null, format: 'video', firstSeenByUs: '2026-11-10', lastShown: scanAt },
   ]);
-  const [name, domain, dates, badges] = cards[0].children[1].children;
+  const cards = await open();
+  const [name, domain, dates, badges, flags] = cards[0].children[1].children;
   assert.deepEqual([name.textContent, domain.textContent, dates.textContent], [
     'Example', 'example.com', 'Bắt đầu 08/11/2026 · Gần nhất 10/11/2026',
   ]);
   assert.deepEqual(badges.children.map((node) => node.textContent), ['Mới', 'Đã dừng']);
-  assert.deepEqual(cards[1].children[1].children[3].children.map((node) => node.textContent), ['Mới']);
+  assert.deepEqual(badges.children.map((node) => node.className), ['badge tone-new', 'badge tone-stopped']);
+  assert.deepEqual(flags.children.map((node) => node.textContent), ['🇺🇸', '🇻🇳']);
+  assert.equal(cards[1].children[1].children[3].children.length, 0);
 });
 
-test('home uses summary and opens competitor and project galleries from rows or the sidebar', async () => {
-  const { nodes, detail } = await loadGrid([
-    { ...creative, watchId: 'another-watch' },
-    { ...creative, creativeId: 'CR2', watchId: 'example-com', watchIds: undefined },
-    { ...creative, creativeId: 'CR3', watchId: 'example-com', platform: 'display' },
-  ], {
-    previousScanAt: '2026-11-21T19:05:00Z',
-    stoppedAds: [{ ...creative, creativeId: 'CR4', domain: 'stopped.example' }],
-  });
-  assert.equal(nodes.get('gallery-heading').textContent, 'Tổng quan thay đổi');
+test('overview shows grouped changes, stable watch colors, and filters with all five totals', async () => {
+  const { blocks, nodes, requests } = await loadGrid([
+    { ...creative, image: 'images/CR1.png' },
+    { ...creative, creativeId: 'CR2', imageUrl: 'https://example.com/remote.png' },
+  ], { previousScanAt: '2026-11-21T19:05:00Z' });
+  assert.equal(requests.length, 0);
   assert.equal(nodes.get('gallery-summary').textContent, 'So với lượt quét trước lúc 02:05 22/11');
-  assert.equal(nodes.get('total-running').textContent, '2');
-  assert.equal(nodes.get('new-ads').children.length, 2);
-  const stopped = nodes.get('stopped-ads').children[0];
-  stopped.onclick();
-  assert.equal(detail.children[1].children[3].textContent, 'stopped.example');
-  const watchChoice = (kind) => nodes.get('watches-' + kind).children[0].children[0];
-  assert.equal(watchChoice('competitor').children[1].textContent, '2 mẫu');
-  assert.equal(watchChoice('project').children[0].textContent, 'Dự án A');
-  const project = nodes.get('changes').children[1];
-  assert.equal(project.children[1].textContent, 'Dự án');
-  project.onclick();
-  assert.equal(nodes.get('gallery-heading').textContent, 'Dự án A');
-  assert.equal(watchChoice('project').attributes.get('aria-pressed'), 'true');
-  watchChoice('competitor').onclick();
-  assert.equal(watchChoice('competitor').attributes.get('aria-pressed'), 'true');
-  assert.equal(nodes.get('gallery-summary').textContent, 'example.com · 2 mẫu quảng cáo');
-  assert.equal(nodes.get('ads').children.length, 2);
+  const [competitor, project] = blocks();
+  const [heading, category, firstGroup] = competitor.children;
+  assert.equal(heading.children[1].textContent, 'Đang chạy 5 mẫu (−2 so với lượt trước)');
+  assert.equal(category.textContent, 'Dự án');
+  assert.equal(project.children[1].textContent, 'Nhà quảng cáo');
+  assert.equal(project.children[2].children[0].children[0].children[1].textContent, 'Example');
+  const sidebar = nodes.get('watches-competitor').children[0].children[0];
+  const dotStyle = (name) => name.children[0].attributes.get('style');
+  assert.match(dotStyle(sidebar.children[0]), /^--watch-color: #[a-f0-9]{6}$/);
+  assert.equal(dotStyle(sidebar.children[0]), dotStyle(heading.children[0]));
+  const [name, counts, flags, thumbs] = firstGroup.children[0].children;
+  assert.deepEqual(name.children.map((node) => node.textContent), ['Dự án mới', 'example.com']);
+  assert.deepEqual(counts.children.map((node) => node.textContent), ['0 → 3', '+3', '3 mẫu mới']);
+  assert.deepEqual(flags.children.map((node) => node.textContent), ['🇺🇸 3', '🇻🇳 1', '🇯🇵 1', '🇩🇪 1', '🇬🇧 1', '🇫🇷 1', '+1']);
+  assert.deepEqual(thumbs.children.map((node) => node.src), ['/images/CR1.png', 'https://example.com/remote.png']);
+  const totals = nodes.get('totals').children;
+  assert.deepEqual(totals.map((card) => card.children.map((node) => node.textContent)), [
+    ['Dự án mới', '1'], ['Chạy thêm ads', '1'], ['Giảm ads', '1'], ['Đã dừng', '1'], ['Mẫu đang chạy', '7'],
+  ]);
+  const visibleStatuses = () => blocks().flatMap((block) => block.children.slice(2)
+    .map((row) => row.children[0].children[0].children[0].textContent));
+  for (const card of totals.slice(0, 4)) {
+    card.onclick();
+    assert.equal(card.attributes.get('aria-pressed'), 'true');
+    assert.deepEqual(visibleStatuses(), [card.children[0].textContent]);
+  }
+  totals[4].onclick();
+  assert.deepEqual(visibleStatuses(), ['Dự án mới', 'Giảm ads', 'Ổn định', 'Chạy thêm ads']);
+  totals[4].onclick();
+  assert.deepEqual(visibleStatuses(), ['Dự án mới', 'Giảm ads', 'Đã dừng', 'Ổn định', 'Chạy thêm ads']);
+});
+
+test('group opens inline and loads only the selected watch and group', async () => {
+  const { blocks, nodes, requests } = await loadGrid([creative,
+    { ...creative, creativeId: 'CR2', platform: 'display' },
+  ]);
+  assert.equal(nodes.get('gallery-summary').textContent, 'Lượt quét đầu tiên — chưa có so sánh');
+  const [row, panel] = blocks()[0].children[2].children;
+  await row.onclick();
+  assert.equal(row.attributes.get('aria-expanded'), 'true');
+  assert.equal(panel.hidden, false);
+  assert.equal(panel.children[0].children.length, 1);
+  assert.equal(requests[0].get('watchId'), 'example-com');
+  assert.equal(requests[0].get('group'), groupKey);
+  row.onclick();
+  assert.equal(row.attributes.get('aria-expanded'), 'false');
+  assert.equal(panel.hidden, true);
+  const [projectRow, projectPanel] = blocks()[1].children[2].children;
+  await projectRow.onclick();
+  assert.equal(requests[1].get('watchId'), 'project');
+  assert.equal(requests[1].get('group'), projectGroup.key);
+  assert.equal(projectPanel.children[0].textContent, 'Chưa có mẫu phù hợp.');
+  await nodes.get('watches-competitor').children[0].children[0].onclick();
+  assert.equal(nodes.get('overview').hidden, true);
+  assert.equal(nodes.get('ads').children.length, 1);
   nodes.get('home').onclick();
   assert.equal(nodes.get('overview').hidden, false);
   assert.equal(nodes.get('watch-view').hidden, true);
 });
 
+test('an ads response arriving after the group is closed cannot reopen it', async () => {
+  let finish;
+  const delayed = new Promise((resolve) => { finish = resolve; });
+  const { blocks, nodes } = await loadGrid([creative], {}, () => delayed);
+  const [row, panel] = blocks()[0].children[2].children;
+  const loading = row.onclick();
+  nodes.get('totals').children[1].onclick();
+  finish([creative]);
+  await loading;
+  assert.equal(panel.hidden, true);
+  assert.equal(panel.children.length, 0);
+});
+
 test('the add buttons choose a kind and the form sends the active chip', async () => {
   const { nodes, posts } = await loadGrid([]);
-  assert.equal(nodes.get('gallery-summary').textContent, 'Chưa có lượt quét trước');
   const form = nodes.get('watch-form');
   const submit = async (input) => {
     form.elements.input.value = input;
@@ -162,19 +258,25 @@ test('the add buttons choose a kind and the form sends the active chip', async (
 
 test('clicking a card opens and updates the right-hand detail panel', async () => {
   const imageUrl = 'https://example.com/detail.png';
-  const { cards, detail, clipboard } = await loadGrid([
+  const { open, detail, clipboard } = await loadGrid([
     { ...creative, imageUrl },
     { ...creative, creativeId: 'CR2', domain: 'other.com' },
   ]);
   assert.match(detail.textContent, /Chọn một mẫu/);
+  const cards = await open();
   cards[0].onclick();
-  const [image, fields, actions] = detail.children;
+  const [image, fields, regionHeading, countries, actions] = detail.children;
   const [link, copy] = actions.children;
   assert.equal(image.src, imageUrl);
   assert.deepEqual(fields.children.map((node) => node.textContent), [
     'Nhà quảng cáo', 'Example', 'Website', 'example.com', 'Định dạng', 'Hình ảnh',
     'Bắt đầu chạy', '08/11/2026', 'Lần chạy gần nhất', '10/11/2026',
-    'Số ngày chạy', '3', 'Trạng thái', 'Đã dừng',
+    'Số ngày chạy', '3', 'Trạng thái', '',
+  ]);
+  assert.equal(fields.children.at(-1).children[0].textContent, 'Đã dừng');
+  assert.equal(regionHeading.textContent, 'Lần chạy gần nhất theo quốc gia');
+  assert.deepEqual(countries.children.map((node) => node.textContent), [
+    '🇺🇸 Hoa Kỳ · 10/11/2026', '🇻🇳 Việt Nam · 08/11/2026',
   ]);
   assert.equal(copy.textContent, 'Sao chép link');
   assert.equal(link.href, creative.detailsUrl);

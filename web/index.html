@@ -59,28 +59,8 @@
         <p id="gallery-summary"></p>
         <p class="search-only">Chỉ quảng cáo Google Tìm kiếm</p>
         <div id="overview">
-          <dl class="totals">
-            <div><dt>Mẫu mới</dt><dd id="total-new">—</dd></div>
-            <div><dt>Vừa dừng</dt><dd id="total-stopped">—</dd></div>
-            <div><dt>Đang chạy</dt><dd id="total-running">—</dd></div>
-          </dl>
-          <table class="changes">
-            <caption>Thay đổi theo từng mục theo dõi</caption>
-            <thead>
-              <tr><th scope="col">Tên</th><th scope="col">Loại</th><th scope="col">Mới</th><th scope="col">Vừa dừng</th><th scope="col">Đang chạy</th><th scope="col">Tổng</th></tr>
-            </thead>
-            <tbody id="changes"></tbody>
-          </table>
-          <section class="change-gallery" aria-labelledby="new-heading">
-            <h3 id="new-heading">Mẫu mới</h3>
-            <p id="new-empty" hidden>Chưa có mẫu mới.</p>
-            <div id="new-ads" class="ads"></div>
-          </section>
-          <section class="change-gallery" aria-labelledby="stopped-heading">
-            <h3 id="stopped-heading">Mẫu vừa dừng</h3>
-            <p id="stopped-empty" hidden>Chưa có mẫu vừa dừng.</p>
-            <div id="stopped-ads" class="ads"></div>
-          </section>
+          <div id="totals" class="totals" role="group" aria-label="Lọc theo thay đổi"></div>
+          <div id="overview-watches"></div>
         </div>
         <div id="watch-view" hidden>
           <div class="filters">
