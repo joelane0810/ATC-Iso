@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BlockedError } from '../src/atc.js';
@@ -18,7 +19,9 @@ export async function scanOnce({
     let client;
     let entry;
     try {
-      client = await open({ profileDir: join(root, 'chrome-profile') });
+      let showWindow = false;
+      try { showWindow = JSON.parse(readFileSync(join(root, 'config.json'), 'utf8'))?.showBrowser === true; } catch {}
+      client = await open({ profileDir: join(root, 'chrome-profile'), headless: !showWindow });
     } catch (error) {
       log(error);
       entry = {

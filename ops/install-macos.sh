@@ -109,3 +109,18 @@ install_agent scan '<key>StartCalendarInterval</key>
   </dict>'
 
 echo "Đã cài ATC Iso. Mở http://127.0.0.1:4317 để sử dụng."
+
+# Tường lửa macOS: cho phép máy cùng wifi vào web
+fw=/usr/libexec/ApplicationFirewall/socketfilterfw
+if [[ -x "$fw" ]]; then
+  node_real="$("$node_path" -e 'console.log(require("fs").realpathSync(process.execPath))')"
+  echo "Tường lửa: $("$fw" --getglobalstate)"
+  if "$fw" --getglobalstate | grep -qi enabled; then
+    if "$fw" --listapps 2>/dev/null | grep -qF "$node_real" && ! "$fw" --getappblocked "$node_real" 2>/dev/null | grep -qi "blocked" ; then
+      echo "Node đã được phép nhận kết nối."
+    else
+      echo "Cần mật khẩu máy Mac để cho máy cùng wifi vào web ATC Iso:"
+      sudo "$fw" --add "$node_real" && sudo "$fw" --unblockapp "$node_real" || echo "Chưa mở được tường lửa." >&2
+    fi
+  fi
+fi
