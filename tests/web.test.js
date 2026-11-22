@@ -149,7 +149,10 @@ async function loadGrid(results, groupResponse, storage = new Map(), { rangeResp
             refDate, minDate: '2026-10-01', prevFrom: '2026-11-20', prevTo: '2026-11-20', dataNote,
             from: searchParams.get('from') || refDate, to: searchParams.get('to') || refDate,
             lastScan: { at: scanAt, status: 'ok' },
-            totals: { newProjects: 1, newAdvertisers: 0, newAds: 4, increased: 1, decreased: 1, stopped: 1, runningAds: 7 },
+            totals: { newProjects: 1, newAdvertisers: 0, newAds: 4, increased: 3, decreased: 8, stopped: 13, runningAds: 7,
+              runningAdsPrev: 42, increasedAds: 12, decreasedAds: -22, stoppedAds: -13,
+              byType: { increased: { advertiser: 2, domain: 1 }, decreased: { advertiser: 8, domain: 0 },
+                stopped: { advertiser: 13, domain: 0 } } },
             watches: [
               { watchId: 'example-com', label: 'example.com', kind: 'competitor', groupType: 'domain', runningNow: 5, runningPrev: 7, delta: -2, newAds: 3, spark,
                 groups: [
@@ -478,7 +481,7 @@ test('clicking a card opens and updates the right-hand detail panel', async () =
   assert.equal(detail.children[1].children[3].textContent, 'other.com');
 });
 
-test('overview shows grouped changes, stable watch colors and all seven totals', async () => {
+test('overview shows grouped changes, stable watch colors and the two totals blocks', async () => {
   const { rows, expand, nodes, requests, calls } = await loadGrid([
     { ...creative, image: 'images/CR1.png' },
     { ...creative, creativeId: 'CR2', imageUrl: 'https://example.com/remote.png' },
@@ -507,23 +510,30 @@ test('overview shows grouped changes, stable watch colors and all seven totals',
   assert.deepEqual(flags.children.map((node) => node.textContent), ['🇺🇸 3', '🇻🇳 1', '🇯🇵 1', '🇩🇪 1', '🇬🇧 1', '🇫🇷 1', '+1']);
   assert.deepEqual(thumbs.children.map((node) => node.src), ['/images/CR1.png', 'https://example.com/remote.png']);
   assert.equal(expand(1)[0].children[0].children[1].textContent, 'Theo dõi');
-  const totals = nodes.get('totals').children;
-  assert.deepEqual(totals.map((card) => card.children.map((node) => node.textContent)), [
-    ['Dự án mới', '1'], ['Nhà quảng cáo mới', '0'], ['Ads mới', '4'], ['Tăng ads', '1', 'mục · 0 ads'],
-    ['Giảm ads', '1', 'mục · 0 ads'], ['Dừng hẳn', '1', 'mục · 0 ads'], ['Ads đang chạy', '7'],
-  ]);
-  assert.equal(totals[6].title, 'Số mẫu quảng cáo có hiển thị trong phạm vi ngày đã chọn');
+  const blocks = nodes.get('totals').children;
+  assert.deepEqual(blocks.map((block) => block.children[0].textContent), ['Quảng cáo', 'Đối thủ thay đổi']);
+  const [runningTotal, newAds, newGroups, increased, decreased, stopped] = blocks.flatMap((block) => block.children[1].children);
+  const values = (button) => button.children[1].children.map((node) => node.textContent);
+  assert.deepEqual(values(runningTotal), ['7', '−35 so với 20/11']);
+  assert.equal(runningTotal.children[1].children[1].className, 'delta-down');
+  assert.deepEqual(values(newAds), ['4 ads']);
+  assert.deepEqual(values(newGroups), ['1 dự án mới · 0 nhà quảng cáo mới']);
+  assert.deepEqual(values(increased), ['2 nhà quảng cáo · 1 dự án', '+12 ads']);
+  assert.deepEqual(values(decreased), ['8 nhà quảng cáo', '−22 ads']);
+  assert.deepEqual(values(stopped), ['13 nhà quảng cáo', '−13 ads']);
+  assert.equal(stopped.children[2].textContent, 'kỳ trước có chạy, kỳ này không còn ads nào');
   const visibleStatuses = () => rows().filter((_, index) => index % 2).flatMap((row) =>
     row.children[0].children.map((group) => group.children[0].children[0].children[0].children[0].textContent));
-  for (const card of [totals[0], ...totals.slice(3, 6)]) {
-    card.onclick();
-    assert.equal(card.attributes.get('aria-pressed'), 'true');
-    assert.deepEqual(visibleStatuses(), [card.children[0].textContent]);
+  for (const [button, status] of [[newGroups, 'Dự án mới'], [increased, 'Chạy thêm ads'],
+    [decreased, 'Chạy bớt ads'], [stopped, 'Tắt hết ads']]) {
+    assert.ok(button.title);
+    button.onclick();
+    assert.equal(button.attributes.get('aria-pressed'), 'true');
+    assert.deepEqual(visibleStatuses(), [status]);
   }
-  totals[6].onclick();
-  assert.deepEqual(visibleStatuses(), ['Dự án mới', 'Giảm ads', 'Ổn định', 'Tăng ads']);
-  totals[6].onclick();
-  assert.deepEqual(visibleStatuses(), ['Dự án mới', 'Giảm ads', 'Dừng hẳn', 'Ổn định', 'Tăng ads']);
+  runningTotal.onclick();
+  assert.equal(stopped.attributes.get('aria-pressed'), 'false');
+  assert.deepEqual(visibleStatuses(), ['Dự án mới', 'Chạy bớt ads', 'Tắt hết ads', 'Ổn định', 'Chạy thêm ads']);
 });
 
 test('group opens inline and loads only the selected watch and group', async () => {
@@ -571,7 +581,7 @@ test('an ads response arriving after the group is closed cannot reopen it', asyn
   const { expand, nodes } = await loadGrid([creative], () => delayed);
   const [controls, panel] = expand()[0].children;
   const loading = controls.children[0].onclick();
-  nodes.get('totals').children[3].onclick();
+  nodes.get('totals').children[1].children[1].children[1].onclick();
   finish([creative]);
   await loading;
   assert.equal(panel.hidden, true);

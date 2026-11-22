@@ -146,7 +146,12 @@ export function createTimeReport({ all, scanHistory }) {
       const prevFrom = shiftDate(prevTo, -daysBetween(start, end));
       const totals = { newProjects: 0, newAdvertisers: 0, newAds: 0,
         increased: 0, decreased: 0, stopped: 0, runningAds: 0,
-        increasedAds: 0, decreasedAds: 0, stoppedAds: 0 };
+        increasedAds: 0, decreasedAds: 0, stoppedAds: 0, runningAdsPrev: 0,
+        byType: {
+          increased: { advertiser: 0, domain: 0 },
+          decreased: { advertiser: 0, domain: 0 },
+          stopped: { advertiser: 0, domain: 0 },
+        } };
       const watches = all(`SELECT w.id AS watchId, p.label, p.kind, w.last_scan_at AS lastScanAt
         FROM profile_watches p JOIN watches w ON w.id = p.watch_id
         WHERE p.profile_id = ? AND p.deleted_at IS NULL ORDER BY p.rowid`, pid).map(row => ({
@@ -198,12 +203,17 @@ export function createTimeReport({ all, scanHistory }) {
           watch.newGroups++;
           totals[watch.kind === 'project' ? 'newAdvertisers' : 'newProjects']++;
         }
-        if (totalKeys[status]) totals[totalKeys[status]]++;
+        const totalKey = totalKeys[status];
+        if (totalKey) {
+          totals[totalKey]++;
+          totals.byType[totalKey][groupType]++;
+        }
         if (status === 'increase') totals.increasedAds += delta;
         if (status === 'decrease') totals.decreasedAds += delta;
         if (status === 'stopped') totals.stoppedAds -= runningPrev;
         totals.newAds += newAds;
         totals.runningAds += runningNow;
+        totals.runningAdsPrev += runningPrev;
       }
       for (const { watchId, key, regionId, running } of all(`WITH members AS (${members})
         SELECT watchId, key, region_id AS regionId, count(*) AS running

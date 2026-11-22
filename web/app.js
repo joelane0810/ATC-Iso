@@ -35,13 +35,7 @@ let selectedAd;
 let ads = [];
 let rangeAds = [];
 const kindLabels = { competitor: 'Nhà quảng cáo', project: 'Dự án' };
-const groupLabels = { increase: 'Tăng ads', decrease: 'Giảm ads', stopped: 'Dừng hẳn', steady: 'Ổn định' };
-const overviewTotals = [
-  ['newProjects', 'Dự án mới', 'competitor'], ['newAdvertisers', 'Nhà quảng cáo mới', 'project'],
-  ['newAds', 'Ads mới', 'new'], ['increased', 'Tăng ads', 'increase'],
-  ['decreased', 'Giảm ads', 'decrease'], ['stopped', 'Dừng hẳn', 'stopped'],
-  ['runningAds', 'Ads đang chạy', 'running'],
-];
+const groupLabels = { increase: 'Chạy thêm ads', decrease: 'Chạy bớt ads', stopped: 'Tắt hết ads', steady: 'Ổn định' };
 const watchColors = [
   '#00796b', '#3949ab', '#ad1457', '#8d6e00', '#6a1b9a',
   '#0069a6', '#bf360c', '#33691e', '#455a64', '#c21824',
@@ -936,6 +930,7 @@ function renderOverview() {
   byId('comparison').textContent = !allTime && prevFrom ? 'So với ' + displayDate(prevFrom, shortDate)
     + ' – ' + displayDate(prevTo, shortDate) : '';
   byId('comparison-note').hidden = !allTime;
+  byId('totals').className = allTime ? 'totals' : 'totals overview-totals';
   if (allTime) {
     byId('totals').replaceChildren(...[
       ['Tổng ads trong dữ liệu', summary?.watches.reduce((sum, watch) => sum + totalWatchAds(watch), 0) ?? 0, 'running'],
@@ -951,52 +946,103 @@ function renderOverview() {
     renderOverviewWatches();
     return;
   }
-  byId('totals').replaceChildren(...overviewTotals.map(([key, label, tone]) => {
+  const comparisonDates = prevFrom
+    ? displayDate(prevFrom, shortDate) + (prevTo === prevFrom ? '' : ' – ' + displayDate(prevTo, shortDate))
+    : '';
+  renderOverviewTotals(summary?.totals, comparisonDates);
+  renderOverviewWatches();
+}
+
+function signedCount(count) {
+  return (count > 0 ? '+' : count < 0 ? '−' : '') + formatCount.format(Math.abs(count));
+}
+
+function renderOverviewTotals(totals, comparisonDates) {
+  const buttons = new Map();
+  const row = (key, label, tone, symbol, title, value, note, noteTone) => {
     const button = element('button');
     button.type = 'button';
-    button.className = 'total tone-' + tone;
+    button.className = 'overview-total tone-' + tone;
+    button.title = title;
     button.setAttribute('data-label', label);
-    button.append(element('span', label),
-      element('strong', summary?.totals[key] != null ? formatCount.format(summary.totals[key]) : '—'));
-    // Tăng/Giảm/Dừng đếm số dự án (hoặc nhà quảng cáo) — ghi rõ đơn vị và số ads thay đổi đi kèm.
-    const adsKey = { increased: 'increasedAds', decreased: 'decreasedAds', stopped: 'stoppedAds' }[key];
-    if (adsKey && summary?.totals[key] != null) {
-      const ads = summary.totals[adsKey] ?? 0;
-      const note = element('small', 'mục · ' + (ads > 0 ? '+' : ads < 0 ? '−' : '') + formatCount.format(Math.abs(ads)) + ' ads');
-      note.className = 'total-note';
-      button.append(note);
-    }
-    const hints = {
-      increased: 'Số dự án/nhà quảng cáo đang chạy NHIỀU ads hơn kỳ trước',
-      decreased: 'Số dự án/nhà quảng cáo vẫn chạy nhưng ÍT ads hơn kỳ trước',
-      stopped: 'Số dự án/nhà quảng cáo kỳ trước có chạy, kỳ này không còn ads nào',
-      runningAds: 'Số mẫu quảng cáo có hiển thị trong phạm vi ngày đã chọn',
-    };
-    if (hints[key]) button.title = hints[key];
     button.setAttribute('aria-pressed', String(overviewFilter === key));
+    const icon = element('span', symbol);
+    icon.className = 'overview-total-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    const heading = element('span');
+    heading.className = 'overview-total-label';
+    heading.append(icon, element('span', label));
+    const details = element('span');
+    details.className = 'overview-total-value';
+    details.append(element('strong', value));
+    if (note) {
+      const change = element('small', note);
+      if (noteTone) change.className = noteTone;
+      details.append(change);
+    }
+    button.append(heading, details);
+    buttons.set(key, button);
     button.onclick = () => {
-      overviewFilter = overviewFilter === key ? '' : key;
+      overviewFilter = key === 'runningAds' || overviewFilter === key ? '' : key;
       closeGroup();
       showDetail();
-      for (const [index, card] of byId('totals').children.entries()) {
-        card.setAttribute('aria-pressed', String(overviewTotals[index][0] === overviewFilter));
+      for (const [filter, control] of buttons) {
+        control.setAttribute('aria-pressed', String(filter === overviewFilter));
       }
       renderOverviewWatches();
     };
     return button;
-  }));
-  renderOverviewWatches();
+  };
+  const block = (title, ...rows) => {
+    const section = element('section');
+    section.className = 'overview-total-block';
+    const list = element('div');
+    list.className = 'overview-total-rows';
+    list.append(...rows);
+    section.append(element('h3', title), list);
+    return section;
+  };
+  const count = (key) => totals?.[key] == null ? '—' : formatCount.format(totals[key]);
+  const delta = totals?.runningAds - totals?.runningAdsPrev;
+  const ads = block('Quảng cáo',
+    row('runningAds', 'Đang chạy', 'running', '●', 'Số quảng cáo có hiển thị trong khoảng ngày đã chọn.',
+      count('runningAds'), comparisonDates && Number.isFinite(delta) ? signedCount(delta) + ' so với ' + comparisonDates : '',
+      delta > 0 ? 'delta-up' : delta < 0 ? 'delta-down' : ''),
+    row('newAds', 'Mới bắt đầu chạy', 'new', '★', 'Số quảng cáo bắt đầu chạy trong khoảng ngày đã chọn.',
+      totals?.newAds == null ? '—' : count('newAds') + ' ads'));
+  const competitors = block('Đối thủ thay đổi',
+    row('newGroups', 'Mới xuất hiện', 'new', '★', 'Dự án và nhà quảng cáo lần đầu xuất hiện trong khoảng ngày đã chọn.',
+      totals ? count('newProjects') + ' dự án mới · ' + count('newAdvertisers') + ' nhà quảng cáo mới' : '—'),
+    ...[
+      ['increased', 'increase', '↑', 'Kỳ này chạy nhiều quảng cáo hơn kỳ trước.'],
+      ['decreased', 'decrease', '↓', 'Kỳ này vẫn chạy quảng cáo nhưng ít hơn kỳ trước.'],
+      ['stopped', 'stopped', '■', 'Kỳ trước có chạy, kỳ này không còn ads nào.'],
+    ].map(([key, status, symbol, hint]) => {
+      const { advertiser, domain } = totals?.byType?.[key] ?? {};
+      const counts = [
+        advertiser && formatCount.format(advertiser) + ' nhà quảng cáo',
+        domain && formatCount.format(domain) + ' dự án',
+      ].filter(Boolean).join(' · ');
+      const change = totals?.[key + 'Ads'];
+      const button = row(key, groupLabels[status], status, symbol, hint,
+        totals ? counts || 'Không có' : '—', change == null ? '' : signedCount(change) + ' ads');
+      if (status === 'stopped') {
+        const explanation = element('small', 'kỳ trước có chạy, kỳ này không còn ads nào');
+        explanation.className = 'overview-total-explanation';
+        button.append(explanation);
+      }
+      return button;
+    }));
+  byId('totals').replaceChildren(ads, competitors);
 }
 
-function matchesTotal(watch, group) {
+function matchesTotal(group) {
   switch (overviewFilter) {
-    case 'newProjects': return watch.kind === 'competitor' && group.status === 'new';
-    case 'newAdvertisers': return watch.kind === 'project' && group.status === 'new';
+    case 'newGroups': return group.status === 'new';
     case 'newAds': return group.newAds > 0;
     case 'increased': return group.status === 'increase';
     case 'decreased': return group.status === 'decrease';
     case 'stopped': return group.status === 'stopped';
-    case 'runningAds': return group.runningNow > 0;
     default: return true;
   }
 }
@@ -1027,7 +1073,7 @@ function renderOverviewWatches() {
   for (const kind of Object.keys(kindLabels)) {
     for (const folder of watchBuckets(kind)) {
       const rows = folder.items.map(({ id }) => entries.get(id)).filter(Boolean).map((watch) => ({
-        watch, groups: watch.groups.filter((group) => matchesTotal(watch, group)),
+        watch, groups: watch.groups.filter(matchesTotal),
       })).filter(({ groups }) => !overviewFilter || groups.length);
       if (!rows.length) continue;
       const key = JSON.stringify([kind, folder.id]);

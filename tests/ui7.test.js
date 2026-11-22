@@ -113,7 +113,9 @@ async function boot({ reply, browser = {}, dates = { refDate, minDate }, storage
         case 'watchlist': return success(watches.map(({ watchId: id, label, kind }) => ({ id, label, kind })));
         case 'summary': return success({
           ...dates, prevDate: '2026-11-21', dataNote, lastScan: null,
-          totals: { newProjects: 1, newAdvertisers: 1, newAds: 2, increased: 1, decreased: 1, stopped: 1, runningAds: 4 },
+          totals: { newProjects: 1, newAdvertisers: 1, newAds: 2, increased: 1, decreased: 1, stopped: 1, runningAds: 4,
+            runningAdsPrev: url.searchParams.get('from') === '2026-10-24' ? 3 : 4,
+            stoppedAds: 0, byType: { stopped: { advertiser: 0, domain: 0 } } },
           watches,
         });
         case 'series': return success({ ...dates, points });
@@ -154,7 +156,7 @@ const latestParams = (requests, endpoint) =>
   requests.findLast(({ url }) => url.pathname.endsWith('/' + endpoint)).url.searchParams;
 const groupToggle = (wrapper) => wrapper.children[0].children[0];
 
-test('overview selects the period, displays the seven totals and expands only five groups initially', async () => {
+test('overview selects the period, displays grouped totals and expands only five groups initially', async () => {
   const { get, rows, requests } = await boot();
   assert.equal(get('gallery-summary').textContent, dataNote);
   assert.equal(get('count-competitor').textContent, '1');
@@ -164,8 +166,14 @@ test('overview selects the period, displays the seven totals and expands only fi
   const params = latestParams(requests, 'summary');
   assert.equal(params.get('from'), '2026-10-24');
   assert.equal(params.get('to'), refDate);
-  assert.deepEqual(get('totals').children.map((card) => card.children[0].textContent),
-    ['Dự án mới', 'Nhà quảng cáo mới', 'Ads mới', 'Tăng ads', 'Giảm ads', 'Dừng hẳn', 'Ads đang chạy']);
+  const [adsBlock, competitorsBlock] = get('totals').children;
+  const [runningTotal, newAdsTotal] = adsBlock.children[1].children;
+  const [newGroupsTotal, , , stoppedTotal] = competitorsBlock.children[1].children;
+  assert.deepEqual(stoppedTotal.children[1].children.map((node) => node.textContent), ['Không có', '0 ads']);
+  const [runningCount, runningChange] = runningTotal.children[1].children;
+  assert.equal(runningCount.textContent, '4');
+  assert.equal(runningChange.textContent, '+1 so với 21/11');
+  assert.equal(runningChange.className, 'delta-up');
   assert.equal(rows()[1].hidden, true);
   const [running, delta] = rows()[0].children[2].children[0].children;
   assert.equal(running.textContent, '2');
@@ -179,11 +187,16 @@ test('overview selects the period, displays the seven totals and expands only fi
   panel.lastElementChild.onclick();
   assert.equal(panel.children.length, 8);
   assert.equal(panel.lastElementChild.textContent, 'Thu gọn');
-  get('totals').children[1].onclick();
-  assert.equal(rows().length, 2);
-  toggle(rows()[0]).onclick();
-  assert.equal(groupToggle(rows()[1].children[0].children[0]).children[0].children[1].textContent, 'Example');
-  get('totals').children[2].onclick();
+  newGroupsTotal.onclick();
+  assert.equal(rows().length, 4);
+  const names = [0, 2].map((index) => {
+    toggle(rows()[index]).onclick();
+    return groupToggle(rows()[index + 1].children[0].children[0]).children[0].children[1].textContent;
+  });
+  assert.deepEqual(names, ['Dự án 0', 'Example']);
+  newAdsTotal.onclick();
+  assert.equal(newGroupsTotal.attributes.get('aria-pressed'), 'false');
+  assert.equal(newAdsTotal.attributes.get('aria-pressed'), 'true');
   assert.equal(rows().length, 4);
 });
 
@@ -400,7 +413,11 @@ test('Vietnamese date ranges filter grids and groups by overlap and survive relo
 
 test('all time displays historical totals and latest-day counts without comparisons', async () => {
   const { get, rows, requests } = await boot();
-  get('totals').children[1].onclick();
+  const [runningTotal, newAdsTotal] = get('totals').children[0].children[1].children;
+  const change = runningTotal.children[1].children[1];
+  assert.equal(change.textContent, '0 so với 21/11');
+  assert.ok(!['delta-up', 'delta-down'].includes(change.className));
+  newAdsTotal.onclick();
   await chooseAllTime(get);
   assert.equal(get('range-value').textContent, 'Mọi lúc');
   assert.equal(get('comparison-note').hidden, false);

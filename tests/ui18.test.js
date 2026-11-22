@@ -83,9 +83,9 @@ test('historical cards show their total and permit long unspaced names to wrap',
 });
 
 test('phone and tablet rules define compact card grids and a scrolling date strip', () => {
-  const phone = css.slice(css.indexOf('@media (width < 520px)'), css.indexOf('@media (width >= 1280px)'));
-  assert.match(phone, /\.totals\s*\{\s*grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\)/);
-  assert.match(css, /\.totals\s*\{\s*grid-template-columns:\s*repeat\(auto-fit, minmax\(110px, 1fr\)\)/);
+  assert.match(css, /\.totals\.overview-totals\s*\{\s*grid-template-columns:\s*minmax\(0, 1fr\)/);
+  assert.match(css, /\.overview-total\s*\{[^}]*min-height:\s*48px/);
+  assert.match(css, /@media \(width >= 1280px\)\s*\{\s*\.totals\.overview-totals\s*\{\s*grid-template-columns:\s*minmax\(0, 3fr\) minmax\(0, 7fr\)/);
   assert.match(css, /\.overview-table thead\s*\{\s*display:\s*none;/);
   assert.match(css, /\.overview-table \.overview-card\[hidden\]\s*\{\s*display:\s*none;/);
   assert.match(css, /\.range-options\s*\{[^}]*overflow-x:\s*auto;/);
