@@ -271,7 +271,7 @@ test('overview shows grouped changes, stable watch colors and all seven totals',
   assert.equal(requests.length, 0);
   assert.equal(nodes.get('gallery-summary').textContent, dataNote);
   assert.equal(calls.find(({ url }) => url.pathname.endsWith('/summary')).url.searchParams.get('from'), null);
-  assert.equal(nodes.get('range-value').textContent, '21 thg 11, 2026');
+  assert.equal(nodes.get('range-value').textContent, 'Hôm nay');
   assert.equal(nodes.get('comparison').textContent, 'So với 20/11 – 20/11');
   const [competitor, , project] = rows();
   assert.equal(competitor.children[2].textContent, '5 (−2)');
@@ -438,7 +438,8 @@ test('reset to all time persists and the calendar still starts at the profile mi
   nodes.get('range-dialog').onclick({ target: nodes.get('range-dialog'), clientX: -1, clientY: 10 });
   assert.equal(nodes.get('range-dialog').open, false);
   nodes.get('range-open').onclick();
-  await nodes.get('range-reset').onclick();
+  nodes.get('range-presets').children.at(-1).onclick();
+  await nodes.get('range-form').onsubmit({ preventDefault() {} });
   const reloaded = await loadGrid([], undefined, storage);
   assert.equal(reloaded.nodes.get('range-value').textContent, 'Mọi lúc');
   const request = reloaded.calls.findLast(({ url }) => url.pathname.endsWith('/summary'));

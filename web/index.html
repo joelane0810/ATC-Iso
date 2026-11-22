@@ -66,33 +66,36 @@
             aria-controls="range-dialog" disabled>
             <span>Phạm vi ngày</span><strong id="range-value">Mọi lúc</strong><span aria-hidden="true">▾</span>
           </button>
+          <div id="range-chips" role="group" aria-label="Chọn nhanh phạm vi ngày"></div>
           <span id="comparison"></span>
         </div>
         <dialog id="range-dialog" aria-label="Phạm vi ngày">
           <form id="range-form">
-            <div class="range-inputs">
-              <label>Ngày bắt đầu*<input id="range-from" placeholder="31 thg 5, 2018" autocomplete="off" required></label>
-              <label>Ngày kết thúc*<input id="range-to" placeholder="31 thg 5, 2018" autocomplete="off" required></label>
+            <div id="range-presets" role="group" aria-label="Chọn nhanh phạm vi ngày"></div>
+            <div class="range-calendar">
+              <div class="range-inputs">
+                <label>Ngày bắt đầu*<input id="range-from" placeholder="31 thg 5, 2018" autocomplete="off" required></label>
+                <label>Ngày kết thúc*<input id="range-to" placeholder="31 thg 5, 2018" autocomplete="off" required></label>
+              </div>
+              <p id="range-error" role="status" hidden></p>
+              <div class="calendar-nav">
+                <label class="calendar-month-choice">
+                  <span id="calendar-title" aria-hidden="true"></span><span aria-hidden="true">▾</span>
+                  <select id="calendar-jump" aria-label="Chuyển đến tháng"></select>
+                </label>
+                <button id="calendar-prev" type="button" aria-label="Tháng trước">‹</button>
+                <button id="calendar-next" type="button" aria-label="Tháng sau">›</button>
+              </div>
+              <div id="calendar-weekdays" class="calendar-grid" aria-hidden="true">
+                <span>T2</span><span>T3</span><span>T4</span><span>T5</span><span>T6</span><span>T7</span><span>CN</span>
+              </div>
+              <div id="calendar-months" tabindex="0" aria-label="Lịch theo tháng"></div>
+              <footer class="range-footer">
+                <span>Dữ liệu theo giờ Việt Nam</span>
+                <button id="range-cancel" type="button">Hủy</button>
+                <button class="action" type="submit">OK</button>
+              </footer>
             </div>
-            <p id="range-error" role="status" hidden></p>
-            <div class="calendar-nav">
-              <label class="calendar-month-choice">
-                <span id="calendar-title" aria-hidden="true"></span><span aria-hidden="true">▾</span>
-                <select id="calendar-jump" aria-label="Chuyển đến tháng"></select>
-              </label>
-              <button id="calendar-prev" type="button" aria-label="Tháng trước">‹</button>
-              <button id="calendar-next" type="button" aria-label="Tháng sau">›</button>
-            </div>
-            <div id="calendar-weekdays" class="calendar-grid" aria-hidden="true">
-              <span>T2</span><span>T3</span><span>T4</span><span>T5</span><span>T6</span><span>T7</span><span>CN</span>
-            </div>
-            <div id="calendar-months" tabindex="0" aria-label="Lịch theo tháng"></div>
-            <button id="range-reset" type="button">Đặt lại: Mọi lúc</button>
-            <footer class="range-footer">
-              <span>Dữ liệu theo giờ Việt Nam</span>
-              <button id="range-cancel" type="button">Hủy</button>
-              <button class="action" type="submit">OK</button>
-            </footer>
           </form>
         </dialog>
         <div id="overview">

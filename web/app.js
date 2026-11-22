@@ -15,6 +15,7 @@ let chartPending = false;
 let calendarMonths = [];
 let calendarIndex = 0;
 let selectingEnd = false;
+let draftPreset;
 const format = byId('format');
 const scan = byId('scan');
 const errorMessage = byId('error');
@@ -732,11 +733,74 @@ function parseDateText(value) {
   return validDate(date) ? date : '';
 }
 
+const rangePresets = [
+  { label: 'Hôm nay', dates: (ref) => [ref, ref] },
+  { label: 'Hôm qua', dates: (ref) => { const day = shiftDate(ref, -1); return [day, day]; } },
+  { label: '7 ngày qua', chip: '7 ngày', dates: (ref) => [shiftDate(ref, -6), ref] },
+  { label: '30 ngày qua', chip: '30 ngày', dates: (ref) => [shiftDate(ref, -29), ref] },
+  { label: 'Tháng này', dates: (ref) => [ref.slice(0, 7) + '-01', ref] },
+  { label: 'Tháng trước', dates: (ref) => {
+    const last = shiftDate(ref.slice(0, 7) + '-01', -1);
+    return [last.slice(0, 7) + '-01', last];
+  } },
+  { label: 'Mọi lúc' },
+];
+
+function presetRange(preset, bounds) {
+  if (!preset.dates) return bounds;
+  const clamp = (date) => date < bounds.from ? bounds.from : date > bounds.to ? bounds.to : date;
+  const [from, to] = preset.dates(bounds.to);
+  return { from: clamp(from), to: clamp(to) };
+}
+
+function matchingPreset(range, bounds, allTime, preferredLabel) {
+  if (!range || !bounds) return undefined;
+  if (allTime) return rangePresets.at(-1);
+  const matches = rangePresets.filter((preset) => {
+    if (!preset.dates) return false;
+    const { from, to } = presetRange(preset, bounds);
+    return range.from === from && range.to === to;
+  });
+  return matches.find(({ label }) => label === preferredLabel) ?? matches[0];
+}
+
+function addPresetButton(container, label, onClick, className = '') {
+  const button = element('button', label);
+  button.type = 'button';
+  button.className = className;
+  button.onclick = onClick;
+  byId(container).append(button);
+  return button;
+}
+
+for (const preset of rangePresets) {
+  preset.button = addPresetButton('range-presets', preset.label, () => {
+    const bounds = dateBounds();
+    if (!bounds) return;
+    draftPreset = preset;
+    const range = presetRange(preset, bounds);
+    fillRangeInputs(range);
+    scrollToRange(range, bounds);
+  });
+  if (preset.dates) {
+    preset.chipButton = addPresetButton('range-chips', preset.chip ?? preset.label, () => {
+      const bounds = dateBounds();
+      if (bounds) return applyRange({ ...presetRange(preset, bounds), preset: preset.label });
+    }, 'chip');
+  }
+}
+
 function renderRangeControl() {
   const range = activeRange();
-  rangeOpen.disabled = !dateBounds();
-  byId('range-value').textContent = range && !isAllTime()
-    ? rangeText(range) : 'Mọi lúc';
+  const bounds = dateBounds();
+  const preset = matchingPreset(range, bounds, isAllTime(), rangeChoice?.preset);
+  rangeOpen.disabled = !bounds;
+  byId('range-value').textContent = preset?.label ?? (range && !isAllTime() ? rangeText(range) : 'Mọi lúc');
+  for (const item of rangePresets) {
+    if (!item.chipButton) continue;
+    item.chipButton.disabled = !bounds;
+    item.chipButton.setAttribute('aria-pressed', String(item === preset));
+  }
   byId('comparison').hidden = Boolean(watchId);
 }
 
@@ -775,10 +839,13 @@ function paintCalendar() {
       button.setAttribute('aria-pressed', String(start || end));
     }
   }
+  const preset = matchingPreset({ from, to }, dateBounds(), draftPreset === rangePresets.at(-1), draftPreset?.label);
+  for (const item of rangePresets) item.button.setAttribute('aria-pressed', String(item === preset));
   byId('range-error').hidden = true;
 }
 
 function pickDate(date) {
+  draftPreset = undefined;
   const start = parseDateText(rangeFrom.value);
   if (!selectingEnd || !start) {
     rangeFrom.value = dateText(date);
@@ -822,18 +889,27 @@ function buildCalendar(bounds) {
   calendarJump.replaceChildren(...calendarMonths.map(({ title }, index) => new Option(title, String(index))));
 }
 
+function fillRangeInputs(range) {
+  rangeFrom.value = dateText(range.from);
+  rangeTo.value = dateText(range.to);
+  selectingEnd = false;
+  paintCalendar();
+}
+
+function scrollToRange(range, bounds) {
+  const index = calendarMonths.findIndex(({ month }) => month === range.from.slice(0, 7));
+  setCalendarMonth(index < 0 && range.from > bounds.to ? calendarMonths.length - 1 : index);
+}
+
 rangeOpen.onclick = () => {
   const bounds = dateBounds();
   if (!bounds) return;
   const range = activeRange();
-  rangeFrom.value = dateText(range.from);
-  rangeTo.value = dateText(range.to);
-  selectingEnd = false;
+  draftPreset = matchingPreset(range, bounds, isAllTime(), rangeChoice?.preset);
   buildCalendar(bounds);
-  paintCalendar();
+  fillRangeInputs(range);
   rangeDialog.showModal();
-  const index = calendarMonths.findIndex(({ month }) => month === range.from.slice(0, 7));
-  setCalendarMonth(index < 0 && range.from > bounds.to ? calendarMonths.length - 1 : index);
+  scrollToRange(range, bounds);
   rangeFrom.focus({ preventScroll: true });
 };
 
@@ -844,9 +920,12 @@ calendar.onscroll = () => {
   const next = calendarMonths.findIndex(({ section }) => section.offsetTop > calendar.scrollTop + 8);
   setCalendarMonth(next < 0 ? calendarMonths.length - 1 : Math.max(0, next - 1), false);
 };
-rangeFrom.oninput = rangeTo.oninput = () => { selectingEnd = false; paintCalendar(); };
+rangeFrom.oninput = rangeTo.oninput = () => {
+  draftPreset = undefined;
+  selectingEnd = false;
+  paintCalendar();
+};
 byId('range-cancel').onclick = () => rangeDialog.close();
-byId('range-reset').onclick = () => applyRange('all');
 rangeDialog.onclick = (event) => {
   if (event.target !== rangeDialog) return;
   const { left, right, top, bottom } = rangeDialog.getBoundingClientRect();
@@ -860,13 +939,21 @@ byId('range-form').onsubmit = (event) => {
   const to = parseDateText(rangeTo.value);
   const bounds = dateBounds();
   const error = byId('range-error');
+  if (!bounds) return;
   if (!from || !to || from > to || from < bounds.from || to > bounds.to) {
     error.textContent = 'Nhập khoảng ngày từ ' + dateText(bounds.from) + ' đến ' + dateText(bounds.to)
       + ', với ngày bắt đầu trước hoặc bằng ngày kết thúc.';
     error.hidden = false;
     return;
   }
-  return applyRange({ from, to });
+  const range = { from, to };
+  if (draftPreset) {
+    const expected = presetRange(draftPreset, bounds);
+    if (from === expected.from && to === expected.to) {
+      return applyRange(draftPreset.dates ? { ...range, preset: draftPreset.label } : 'all');
+    }
+  }
+  return applyRange(range);
 };
 
 function isRunningAd(ad) {

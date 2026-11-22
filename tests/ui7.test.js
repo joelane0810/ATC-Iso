@@ -63,7 +63,7 @@ class TestDate extends Date {
   constructor(...args) { super(...(args.length ? args : ['2026-11-21T18:00:00Z'])); }
 }
 
-async function boot({ reply, storage = new Map(), initialStatus = { scanning: false, scanningWatchId: null, last: null } } = {}) {
+async function boot({ reply, dates = { refDate, minDate }, storage = new Map(), initialStatus = { scanning: false, scanningWatchId: null, last: null } } = {}) {
   const nodes = new Map();
   const timers = new Map();
   const requests = [];
@@ -104,11 +104,11 @@ async function boot({ reply, storage = new Map(), initialStatus = { scanning: fa
         case 'profiles': return success([{ id: 'dai', name: 'Dai' }]);
         case 'watchlist': return success(watches.map(({ watchId: id, label, kind }) => ({ id, label, kind })));
         case 'summary': return success({
-          refDate, minDate, prevDate: '2026-11-21', dataNote, lastScan: null,
+          ...dates, prevDate: '2026-11-21', dataNote, lastScan: null,
           totals: { newProjects: 1, newAdvertisers: 1, newAds: 2, increased: 1, decreased: 1, stopped: 1, runningAds: 4 },
           watches,
         });
-        case 'series': return success({ refDate, minDate, points });
+        case 'series': return success({ ...dates, points });
         case 'ads': return success([ad, { ...ad, creativeId: 'CR2', platform: 'display' }]);
         case 'suggest': return success([{ type: 'advertiser', value: 'AR1', name: 'Example', ads: 1 }]);
         case 'status': return success(status);
@@ -136,6 +136,12 @@ const selectRange = (get, from, to) => {
   get('range-to').value = to;
   return get('range-form').onsubmit({ preventDefault() {} });
 };
+const submitRange = (get) => get('range-form').onsubmit({ preventDefault() {} });
+const chooseAllTime = (get) => {
+  get('range-open').onclick();
+  get('range-presets').children.at(-1).onclick();
+  return submitRange(get);
+};
 const latestParams = (requests, endpoint) =>
   requests.findLast(({ url }) => url.pathname.endsWith('/' + endpoint)).url.searchParams;
 const groupToggle = (wrapper) => wrapper.children[0].children[0];
@@ -143,7 +149,7 @@ const groupToggle = (wrapper) => wrapper.children[0].children[0];
 test('overview selects the period, displays the seven totals and expands only five groups initially', async () => {
   const { get, rows, requests } = await boot();
   assert.equal(get('gallery-summary').textContent, dataNote);
-  assert.equal(get('range-value').textContent, '22 thg 11, 2026');
+  assert.equal(get('range-value').textContent, 'Hôm nay');
   await selectRange(get, '24 thg 10, 2026', '22 thg 11, 2026');
   const params = latestParams(requests, 'summary');
   assert.equal(params.get('from'), '2026-10-24');
@@ -369,17 +375,17 @@ test('Vietnamese date ranges filter grids and groups by overlap and survive relo
 
   const reloaded = await boot({ storage, reply });
   await choose(reloaded.get);
-  assert.equal(reloaded.get('range-value').textContent, '24 thg 10 – 22 thg 11, 2026');
+  assert.equal(reloaded.get('range-value').textContent, '30 ngày qua');
   await reloaded.get('mode-grid').onclick();
   assert.equal(reloaded.get('ads').children.length, 4);
-  await reloaded.get('range-reset').onclick();
+  await chooseAllTime(reloaded.get);
   assert.equal(reloaded.get('ads').children.length, 5);
 });
 
 test('all time displays historical totals and latest-day counts without comparisons', async () => {
   const { get, rows, requests } = await boot();
   get('totals').children[1].onclick();
-  await get('range-reset').onclick();
+  await chooseAllTime(get);
   assert.equal(get('range-value').textContent, 'Mọi lúc');
   assert.equal(get('comparison-note').hidden, false);
   assert.equal(get('comparison').textContent, '');
@@ -421,3 +427,101 @@ test('the calendar opens at the selected start month and keeps every month scrol
   calendar.onscroll();
   assert.equal(get('calendar-title').textContent, 'THG 9 2026');
 });
+
+const presetLabels = ['Hôm nay', 'Hôm qua', '7 ngày qua', '30 ngày qua', 'Tháng này', 'Tháng trước', 'Mọi lúc'];
+const chipLabels = ['Hôm nay', 'Hôm qua', '7 ngày', '30 ngày', 'Tháng này', 'Tháng trước'];
+const inputDate = (date) => {
+  const [year, month, day] = date.split('-');
+  return Number(day) + ' thg ' + Number(month) + ', ' + year;
+};
+
+for (const { dates, expected } of [
+  {
+    dates: { refDate, minDate },
+    expected: [
+      [refDate, refDate], ['2026-11-21', '2026-11-21'],
+      ['2026-11-16', refDate], ['2026-10-24', refDate],
+      ['2026-11-01', refDate], ['2026-10-01', '2026-10-31'], [minDate, refDate],
+    ],
+  },
+  {
+    dates: { refDate: '2024-03-01', minDate: '2024-01-01' },
+    expected: [
+      ['2024-03-01', '2024-03-01'], ['2024-02-29', '2024-02-29'],
+      ['2024-02-24', '2024-03-01'], ['2024-02-01', '2024-03-01'],
+      ['2024-03-01', '2024-03-01'], ['2024-02-01', '2024-02-29'], ['2024-01-01', '2024-03-01'],
+    ],
+  },
+  {
+    dates: { refDate: '2026-11-01', minDate: '2026-11-01' },
+    expected: presetLabels.map(() => ['2026-11-01', '2026-11-01']),
+  },
+  {
+    dates: { refDate: '2026-01-03', minDate: '2025-12-28' },
+    expected: [
+      ['2026-01-03', '2026-01-03'], ['2026-01-02', '2026-01-02'],
+      ['2025-12-28', '2026-01-03'], ['2025-12-28', '2026-01-03'],
+      ['2026-01-01', '2026-01-03'], ['2025-12-28', '2025-12-31'], ['2025-12-28', '2026-01-03'],
+    ],
+  },
+]) {
+  test('quick ranges use API dates ' + dates.minDate + ' to ' + dates.refDate, async () => {
+    const { get, requests } = await boot({ dates });
+    const presets = get('range-presets').children;
+    const chips = get('range-chips').children;
+    assert.deepEqual(presets.map(({ textContent }) => textContent), presetLabels);
+    assert.deepEqual(chips.map(({ textContent }) => textContent), chipLabels);
+    const calendar = get('calendar-months');
+    const replaceChildren = calendar.replaceChildren.bind(calendar);
+    calendar.replaceChildren = (...months) => {
+      months.forEach((month, index) => { month.offsetTop = index * 300; });
+      replaceChildren(...months);
+    };
+    const checkApplied = (index, endpoint = 'summary') => {
+      const params = latestParams(requests, endpoint);
+      const [from, to] = expected[index];
+      const allTime = index === presetLabels.length - 1;
+      assert.deepEqual([params.get('from'), params.get('to')], allTime ? [null, null] : [from, to]);
+      assert.equal(get('range-value').textContent, presetLabels[index]);
+      assert.equal(get('range-dialog').open, false);
+      assert.deepEqual(chips.map((chip) => chip.attributes.get('aria-pressed')),
+        chips.map((_, chipIndex) => String(chipIndex === index)));
+    };
+    for (const [index, [from, to]] of expected.entries()) {
+      get('range-open').onclick();
+      const requestCount = requests.length;
+      const oldLabel = get('range-value').textContent;
+      const preset = presets[index];
+      preset.onclick();
+      assert.equal(get('range-dialog').open, true);
+      assert.equal(requests.length, requestCount);
+      assert.equal(get('range-value').textContent, oldLabel);
+      assert.equal(get('range-from').value, inputDate(from));
+      assert.equal(get('range-to').value, inputDate(to));
+      assert.equal(preset.attributes.get('aria-pressed'), 'true');
+      const day = (date) => calendar.children.flatMap((month) => month.children[1].children)
+        .find((node) => node.attributes.get('aria-label') === inputDate(date));
+      assert.match(day(from).className, /in-range range-start/);
+      assert.match(day(to).className, /in-range .*range-end/);
+      const [year, month] = from.split('-');
+      const title = 'THG ' + Number(month) + ' ' + year;
+      assert.equal(get('calendar-title').textContent, title);
+      assert.equal(calendar.scrollTop, calendar.children.find((entry) => entry.children[0].textContent === title).offsetTop);
+      await submitRange(get);
+      checkApplied(index);
+    }
+    get('range-open').onclick();
+    presets[0].onclick();
+    get('range-cancel').onclick();
+    checkApplied(presetLabels.length - 1);
+    for (const [index, chip] of chips.entries()) {
+      await chip.onclick();
+      checkApplied(index);
+    }
+
+    await get('watches-competitor').children[0].children[0].onclick();
+    await get('mode-grid').onclick();
+    await chips[2].onclick();
+    for (const endpoint of ['summary', 'series', 'ads']) checkApplied(2, endpoint);
+  });
+}
