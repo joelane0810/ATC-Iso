@@ -46,11 +46,20 @@ function sparkRows(all, pid, start, refDate) {
     LEFT JOIN changes USING(watchId, day)`, start, refDate, pid, start, refDate, start);
 }
 
+// Dữ liệu chỉ mới bằng lần quét gần nhất: ngày tham chiếu không được vượt quá
+// ngày mà lần quét đó đã thấy đủ (cùng luật 20:00 giờ Việt Nam).
+function effectiveNow(all, pid, watchId, now) {
+  const row = all(`SELECT min(w.last_scan_at) AS at FROM profile_watches p JOIN watches w ON w.id = p.watch_id
+    WHERE p.profile_id = ? AND (? IS NULL OR p.watch_id = ?) AND w.last_scan_at IS NOT NULL`, pid, watchId, watchId)[0];
+  const scanned = row?.at ? Date.parse(row.at) : NaN;
+  return Number.isFinite(scanned) && scanned < +new Date(now) ? new Date(scanned) : new Date(now);
+}
+
 export function createTimeReport({ all, scanHistory }) {
   return {
     getSeries(pid, { watchId = null, group = null, days = 90, now = new Date() } = {}) {
       if (!Number.isSafeInteger(days) || days < 1) throw new Error('Số ngày không hợp lệ.');
-      const date = datesAt(now);
+      const date = datesAt(effectiveNow(all, pid, watchId, now));
       // A creative shared by multiple watches counts once on each day.
       const rows = all(`WITH RECURSIVE members AS (${members}), selected AS MATERIALIZED (
           SELECT DISTINCT creativeId, firstDay, lastDay FROM members
@@ -71,7 +80,8 @@ export function createTimeReport({ all, scanHistory }) {
     getSummary(pid, { window = 'day', now = new Date() } = {}) {
       const span = windows.get(window);
       if (!span) throw new Error('Khoảng thời gian không hợp lệ.');
-      const date = datesAt(now);
+      const dataAt = effectiveNow(all, pid, null, now);
+      const date = datesAt(dataAt);
       const refDate = date(0);
       const prevDate = date(-span);
       const start = date(1 - span);
@@ -166,7 +176,7 @@ export function createTimeReport({ all, scanHistory }) {
       const latest = history.at(-1);
       const resumeAt = scanResumeAt(history, +new Date(now));
       const lastScan = latest ? { at: latest.at, status: latest.status, ...(resumeAt ? { resumeAt } : {}) } : null;
-      return { refDate, prevDate, window, dataNote: 'Ngày tham chiếu đổi lúc 20:00 theo giờ Việt Nam.',
+      return { refDate, prevDate, window, dataNote: `Dữ liệu đến hết ngày ${refDate.slice(8, 10)}/${refDate.slice(5, 7)} — ATC cập nhật quảng cáo của ngày hôm nay sau khoảng 20:00 (giờ Việt Nam).`,
         lastScan, totals, watches };
     },
   };

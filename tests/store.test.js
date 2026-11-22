@@ -153,6 +153,11 @@ test('summary uses Vietnamese dates, all windows, and ATC dates after repeat sca
   store.mergeAds(competitor, ads, before);
   store.mergeAds(project, [fresh, ad('new-advertiser', 'new.com', fresh.firstShown, now, 'AR456')], before);
   assert.equal(store.getSummary(id, { now: before }).refDate, '2026-11-21');
+  // Lần quét trước 20:00 chưa có dữ liệu của hôm nay: dù giờ đã qua 20:00, ngày tham chiếu vẫn là hôm qua.
+  assert.equal(store.getSummary(id, { now }).refDate, '2026-11-21');
+  // Quét lại sau 20:00 thì mới tính hôm nay.
+  store.mergeAds(competitor, ads, now);
+  store.mergeAds(project, [fresh, ad('new-advertiser', 'new.com', fresh.firstShown, now, 'AR456')], now);
   const summary = () => store.getSummary(id, { now });
   const first = summary();
   assert.equal(first.refDate, '2026-11-22');
@@ -173,7 +178,8 @@ test('summary uses Vietnamese dates, all windows, and ATC dates after repeat sca
     assert.deepEqual([result.window, result.prevDate, result.totals.newProjects, result.totals.newAds],
       [window, prevDate, projects, newAds]);
   }
-  for (const at of [before, now]) {
+  const later = '2026-11-22T14:00:00Z';
+  for (const at of [now, later]) { // các lần quét lại sau 20:00 không làm đổi số mới
     const scanId = store.beginScan(at);
     store.mergeAds(competitor, ads, at, scanId);
     store.appendScanLog({ at, status: 'ok', scanId });
