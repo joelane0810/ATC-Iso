@@ -45,16 +45,33 @@
         <div class="watch-group">
           <details id="group-competitor" open>
             <summary>Đối thủ</summary>
+            <div class="watch-tools sidebar-tools">
+              <button id="add-competitor" type="button" aria-label="Thêm đối thủ" disabled>+ Thêm</button>
+              <button id="new-group-competitor" type="button" disabled>+ Nhóm</button>
+              <button id="select-competitor" type="button" disabled>Chọn</button>
+            </div>
+            <div id="group-editor-competitor"></div>
+            <div id="selection-competitor"></div>
             <ul id="watches-competitor"></ul>
           </details>
-          <button id="add-competitor" type="button" aria-label="Thêm đối thủ" disabled>+ Thêm</button>
         </div>
         <div class="watch-group">
           <details id="group-project" open>
             <summary>Dự án</summary>
+            <div class="watch-tools sidebar-tools">
+              <button id="add-project" type="button" aria-label="Thêm dự án" disabled>+ Thêm</button>
+              <button id="new-group-project" type="button" disabled>+ Nhóm</button>
+              <button id="select-project" type="button" disabled>Chọn</button>
+            </div>
+            <div id="group-editor-project"></div>
+            <div id="selection-project"></div>
             <ul id="watches-project"></ul>
           </details>
-          <button id="add-project" type="button" aria-label="Thêm dự án" disabled>+ Thêm</button>
+        </div>
+        <div class="trash-footer">
+          <button id="trash-open" type="button" aria-haspopup="dialog" disabled>
+            <span class="trash-icon" aria-hidden="true"></span> Thùng rác <span id="trash-count">0</span>
+          </button>
         </div>
       </aside>
       <section id="gallery" class="gallery" aria-labelledby="gallery-heading">
@@ -150,10 +167,19 @@
         </div>
       </section>
       <section class="detail-panel" aria-labelledby="detail-heading">
-        <h2 id="detail-heading">Chi tiết mẫu</h2>
+        <h2 id="detail-heading">Chi tiết quảng cáo</h2>
         <div id="detail">Chọn một mẫu quảng cáo để xem chi tiết.</div>
       </section>
     </main>
+    <dialog id="trash-dialog" aria-labelledby="trash-title">
+      <div class="trash-heading">
+        <h2 id="trash-title">Thùng rác</h2>
+        <button id="trash-close" type="button">Đóng</button>
+      </div>
+      <p id="trash-error" role="alert" hidden></p>
+      <div id="trash-content"></div>
+    </dialog>
+    <div id="undo-toast" class="undo-toast" aria-live="polite" hidden></div>
   </div>
 </body>
 </html>

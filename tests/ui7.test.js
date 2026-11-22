@@ -3,6 +3,9 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 
+const sidebarRow = (get, kind) =>
+  get('watches-' + kind).children.at(-1).children[0].children[1].children[0].children[0];
+
 const script = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
 
 class Node {
@@ -18,6 +21,8 @@ class Node {
   constructor(tag) { this.tag = tag; }
   append(...nodes) { this.children.push(...nodes); }
   replaceChildren(...nodes) { this.children = nodes; }
+  get firstElementChild() { return this.children[0]; }
+  getAttribute(key) { return this.attributes.get(key) ?? null; }
   setAttribute(key, value) { this.attributes.set(key, String(value)); }
   get lastElementChild() { return this.children.at(-1); }
   querySelectorAll() { return []; }
@@ -60,10 +65,11 @@ const watches = [
 }));
 
 class TestDate extends Date {
+  static now() { return +new TestDate(); }
   constructor(...args) { super(...(args.length ? args : ['2026-11-21T18:00:00Z'])); }
 }
 
-async function boot({ reply, dates = { refDate, minDate }, storage = new Map(), initialStatus = { scanning: false, scanningWatchId: null, last: null } } = {}) {
+async function boot({ reply, browser = {}, dates = { refDate, minDate }, storage = new Map(), initialStatus = { scanning: false, scanningWatchId: null, last: null } } = {}) {
   const nodes = new Map();
   const timers = new Map();
   const requests = [];
@@ -79,6 +85,7 @@ async function boot({ reply, dates = { refDate, minDate }, storage = new Map(), 
   get('filter').value = 'all';
   get('query').value = get('format').value = '';
   await runInNewContext(script, {
+    ...browser,
     URLSearchParams, Option: class {}, Date: TestDate,
     localStorage: {
       getItem: (key) => storage.get(key) ?? null,
@@ -101,6 +108,7 @@ async function boot({ reply, dates = { refDate, minDate }, storage = new Map(), 
       const override = reply?.(request);
       if (override !== undefined) return override;
       switch (url.pathname.split('/').at(-1)) {
+        case 'groups': case 'trash': return success([]);
         case 'profiles': return success([{ id: 'dai', name: 'Dai' }]);
         case 'watchlist': return success(watches.map(({ watchId: id, label, kind }) => ({ id, label, kind })));
         case 'summary': return success({
@@ -120,7 +128,7 @@ async function boot({ reply, dates = { refDate, minDate }, storage = new Map(), 
     },
   });
   assert.equal(get('error').hidden, true);
-  const rows = () => get('overview-watches').children[0].children[1].children;
+  const rows = () => get('overview-watches').children[0].children[1].children.filter((row) => row.className !== 'overview-folder');
   const advance = (delay) => {
     const [id, { callback }] = [...timers].find(([, timer]) => timer.delay === delay);
     timers.delete(id);
@@ -176,7 +184,7 @@ test('overview selects the period, displays the seven totals and expands only fi
 
 test('watch page sorts groups, plots running and new ads, and preserves the filtered grid', async () => {
   const { get, requests } = await boot();
-  await get('watches-competitor').children[0].children[0].onclick();
+  await sidebarRow(get, 'competitor').children[0].onclick();
   assert.equal(get('grid-view').hidden, true);
   assert.equal(get('watch-groups').children.length, 7);
   const checkChart = (container) => {
@@ -194,10 +202,10 @@ test('watch page sorts groups, plots running and new ads, and preserves the filt
       assert.equal(tooltip.hidden, false);
       assert.equal(tooltip.textContent, '22/11/2026\nAds đang chạy: 1\nAds mới: 1');
       assert.equal(line.attributes.get('visibility'), 'visible');
-      assert.equal(line.attributes.get('x1'), '524');
-      assert.equal(line.attributes.get('x2'), '524');
+      assert.equal(line.attributes.get('x1'), '261.5');
+      assert.equal(line.attributes.get('x2'), '261.5');
       assert.equal(line.attributes.get('y1'), '30');
-      assert.equal(line.attributes.get('y2'), '263');
+      assert.equal(line.attributes.get('y2'), '248');
       hit.dispatchEvent({ type: 'pointerleave' });
       assert.equal(tooltip.hidden, true);
       assert.equal(line.attributes.get('visibility'), 'hidden');
@@ -246,8 +254,8 @@ test('suggestions debounce and add with the chosen kind, including pasted links 
   toggle(rows()[2]).onclick();
   await rows()[3].children[0].children[0].children[0].children[1].onclick();
   assert.deepEqual(requests.filter(({ method }) => method === 'POST').map(({ body }) => body), [
-    { input: 'AR1', kind: 'project', region: null }, { input: link, kind: 'competitor', region: null },
-    { input: 'example.com', kind: 'project', region: null }, { input: 'AR1', kind: 'competitor', region: null },
+    { input: 'AR1', kind: 'project', region: null, groupId: null }, { input: link, kind: 'competitor', region: null, groupId: null },
+    { input: 'example.com', kind: 'project', region: null, groupId: null }, { input: 'AR1', kind: 'competitor', region: null, groupId: null },
   ]);
 });
 
@@ -259,12 +267,12 @@ test('scan buttons target the correct scope and poll through Vietnamese statuses
   setStatus({ scanning: false, scanningWatchId: null, last: { status: 'ok' } });
   await advance(5000);
   assert.equal(get('status').textContent, 'Hoàn tất');
-  await get('watches-project').children[0].children[1].onclick();
+  await sidebarRow(get, 'project').children[1].onclick();
   assert.equal(get('status').textContent, 'Đang quét Dự án A…');
   setStatus({ scanning: false, last: { status: 'blocked' } });
   await advance(5000);
   assert.equal(get('status').textContent, 'Bị Google chặn');
-  await get('watches-competitor').children[0].children[0].onclick();
+  await sidebarRow(get, 'competitor').children[0].onclick();
   await get('scan-watch').onclick();
   setStatus({ scanning: false, last: { status: 'cooldown', resumeAt: '2026-11-22T13:45:00Z' } });
   await advance(5000);
@@ -312,7 +320,7 @@ test('the grid still shows dates and opens advertisement details', async () => {
         { ...ad, creativeId: 'CR3', image: null, firstShown: '2026-11-20', lastShown: '2026-11-21' },
       ] } : undefined,
   });
-  await get('watches-competitor').children[0].children[0].onclick();
+  await sidebarRow(get, 'competitor').children[0].onclick();
   await get('mode-grid').onclick();
   const [local, remote, fallback] = get('ads').children;
   assert.equal(local.children[0].src, '/images/CR1.png');
@@ -353,7 +361,7 @@ test('Vietnamese date ranges filter grids and groups by overlap and survive relo
     return { ok: true, json: async () => visible };
   };
   const { get, requests } = await boot({ storage, reply });
-  const choose = (page) => page('watches-competitor').children[0].children[0].onclick();
+  const choose = (page) => sidebarRow(page, 'competitor').children[0].onclick();
   await choose(get);
   assert.equal(get('range-value').textContent, 'Mọi lúc');
   assert.equal(get('watch-groups').children.length, 7);
@@ -399,7 +407,7 @@ test('all time displays historical totals and latest-day counts without comparis
   assert.deepEqual(counts.children.map((child) => child.textContent), [
     'Tổng ads trong dữ liệu 1', 'Ads đang chạy (ngày dữ liệu mới nhất) 0',
   ]);
-  await get('watches-competitor').children[0].children[0].onclick();
+  await sidebarRow(get, 'competitor').children[0].onclick();
   assert.equal(latestParams(requests, 'summary').get('from'), null);
   assert.equal(get('watch-groups').children.length, 7);
   assert.ok(get('watch-groups').children.every((row) => groupToggle(row).children[0].children.length === 1));
@@ -519,9 +527,290 @@ for (const { dates, expected } of [
       checkApplied(index);
     }
 
-    await get('watches-competitor').children[0].children[0].onclick();
+    await sidebarRow(get, 'competitor').children[0].onclick();
     await get('mode-grid').onclick();
     await chips[2].onclick();
     for (const endpoint of ['summary', 'series', 'ads']) checkApplied(2, endpoint);
   });
 }
+
+function managedProfile({ folders = [], items = [], series = points } = {}) {
+  let groups = folders.map((folder) => ({ ...folder }));
+  let active = watches.map(({ watchId: id, label, kind }) => ({ id, label, kind, groupId: null }));
+  let trash = items.map((item) => ({ ...item }));
+  const reply = ({ url, method, body }) => {
+    const [, resource, id] = /^\/api\/profiles\/dai\/([^/]+)(?:\/([^/]+))?$/.exec(url.pathname) ?? [];
+    const ok = (data) => ({ ok: true, json: async () => data });
+    const remove = (ids) => {
+      trash.push(...active.filter((watch) => ids.includes(watch.id)).map(({ id: watchId, ...watch }) => ({
+        ...watch, watchId, deletedAt: '2026-11-21T18:00:00Z', purgeAt: '2027-01-20T18:00:00Z',
+      })));
+      active = active.filter((watch) => !ids.includes(watch.id));
+    };
+    if (resource === 'groups') {
+      if (method === 'POST') groups.push({ id: 'created', ...body });
+      if (method === 'PATCH') Object.assign(groups.find((group) => group.id === id), body);
+      if (method === 'DELETE') {
+        groups = groups.filter((group) => group.id !== id);
+        for (const watch of [...active, ...trash]) if (watch.groupId === id) watch.groupId = null;
+      }
+      return ok(groups.map((group) => ({ ...group })));
+    }
+    if (resource === 'watchlist') {
+      if (method === 'POST' && id === 'delete') remove(body.ids);
+      else if (method === 'DELETE') remove([id]);
+      else if (method === 'PATCH') Object.assign(active.find((watch) => watch.id === id), body);
+      else if (method === 'POST') {
+        const previous = trash.find(({ value, kind }) => value === body.input && kind === body.kind);
+        trash = trash.filter((item) => item !== previous);
+        active.push({ id: previous?.watchId ?? body.input, label: previous?.label ?? body.input,
+          value: body.input, kind: body.kind, groupId: body.groupId });
+      }
+      return ok(active.map((watch) => ({ ...watch })));
+    }
+    if (resource === 'trash') {
+      if (id === 'restore') {
+        active.push(...trash.filter(({ watchId }) => body.ids.includes(watchId))
+          .map(({ watchId, deletedAt, purgeAt, ...data }) => ({ id: watchId, ...data })));
+      }
+      if (id) trash = trash.filter(({ watchId }) => !body.ids.includes(watchId));
+      return ok(trash.map((item) => ({ ...item })));
+    }
+    if (resource === 'summary') return ok({
+      refDate, minDate, totals: {}, watches: watches.filter(({ watchId }) => active.some(({ id }) => id === watchId)),
+    });
+    if (resource === 'series') return ok({ refDate, minDate, points: series });
+  };
+  return { reply };
+}
+
+const action = (node, label) => node.children.find((child) => child.tag === 'button' && child.textContent === label);
+const requestCount = (requests, method) => requests.filter((request) => request.method === method).length;
+const sidebarFolder = (get, kind, index) => get('watches-' + kind).children.at(index);
+const folderItems = (folder) => folder.children[0].children[1].children;
+const check = (box) => { box.checked = true; box.onchange(); };
+const trashActions = (get) => get('trash-content').children[0];
+const trashItems = (get) => get('trash-content').children[1].children;
+const submitName = async (form, name) => {
+  form.children[0].value = name;
+  await form.onsubmit({ preventDefault() {} });
+};
+
+test('single watch deletion confirms in place, can be cancelled, and can be undone for eight seconds', async () => {
+  const { get, requests, timers, advance, rows } = await boot(managedProfile());
+  const watch = () => folderItems(sidebarFolder(get, 'competitor', -1))[0];
+  action(watch().children[0], '×').onclick();
+  assert.match(watch().children.at(-1).children[0].textContent, /Chuyển Đối thủ A vào thùng rác\?/);
+  action(watch().children.at(-1), 'Huỷ').onclick();
+  assert.equal(requestCount(requests, 'DELETE'), 0);
+  action(watch().children[0], '×').onclick();
+  await action(watch().children.at(-1), 'Chuyển vào thùng rác').onclick();
+  assert.equal(requests.find(({ method }) => method === 'DELETE').url.pathname, '/api/profiles/dai/watchlist/rival');
+  assert.equal(watch(), undefined);
+  assert.equal(rows().length, 2);
+  assert.equal(get('trash-count').textContent, '1');
+  const toast = get('undo-toast');
+  assert.equal(toast.hidden, false);
+  assert.ok([...timers.values()].some(({ delay }) => delay === 8000));
+  await action(toast, 'Hoàn tác').onclick();
+  assert.deepEqual(requests.find(({ method }) => method === 'POST').body, { ids: ['rival'] });
+  assert.equal(get('trash-count').textContent, '0');
+  assert.ok(watch());
+
+  action(watch().children[0], '×').onclick();
+  await action(watch().children.at(-1), 'Chuyển vào thùng rác').onclick();
+  await advance(8000);
+  assert.equal(toast.hidden, true);
+});
+
+test('bulk watch selection moves only selected watches and requires confirmation before trashing', async () => {
+  const { get, requests } = await boot(managedProfile({ folders: [{ id: 'team', name: 'Nhóm A', kind: 'competitor' }] }));
+  const toolbar = get('selection-competitor');
+  get('select-competitor').onclick();
+  assert.equal(action(toolbar, 'Chuyển vào thùng rác').disabled, true);
+  check(sidebarRow(get, 'competitor').children[0]);
+  assert.equal(toolbar.children[0].textContent, 'Đã chọn 1');
+  action(toolbar, 'Chuyển vào nhóm…').onclick();
+  await action(toolbar.children.at(-1), 'Nhóm A').onclick();
+  assert.deepEqual(requests.find(({ method }) => method === 'PATCH').body, { groupId: 'team' });
+  assert.equal(folderItems(sidebarFolder(get, 'competitor', 0)).length, 1);
+  assert.equal(folderItems(sidebarFolder(get, 'project', -1)).length, 1);
+
+  get('select-competitor').onclick();
+  check(folderItems(sidebarFolder(get, 'competitor', 0))[0].children[0].children[0]);
+  action(toolbar, 'Chuyển vào thùng rác').onclick();
+  assert.equal(requestCount(requests, 'POST'), 0);
+  await action(toolbar.children[4], 'Chuyển vào thùng rác').onclick();
+  const deletion = requests.find(({ method }) => method === 'POST');
+  assert.ok(deletion.url.pathname.endsWith('/watchlist/delete'));
+  assert.deepEqual(deletion.body, { ids: ['rival'] });
+});
+
+test('folders support create, rename, same-kind drop, menu moves, retained watches and overview totals', async () => {
+  const { get, requests } = await boot(managedProfile());
+  get('new-group-competitor').onclick();
+  await submitName(get('group-editor-competitor').children[0].children[0], 'Nhóm A');
+  assert.deepEqual(requests.find(({ method }) => method === 'POST').body, { name: 'Nhóm A', kind: 'competitor' });
+  const group = () => sidebarFolder(get, 'competitor', 0);
+  const title = () => group().children[0].children[0];
+  const drag = { dataTransfer: {
+    types: ['application/x-atc-watch'],
+    setData(type, id) { this[type] = id; },
+    getData(type) { return this[type]; },
+  }, preventDefault() {} };
+  sidebarRow(get, 'project').ondragstart(drag);
+  await group().children[0].ondrop(drag);
+  assert.equal(requestCount(requests, 'PATCH'), 0);
+  sidebarRow(get, 'competitor').ondragstart(drag);
+  await group().children[0].ondrop(drag);
+  assert.equal(title().textContent, 'Nhóm A · 1');
+  assert.equal(sidebarFolder(get, 'competitor', -1).children[0].children[0].textContent, 'Không nhóm · 0');
+  const body = get('overview-watches').children[0].children[1];
+  const headings = body.children.filter((row) => row.className === 'overview-folder');
+  const overview = headings[0].children[0].children[0];
+  assert.match(overview.textContent, /Nhóm A · Đối thủ · 1 mục · 2 ads đang chạy · 1 ads mới/);
+  overview.onclick();
+  assert.equal(body.children[1].hidden, true);
+  overview.onclick();
+  assert.equal(body.children[1].hidden, false);
+
+  const menu = () => {
+    action(group(), '⋯').onclick();
+    return group().children.at(-1).children[0];
+  };
+  let options = menu();
+  action(options, 'Đổi tên').onclick();
+  await submitName(options.children[2].children[0], 'Tên mới');
+  assert.equal(title().textContent, 'Tên mới · 1');
+
+  const item = folderItems(group())[0];
+  action(item.children[0], '⋯').onclick();
+  const move = item.children[1].children[0];
+  action(move, 'Chuyển vào nhóm…').onclick();
+  await action(move.children[1], 'Không nhóm').onclick();
+  assert.equal(folderItems(group()).length, 0);
+  sidebarRow(get, 'competitor').ondragstart(drag);
+  await group().children[0].ondrop(drag);
+
+  options = menu();
+  action(options, 'Xoá nhóm (giữ các mục)').onclick();
+  await action(options.children.at(-1), 'Xoá nhóm (giữ các mục)').onclick();
+  assert.equal(sidebarFolder(get, 'competitor', -1).children[0].children[0].textContent, 'Không nhóm · 1');
+  assert.equal(get('trash-count').textContent, '0');
+});
+
+test('trash lists dates and types, restores individually and confirms multi-item permanent deletion', async () => {
+  const items = [
+    { watchId: 'old1', label: 'Mục A', kind: 'project' },
+    { watchId: 'old2', label: 'Mục B', kind: 'competitor' },
+    { watchId: 'old3', label: 'Mục C', kind: 'project' },
+  ].map((item) => ({ ...item, groupId: null, deletedAt: '2026-11-21T18:00:00Z', purgeAt: '2027-01-20T18:00:00Z' }));
+  const { get, requests } = await boot(managedProfile({ items }));
+  assert.equal(get('trash-count').textContent, '3');
+  await get('trash-open').onclick();
+  assert.equal(get('trash-dialog').open, true);
+  let [first, second, third] = trashItems(get);
+  assert.match(first.children[2].textContent, /Dự án · Đã xoá 22\/11\/2026 · Tự xoá sau 60 ngày/);
+  action(first, 'Xoá hẳn').onclick();
+  action(first.children.at(-1), 'Huỷ').onclick();
+  assert.equal(requestCount(requests, 'POST'), 0);
+  await action(first, 'Khôi phục').onclick();
+  assert.ok(requests.findLast(({ method }) => method === 'POST').url.pathname.endsWith('/trash/restore'));
+  assert.equal(get('trash-count').textContent, '2');
+  [second, third] = trashItems(get);
+  for (const item of [second, third]) check(item.children[0]);
+  const bulk = trashActions(get);
+  assert.equal(bulk.children[0].textContent, 'Đã chọn 2');
+  action(bulk, 'Xoá hẳn').onclick();
+  assert.equal(requestCount(requests, 'POST'), 1);
+  await action(bulk.children.at(-1), 'Xoá hẳn').onclick();
+  assert.deepEqual(requests.findLast(({ method }) => method === 'POST').body, { ids: ['old2', 'old3'] });
+  assert.equal(get('trash-count').textContent, '0');
+  assert.equal(get('trash-content').children[0].textContent, 'Thùng rác trống.');
+  get('trash-close').onclick();
+  assert.equal(get('trash-dialog').open, false);
+});
+
+test('ad details follow a domain or advertiser with same-kind folders and update after restoring by adding', async () => {
+  const { get, requests } = await boot(managedProfile({
+    folders: [{ id: 'projects', name: 'Nhóm dự án', kind: 'project' }, { id: 'rivals', name: 'Nhóm đối thủ', kind: 'competitor' }],
+    items: [{ watchId: 'saved', value: 'example.com', label: 'Tên cũ', kind: 'project', groupId: null }],
+  }));
+  assert.match(readFileSync(new URL('../web/index.html', import.meta.url), 'utf8'), />Chi tiết quảng cáo</);
+  await sidebarRow(get, 'competitor').children[0].onclick();
+  await get('mode-grid').onclick();
+  get('ads').children[0].onclick();
+  const follow = () => get('detail').children.at(-1);
+  action(follow(), '+ Theo dõi dự án example.com').onclick();
+  let chooser = follow().children[1];
+  assert.deepEqual(chooser.children.slice(1).map((node) => node.textContent), ['Nhóm dự án', 'Không nhóm', 'Huỷ']);
+  assert.equal(requestCount(requests, 'POST'), 0);
+  await action(chooser, 'Nhóm dự án').onclick();
+  assert.deepEqual(requests.findLast(({ method }) => method === 'POST').body,
+    { input: 'example.com', kind: 'project', groupId: 'projects', region: null });
+  assert.equal(get('trash-count').textContent, '0');
+  assert.equal(action(follow(), 'Đang theo dõi').disabled, true);
+  action(follow(), '+ Theo dõi nhà QC Example').onclick();
+  chooser = follow().children.at(-1);
+  assert.deepEqual(chooser.children.slice(1).map((node) => node.textContent), ['Nhóm đối thủ', 'Không nhóm', 'Huỷ']);
+  await action(chooser, 'Không nhóm').onclick();
+  assert.deepEqual(requests.findLast(({ method }) => method === 'POST').body,
+    { input: 'AR1', kind: 'competitor', groupId: null, region: null });
+  assert.equal(follow().children.filter((node) => node.textContent === 'Đang theo dõi').length, 2);
+});
+
+test('chart redraws at the measured pixel width without scaling text or increasing the date label limit', async () => {
+  const observers = [];
+  const browser = { ResizeObserver: class {
+    constructor(callback) { this.callback = callback; observers.push(this); }
+    observe(target) { this.target = target; }
+  } };
+  const series = Array.from({ length: 30 }, (_, index) => ({
+    date: new Date(Date.parse(refDate) - (29 - index) * 86_400_000).toISOString().slice(0, 10),
+    running: index, newAds: 1,
+  }));
+  const { get } = await boot({ ...managedProfile({ series }), browser });
+  await sidebarRow(get, 'competitor').children[0].onclick();
+  const plot = get('watch-chart').children[1];
+  const initial = plot.firstElementChild;
+  assert.equal(initial.getAttribute('width'), '350');
+  const observer = observers.find(({ target }) => target === plot);
+  observer.callback([{ target: plot, contentRect: { width: 2560 } }]);
+  const wide = plot.firstElementChild;
+  assert.notEqual(wide, initial);
+  assert.equal(wide.getAttribute('width'), '2560');
+  assert.equal(wide.getAttribute('height'), '270');
+  assert.equal(wide.getAttribute('viewBox'), null);
+  assert.equal(wide.children.filter((node) => /^\d{2}\/\d{2}$/.test(node.textContent)).length, 8);
+  const labels = wide.children.filter((node) => node.getAttribute('class') === 'chart-label');
+  assert.deepEqual(labels.map((node) => [node.textContent, node.getAttribute('y')]),
+    [['Ads đang chạy', '18'], ['Ads mới', '196']]);
+  const css = readFileSync(new URL('../web/style.css', import.meta.url), 'utf8');
+  assert.match(css, /\.series-chart text \{[^}]*font-size: 12px/);
+  assert.match(css, /\.series-chart \.chart-label \{[^}]*font-size: 13px; font-weight: 600/);
+});
+
+test('a server without trash support keeps the watchlist visible and disables deletion controls', async () => {
+  const { get } = await boot({ reply: ({ url }) => {
+    if (/\/(groups|trash)$/.test(url.pathname)) return {
+      status: 404, ok: false, json: async () => ({ error: 'Không tìm thấy.' }),
+    };
+  } });
+  assert.equal(get('trash-open').disabled, true);
+  assert.equal(get('select-competitor').disabled, true);
+  assert.equal(action(sidebarRow(get, 'competitor'), '×'), undefined);
+  await sidebarRow(get, 'competitor').children[0].onclick();
+  assert.equal(get('gallery-heading').textContent, 'Đối thủ A');
+});
+
+test('ad detail follows directly when the matching kind has no folders', async () => {
+  const { get, requests } = await boot(managedProfile({
+    folders: [{ id: 'rivals', name: 'Nhóm đối thủ', kind: 'competitor' }],
+  }));
+  await sidebarRow(get, 'competitor').children[0].onclick();
+  await get('mode-grid').onclick();
+  get('ads').children[0].onclick();
+  await action(get('detail').children.at(-1), '+ Theo dõi dự án example.com').onclick();
+  assert.deepEqual(requests.findLast(({ method }) => method === 'POST').body,
+    { input: 'example.com', kind: 'project', groupId: null, region: null });
+});
