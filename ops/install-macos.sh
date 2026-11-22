@@ -125,3 +125,17 @@ if [[ -x "$fw" ]]; then
     fi
   fi
 fi
+
+# Kiểm tra máy chủ đã chạy chưa
+sleep 4
+for job in server scan; do
+  echo "== com.atciso.$job"
+  launchctl print "$domain/com.atciso.$job" 2>&1 | grep -E "state =|last exit code|pid =" | head -5
+done
+if curl -s -m 3 -o /dev/null http://127.0.0.1:4317/api/profiles; then
+  echo "Máy chủ web: đang chạy."
+else
+  echo "Máy chủ web: CHƯA chạy." >&2
+  echo "== thử chạy trực tiếp 5 giây" >&2
+  ( cd "$root" && timeout 5 "$node_path" bin/server.js 2>&1 | tail -5 ) || true
+fi
