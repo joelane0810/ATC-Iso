@@ -28,6 +28,13 @@ export async function scanOnce({
 } = {}) {
   return withLock(join(root, 'data', '.scan.lock'), async () => {
     onAcquired();
+    // Bị Google chặn thì nghỉ 6 tiếng rồi mới quét lại.
+    const lastLog = (await store.getScanLog?.())?.at(-1);
+    const COOLDOWN_MS = 6 * 60 * 60 * 1000;
+    if (lastLog?.status === 'blocked' && Date.now() - Date.parse(lastLog.at) < COOLDOWN_MS) {
+      log('Đang nghỉ sau khi bị Google chặn — chưa quét lại.');
+      return { status: 'cooldown' };
+    }
     let client;
     let entry;
     let scanId;

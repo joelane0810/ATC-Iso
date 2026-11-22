@@ -239,7 +239,7 @@ test('later scans stop after 10 pages even when every page has new ads', async (
   assert.equal(client.calls, 10);
 });
 
-test('details prioritize new ads per watch and share a default limit of 30 across watches', async t => {
+test('details prioritize new ads per watch and share a limit of 30 across watches', async t => {
   const { createStore } = await import('../src/store.js');
   const root = await mkdtemp(join(tmpdir(), 'atc-detail-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -265,7 +265,7 @@ test('details prioritize new ads per watch and share a default limit of 30 acros
     },
   };
 
-  assert.equal((await runScan({ store, client, now, log: () => {} })).status, 'ok');
+  assert.equal((await runScan({ store, client, now, log: () => {}, maxDetails: 30 })).status, 'ok');
   assert.equal(calls.length, 32);
   assert.equal(calls[0], first.id);
   assert.ok(calls.slice(1, 16).every(id => id.startsWith(first.id + '-')));

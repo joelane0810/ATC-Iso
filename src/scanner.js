@@ -5,7 +5,7 @@ import { BlockedError, buildSearchCreativesReq, parseCreatives } from './atc.js'
 
 const MAX_PAGES_FIRST = 5;
 const MAX_PAGES_LATER = 10;
-const DEFAULT_MAX_DETAILS = 30;
+const DEFAULT_MAX_DETAILS = 20;
 const RUNNING_WINDOW = 2 * 24 * 60 * 60 * 1000;
 
 export async function runScan({
