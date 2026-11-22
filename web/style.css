@@ -981,3 +981,9 @@ button.is-scanning::after {
   .overview-card .overview-trend-cell { grid-area: trend; min-width: 48px; }
   .overview-card .watch-name { overflow-wrap: break-word; word-break: normal; }
 }
+/* Safari (iPhone) tính bề rộng tối thiểu theo overflow-wrap:anywhere nên cắt tên giữa chữ — dùng break-word. */
+.overview-card .item-name, .overview-card .item-name.unspaced-name,
+.overview-folder .item-name, .group-heading .item-name.unspaced-name {
+  overflow-wrap: break-word; word-break: normal; flex: 1 1 auto; min-width: 0;
+}
+.overview-card .watch-toggle .watch-name { flex: 1 1 auto; min-width: 0; }
