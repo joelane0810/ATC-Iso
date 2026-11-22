@@ -56,7 +56,7 @@ async function serveFile(res, dir, name) {
 }
 
 export async function startServer({
-  store, port = 4317, host = '127.0.0.1', triggerScan, isScanning,
+  store, port = 4317, host = '127.0.0.1', triggerScan, isScanning, waitForAcquisition = false,
 }) {
   let scanPending = false;
   const scanning = () => scanPending || isScanning();
@@ -75,16 +75,30 @@ export async function startServer({
         }
       }
       if (method === 'GET' && path === '/api/status') {
-        const [last = null] = await store.getScanLog();
-        return json(res, 200, { scanning: scanning(), last });
+        const last = (await store.getScanLog()).at(-1) ?? null;
+        return json(res, 200, { scanning: await scanning(), last });
       }
       if (method === 'POST' && path === '/api/scan') {
-        if (scanning()) return json(res, 409, { error: 'Đang có lượt quét.' });
+        if (await scanning() || scanPending) return json(res, 409, { error: 'Đang có lượt quét.' });
         scanPending = true;
-        Promise.resolve().then(triggerScan).catch((error) => {
-          console.error('Không thể hoàn tất lượt quét:', error.message);
-        }).finally(() => { scanPending = false; });
-        return json(res, 202, { scanning: true });
+        const accepted = new Promise((resolve, reject) => {
+          let acknowledged = false;
+          const acquired = () => {
+            acknowledged = true;
+            resolve(202);
+          };
+          Promise.resolve().then(() => triggerScan(acquired)).then(acquired, (error) => {
+            if (error.code === 'SCAN_BUSY') resolve(409);
+            else {
+              reject(Object.assign(new Error(error.message), { code: 'SCAN_START_FAILED' }));
+              if (!waitForAcquisition || acknowledged) console.error('Không thể hoàn tất lượt quét:', error.message);
+            }
+          }).finally(() => { scanPending = false; });
+          if (!waitForAcquisition) acquired();
+        });
+        const status = await accepted;
+        if (status === 409) return json(res, status, { error: 'Đang có lượt quét.' });
+        return json(res, status, { scanning: true });
       }
 
       const profile = path.match(/^\/api\/profiles\/([\w-]+)\/(watchlist|ads)(?:\/([\w.-]+))?$/);

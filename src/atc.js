@@ -89,9 +89,10 @@ export function parseSuggestions(json) {
   return suggestions;
 }
 
-export function isBlockedResponse({ status, url = '', text = '' }) {
+export function isBlockedResponse({ status, url = '', text = '', contentType = '' }) {
   return status === 429
-    || /^(?:https?:)?\/\/(?:www\.)?google\.com\/sorry(?:[/?#]|$)/i.test(url)
+    || /^(?:https?:)?\/\/(?:[a-z\d-]+\.)*google\.(?:com|[a-z]{2}|(?:com|co)\.[a-z]{2})\/sorry(?:[/?#]|$)/i.test(url)
+    || /^(?:text\/html|application\/xhtml\+xml)(?:[;\s]|$)/i.test(contentType)
     || /^\s*<(?:!doctype\s+html\b|[a-z][a-z\d:-]*(?=[\s/>])|!--)/i.test(text);
 }
 

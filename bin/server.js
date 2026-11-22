@@ -1,20 +1,28 @@
-import { spawn } from 'node:child_process';
+import { fork } from 'node:child_process';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isScanLocked, ScanBusyError } from '../src/lock.js';
 import { startServer } from '../src/server.js';
 import { createStore } from '../src/store.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const scanScript = fileURLToPath(new URL('./scan.js', import.meta.url));
-let child;
 
-function triggerScan() {
+function triggerScan(acquired) {
   return new Promise((resolve, reject) => {
-    child = spawn(process.execPath, [scanScript], { cwd: root, stdio: 'inherit' });
+    const child = fork(scanScript, { cwd: root, stdio: ['inherit', 'inherit', 'inherit', 'ipc'] });
+    let busy = false;
+    child.once('message', state => {
+      if (state === 'acquired') acquired();
+      if (state === 'busy') {
+        busy = true;
+        reject(new ScanBusyError());
+      }
+    });
     child.once('error', reject);
     child.once('close', (code) => {
-      child = undefined;
       if (code === 0) resolve();
-      else reject(new Error('Tiến trình quét kết thúc bất thường.'));
+      else if (!busy) reject(new Error('Tiến trình quét kết thúc bất thường.'));
     });
   });
 }
@@ -22,6 +30,7 @@ function triggerScan() {
 const server = await startServer({
   store: createStore(root),
   triggerScan,
-  isScanning: () => Boolean(child),
+  waitForAcquisition: true,
+  isScanning: () => isScanLocked(join(root, 'data', '.scan.lock')),
 });
 console.log(`Mở http://127.0.0.1:${server.address().port}`);
