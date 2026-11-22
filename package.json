@@ -5,7 +5,7 @@
   "type": "module",
   "engines": { "node": ">=20" },
   "scripts": {
-    "test": "node --test tests/",
+    "test": "node --test",
     "start": "node bin/server.js",
     "scan": "node bin/scan.js"
   },
