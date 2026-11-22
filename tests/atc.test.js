@@ -69,3 +69,16 @@ test('isBlockedResponse detects redirects, rate limits and HTML', () => {
   assert.equal(isBlockedResponse({ status: 200, text: fixture('blocked.html') }), true);
   assert.equal(isBlockedResponse({ status: 200, text: '{"1":[]}' }), false);
 });
+
+test('creative detail builds the request and reads calendar dates from the real response', async () => {
+  const { buildCreativeDetailReq, parseCreativeRegions, regionIdToIso } = await import('../src/atc.js');
+  assert.deepEqual(buildCreativeDetailReq({ advertiserId: 'AR1', creativeId: 'CR1' }),
+    { 1: 'AR1', 2: 'CR1', 5: { 1: 1, 2: 28, 3: 2704 } });
+  const regions = parseCreativeRegions({"17":[{"1":2380,"3":"1000","4":20241221,"5":20261029},{"1":2840,"5":20261111}]});
+  assert.deepEqual(regions, [
+    { regionId: 2380, firstShown: '2024-12-21T00:00:00.000Z', lastShown: '2026-10-29T00:00:00.000Z' },
+    { regionId: 2840, firstShown: null, lastShown: '2026-11-11T00:00:00.000Z' },
+  ]);
+  assert.deepEqual([2380, 2840, 2704, 2392, 2276, 2248].map(regionIdToIso), ['IT', 'US', 'VN', 'JP', 'DE', 'AX']);
+  assert.deepEqual(parseCreativeRegions({ 17: [{ 1: 2840, 5: 20260230 }] }), []);
+});

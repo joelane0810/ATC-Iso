@@ -12,6 +12,8 @@ const atcStub = `
   export class BlockedError extends Error {}
   export const buildSearchCreativesReq = ({ watch, pageToken }) => ({ watch, pageToken });
   export const parseCreatives = response => response;
+  export const buildCreativeDetailReq = creative => creative;
+  export const parseCreativeRegions = response => response;
 `;
 const stubUrl = 'data:text/javascript,' + encodeURIComponent(atcStub);
 register('data:text/javascript,' + encodeURIComponent(`
@@ -232,9 +234,69 @@ test('later scans stop after 10 pages even when every page has new ads', async (
   const p = store.addProfile('A'); store.addWatch(p.id, 'cap.com');
   let n = 0;
   const page = () => { const id = `CR${n++}`; return { ads: [{ creativeId: id, advertiserId: 'AR1', format: 'text', firstShown: '2026-11-20T00:00:00Z', lastShown: '2026-11-22T00:00:00Z', domain: 'cap.com' }], nextToken: `t${n}` }; };
-  const client = { calls: 0, async rpc() { this.calls++; return page(); }, async captureImage() { return null; }, async close() {} };
+  const client = { calls: 0, async rpc(method) { if (method.startsWith('LookupService/')) return []; this.calls++; return page(); }, async captureImage() { return null; }, async close() {} };
   await runScan({ store, client, log: () => {} });
   client.calls = 0;
   await runScan({ store, client, log: () => {} });
   assert.equal(client.calls, 10);
+});
+
+test('details prioritize new ads per watch and share a limit of 60 across watches', async t => {
+  const { createStore } = await import('../src/store.js');
+  const root = await mkdtemp(join(tmpdir(), 'atc-detail-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = createStore(root);
+  const { id } = store.addProfile('Dai');
+  const first = store.addWatch(id, 'first.com');
+  const second = store.addWatch(id, 'second.com');
+  const lastShown = now().toISOString();
+  const ad = creativeId => ({ creativeId, advertiserId: 'AR1', lastShown });
+  store.mergeAds(first, [ad('old'), { ...ad('inactive'), lastShown: '2026-11-10T00:00:00Z' }],
+    '2026-11-21T02:00:00Z');
+  const calls = [];
+  const client = {
+    async rpc(method, req) {
+      if (method === 'SearchService/SearchCreatives') {
+        calls.push(req.watch.id);
+        const count = req.watch.id === first.id ? 30 : 40;
+        return { ads: Array.from({ length: count }, (_, i) => ad(`${req.watch.id}-${i}`)) };
+      }
+      assert.equal(method, 'LookupService/GetCreativeById');
+      calls.push(req.creativeId);
+      return [{ regionId: 2840, firstShown: null, lastShown }];
+    },
+  };
+
+  assert.equal((await runScan({ store, client, now, log: () => {} })).status, 'ok');
+  assert.equal(calls.length, 62);
+  assert.equal(calls[0], first.id);
+  assert.ok(calls.slice(1, 31).every(id => id.startsWith(first.id + '-')));
+  assert.equal(calls[31], 'old');
+  assert.equal(calls[32], second.id);
+  assert.ok(calls.slice(33).every(id => id.startsWith(second.id + '-')));
+  const pending = store.creativesNeedingRegions(60, { now: now() });
+  assert.equal(pending.length, 11);
+  assert.equal(store.listAdsForProfile(id, { q: 'first.com' })[0].regions[0].iso, 'US');
+});
+
+test('a creative detail block stops all further requests', async t => {
+  const { createStore } = await import('../src/store.js');
+  const root = await mkdtemp(join(tmpdir(), 'atc-detail-blocked-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const store = createStore(root);
+  const { id } = store.addProfile('Dai');
+  const first = store.addWatch(id, 'first.com');
+  store.addWatch(id, 'second.com');
+  const calls = [];
+  const client = {
+    async rpc(method) {
+      calls.push(method);
+      if (method.startsWith('LookupService/')) throw new BlockedError('Bị chặn');
+      return { ads: [{ creativeId: 'CR1', advertiserId: 'AR1', lastShown: now().toISOString() }] };
+    },
+  };
+  assert.equal((await runScan({ store, client, now, log: () => {} })).status, 'blocked');
+  assert.deepEqual(calls, ['SearchService/SearchCreatives', 'LookupService/GetCreativeById']);
+  assert.equal(store.getAds(first.id).ads.CR1.creativeId, 'CR1');
+  assert.equal(store.getSummary(id, now()).lastScan.status, 'blocked');
 });

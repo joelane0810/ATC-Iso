@@ -1,6 +1,8 @@
+import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { BlockedError } from '../src/atc.js';
 import { openChromeClient } from '../src/browser.js';
 import { ScanBusyError, withLock } from '../src/lock.js';
@@ -8,16 +10,27 @@ import { runScan } from '../src/scanner.js';
 import { createStore } from '../src/store.js';
 import { syncToGitHub } from '../src/sync.js';
 
+const execFileAsync = promisify(execFile);
+const sqliteSidecars = [':(exclude)data/atc.db-wal', ':(exclude)data/atc.db-shm'];
+
+function syncData(root) {
+  return syncToGitHub(root, (command, args, options) => {
+    const paths = args.at(-2) === '--' && args.at(-1) === 'data' ? [...args, ...sqliteSidecars] : args;
+    return execFileAsync(command, paths, options);
+  });
+}
+
 const projectRoot = fileURLToPath(new URL('../', import.meta.url));
 
 export async function scanOnce({
   root = projectRoot, store = createStore(root), open = openChromeClient,
-  sync = syncToGitHub, log = console.error, onAcquired = () => {},
+  sync = syncData, log = console.error, onAcquired = () => {},
 } = {}) {
   return withLock(join(root, 'data', '.scan.lock'), async () => {
     onAcquired();
     let client;
     let entry;
+    let scanId;
     try {
       let showWindow = false;
       try { showWindow = JSON.parse(readFileSync(join(root, 'config.json'), 'utf8'))?.showBrowser === true; } catch {}
@@ -29,10 +42,15 @@ export async function scanOnce({
         status: error instanceof BlockedError ? 'blocked' : 'error',
         error: error instanceof BlockedError ? 'Google đã chặn lượt quét' : 'Không mở được trình duyệt.',
       };
+      scanId = await store.appendScanLog(entry);
     }
     if (client) {
       try {
-        await runScan({ store, client, log, record: value => { entry = value; } });
+        await runScan({ store, client, log, record: async value => {
+          entry = value;
+          scanId = await store.appendScanLog(value);
+          return scanId;
+        } });
       } finally {
         try {
           await client.close();
@@ -41,8 +59,10 @@ export async function scanOnce({
         }
       }
     }
-    const syncResult = await sync(root);
-    await store.appendScanLog({ ...entry, sync: syncResult });
+    const checkpointed = await store.checkpoint();
+    const syncResult = checkpointed ? await sync(root)
+      : { pushed: false, reason: 'Dữ liệu đang được sử dụng.' };
+    await store.setScanSync(scanId, syncResult);
     return entry.status;
   });
 }

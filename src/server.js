@@ -55,51 +55,6 @@ async function serveFile(res, dir, name) {
   }
 }
 
-async function getSummary(store, pid) {
-  const [latest, previous] = (await store.getScanLog())
-    .filter(({ status }) => status === 'ok' || status === 'blocked').slice(-2).reverse();
-  const lastScan = latest ? { at: latest.at, status: latest.status } : null;
-  const changes = new Map(latest?.changes?.map(change => [change.watchId, change]));
-  const totals = { new: 0, stopped: 0, running: 0 };
-  const byWatch = [];
-  const newAds = [];
-  const stoppedAds = [];
-
-  for (const { id: watchId, label, kind } of await store.getWatchlist(pid)) {
-    const file = await store.getAds(watchId);
-    const change = changes.get(watchId);
-    const newIds = new Set(change?.newIds);
-    const stoppedIds = new Set(change?.stoppedIds);
-    const runningSince = Date.parse(file?.lastScanAt) - 2 * 24 * 60 * 60 * 1000;
-    const counts = { watchId, label, kind, new: 0, stopped: 0, running: 0, total: 0 };
-    for (const ad of Object.values(file?.ads ?? {})) {
-      if (ad.platform !== 'search') continue;
-      counts.total++;
-      if (Date.parse(ad.lastShown) >= runningSince) counts.running++;
-      const labeled = { ...ad, watchId, watchLabel: label, watchKind: kind };
-      if (newIds.has(ad.creativeId)) {
-        counts.new++;
-        newAds.push(labeled);
-      }
-      if (stoppedIds.has(ad.creativeId)) {
-        counts.stopped++;
-        stoppedAds.push(labeled);
-      }
-    }
-    byWatch.push(counts);
-    for (const key of Object.keys(totals)) totals[key] += counts[key];
-  }
-
-  return {
-    lastScan,
-    previousScanAt: previous?.at ?? null,
-    totals,
-    byWatch,
-    newAds: newAds.sort((a, b) => Date.parse(b.firstSeenByUs) - Date.parse(a.firstSeenByUs)).slice(0, 24),
-    stoppedAds: stoppedAds.sort((a, b) => Date.parse(b.lastShown) - Date.parse(a.lastShown)).slice(0, 24),
-  };
-}
-
 export async function startServer({
   store, port = 4317, host = '127.0.0.1', triggerScan, isScanning, waitForAcquisition = false,
 }) {
@@ -168,7 +123,7 @@ export async function startServer({
           }
         }
         if (method === 'GET' && resource === 'summary' && !wid) {
-          return json(res, 200, await getSummary(store, pid));
+          return json(res, 200, await store.getSummary(pid));
         }
         if (method === 'GET' && resource === 'ads' && !wid) {
           const filters = {
@@ -176,6 +131,8 @@ export async function startServer({
             q: params.get('q') || '',
             format: params.get('format') || '',
           };
+          if (params.has('watchId')) filters.watchId = params.get('watchId');
+          if (params.has('group')) filters.group = params.get('group');
           return json(res, 200, await store.listAdsForProfile(pid, filters, new Date()));
         }
       }

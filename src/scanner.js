@@ -1,10 +1,13 @@
 import { basename, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
-import { BlockedError, buildSearchCreativesReq, parseCreatives } from './atc.js';
+import {
+  BlockedError, buildCreativeDetailReq, buildSearchCreativesReq, parseCreativeRegions, parseCreatives,
+} from './atc.js';
 
 const MAX_PAGES_FIRST = 5;
 const MAX_PAGES_LATER = 10;
+const MAX_DETAILS = 60;
 const RUNNING_WINDOW = 2 * 24 * 60 * 60 * 1000;
 
 export async function runScan({
@@ -16,6 +19,7 @@ export async function runScan({
   const changes = [];
   const runningSince = scannedAt.getTime() - RUNNING_WINDOW;
 
+  let detailCalls = 0;
   let retries = 0;
   let captures = 0;
   let nextCaptureAt = 0;
@@ -74,6 +78,18 @@ export async function runScan({
         total: searchAds.length,
       });
 
+      if (detailCalls < MAX_DETAILS && store.creativesNeedingRegions) {
+        const pending = await store.creativesNeedingRegions(MAX_DETAILS - detailCalls, {
+          watchId: watch.id, now: scannedAt,
+        });
+        for (const creative of pending) {
+          if (detailCalls >= MAX_DETAILS) break;
+          detailCalls++;
+          const detail = await client.rpc('LookupService/GetCreativeById', buildCreativeDetailReq(creative));
+          await store.setCreativeRegions(creative.creativeId, parseCreativeRegions(detail));
+        }
+      }
+
       const fresh = new Set(newIds);
       for (const id of [...newIds, ...Object.keys(file.ads).filter(id => !fresh.has(id))]) {
         if (captures >= 40) break;
@@ -104,6 +120,7 @@ export async function runScan({
     log(result.error);
   }
 
-  await record({ at: scannedAt.toISOString(), ...result, changes });
+  const scanId = await record({ at: scannedAt.toISOString(), ...result, changes });
+  if (scanId != null) await store.recordGroupSnapshots?.(scanId, scannedAt);
   return result;
 }

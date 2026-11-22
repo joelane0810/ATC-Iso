@@ -137,52 +137,45 @@ test('Task 3 HTTP API and static files', async (t) => {
   assert.equal((await get('/images/..%2Fpackage.json')).status, 404);
 });
 
-test('profile summary and ads only include search ads from its own watches', async t => {
+test('profile summary and group filters follow the API contract', async t => {
   const root = await mkdtemp(join(tmpdir(), 'atc-summary-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const store = createStore(root);
   const dai = store.addProfile('Dai');
   const lan = store.addProfile('Lan');
   const project = store.addWatch(dai.id, 'example.com', null, 'project');
-  store.addWatch(lan.id, 'example.com');
+  const competitor = store.addWatch(dai.id, 'AR1');
   const other = store.addWatch(lan.id, 'other.com');
-  const at = '2026-11-22T02:00:00.000Z';
-  const previousScanAt = '2026-11-21T02:00:00.000Z';
+  const at = new Date().toISOString();
   const request = await startRequest(t, { store, port: 0 });
   const summary = '/api/profiles/dai/summary';
+  const emptyWatch = watch => ({
+    watchId: watch.id, label: watch.label, kind: watch.kind, runningNow: 0, runningBefore: 0, groups: [],
+  });
   assert.deepEqual(await (await request(summary)).json(), {
-    lastScan: null, previousScanAt: null, totals: { new: 0, stopped: 0, running: 0 },
-    byWatch: [{ watchId: project.id, label: project.label, kind: 'project', new: 0, stopped: 0, running: 0, total: 0 }],
-    newAds: [], stoppedAds: [],
+    lastScan: null, previousScanAt: null,
+    totals: { newGroups: 0, increased: 0, decreased: 0, stopped: 0, runningAds: 0 },
+    watches: [emptyWatch(project), emptyWatch(competitor)],
   });
 
-  const fresh = Array.from({ length: 25 }, (_, i) => ({ creativeId: 'new-' + i, lastShown: at }));
-  store.mergeAds(project, [{ creativeId: 'stopped', lastShown: '2026-11-19T02:00:00Z' }], previousScanAt);
-  store.mergeAds(project, fresh.slice(0, 1), previousScanAt);
-  const { file } = store.mergeAds(project, fresh.slice(1), at);
-  file.ads.legacy = { creativeId: 'legacy', lastShown: at, firstSeenByUs: at };
-  await writeFile(join(root, 'data', 'ads', project.id + '.json'), JSON.stringify(file));
-  store.mergeAds(other, [{ creativeId: 'other', lastShown: at }], at);
+  const ad = { creativeId: 'CR1', advertiserId: 'AR1', domain: 'example.com', lastShown: at, format: 'text' };
+  store.mergeAds(project, [ad], at);
+  store.mergeAds(competitor, [ad], at);
+  store.mergeAds(other, [{ ...ad, creativeId: 'other' }], at);
+  store.setCreativeRegions('CR1', [{ regionId: 2840, lastShown: at }]);
+  store.recordGroupSnapshots(store.appendScanLog({ at, status: 'ok' }), at);
 
-  store.appendScanLog({ at: previousScanAt, status: 'ok' });
-  store.appendScanLog({ at, status: 'blocked', changes: [
-    { watchId: project.id, kind: 'competitor', newIds: [...fresh.map(ad => ad.creativeId), 'legacy'], stoppedIds: ['stopped'] },
-    { watchId: other.id, newIds: ['other'], stoppedIds: [] },
-  ] });
-  store.appendScanLog({ at: '2026-11-23T02:00:00Z', status: 'error' });
-
-  const ads = await (await request('/api/profiles/dai/ads')).json();
-  assert.equal(ads.length, 26);
-  assert.ok(ads.every(ad => ad.platform === 'search' && ad.watchKind === 'project' && ad.watchId === project.id));
   const result = await (await request(summary)).json();
-  assert.deepEqual(result.lastScan, { at, status: 'blocked' });
-  assert.equal(result.previousScanAt, previousScanAt);
-  assert.deepEqual(result.totals, { new: 25, stopped: 1, running: 25 });
-  assert.deepEqual(result.byWatch, [
-    { watchId: project.id, label: project.label, kind: 'project', new: 25, stopped: 1, running: 25, total: 26 },
-  ]);
-  assert.equal(result.newAds.length, 24);
-  assert.ok(result.newAds.every(ad => ad.creativeId !== 'new-0'));
-  assert.ok(result.newAds.every(ad => ad.watchKind === 'project' && ad.watchLabel === project.label));
-  assert.deepEqual(result.stoppedAds.map(ad => ad.creativeId), ['stopped']);
+  assert.deepEqual(result.lastScan, { at, status: 'ok' });
+  assert.equal(result.previousScanAt, null);
+  assert.deepEqual(result.totals, { newGroups: 2, increased: 0, decreased: 0, stopped: 0, runningAds: 2 });
+  assert.deepEqual(result.watches.map(watch => watch.groups[0].key), ['AR1', 'example.com']);
+  const adsUrl = '/api/profiles/dai/ads';
+  const ads = await (await request(`${adsUrl}?watchId=${project.id}&group=AR1&format=text&q=example`)).json();
+  assert.equal(ads.length, 1);
+  assert.equal(ads[0].watchKind, 'project');
+  assert.deepEqual(ads[0].regions, [{ regionId: 2840, iso: 'US', lastShown: at }]);
+  assert.deepEqual(await (await request(`${adsUrl}?watchId=${project.id}&group=example.com`)).json(), []);
+  assert.deepEqual(await (await request(`${adsUrl}?watchId=${other.id}`)).json(), []);
+  assert.equal((await (await request(adsUrl)).json()).length, 1);
 });
