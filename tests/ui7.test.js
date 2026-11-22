@@ -128,7 +128,7 @@ async function boot({ reply, browser = {}, dates = { refDate, minDate }, storage
     },
   });
   assert.equal(get('error').hidden, true);
-  const rows = () => get('overview-watches').children[0].children[1].children.filter((row) => row.className !== 'overview-folder');
+  const rows = () => get('overview-watches').children[0].children[1].children.filter((row) => !row.className?.startsWith('overview-folder '));
   const advance = (delay) => {
     const [id, { callback }] = [...timers].find(([, timer]) => timer.delay === delay);
     timers.delete(id);
@@ -165,7 +165,10 @@ test('overview selects the period, displays the seven totals and expands only fi
   assert.deepEqual(get('totals').children.map((card) => card.children[0].textContent),
     ['Dự án mới', 'Nhà QC mới', 'Ads mới', 'Tăng', 'Giảm', 'Đã dừng', 'Ads đang chạy']);
   assert.equal(rows()[1].hidden, true);
-  assert.equal(rows()[0].children[2].textContent, '2 (+1)');
+  const [running, delta] = rows()[0].children[2].children[0].children;
+  assert.equal(running.textContent, '2');
+  assert.equal(delta.textContent, '▲ +1');
+  assert.equal(delta.className, 'delta-up');
   assert.equal(rows()[0].children[4].children[0].children[0].attributes.get('points').split(' ').length, 30);
   toggle(rows()[0]).onclick();
   const panel = rows()[1].children[0];
@@ -398,9 +401,12 @@ test('all time displays historical totals and latest-day counts without comparis
   assert.equal(get('comparison-note').hidden, false);
   assert.equal(get('comparison').textContent, '');
   assert.deepEqual(get('totals').children.map((card) => card.children.map((child) => child.textContent)), [
-    ['Tổng ads trong dữ liệu', '29'], ['Ads đang chạy (ngày dữ liệu mới nhất)', '4'],
+    ['Tổng ads trong dữ liệu', '29'], ['Ads đang chạy', '4'],
   ]);
-  assert.deepEqual(rows()[0].children.slice(2, 4).map((cell) => cell.textContent), ['28', '2']);
+  const [, , historical, latest] = rows()[0].children;
+  assert.equal(historical.textContent, '28');
+  assert.deepEqual(latest.children[0].children.map((child) => child.textContent), ['2']);
+  assert.deepEqual(get('totals').children.map((card) => card.className), ['total tone-running', 'total tone-new']);
   toggle(rows()[0]).onclick();
   const [heading, counts] = groupToggle(rows()[1].children[0].children[0]).children;
   assert.deepEqual(heading.children.map((child) => child.textContent), ['Dự án 0']);
@@ -666,7 +672,7 @@ test('folders support create, rename, same-kind drop, menu moves, retained watch
   assert.equal(title().textContent, 'Nhóm A · 1');
   assert.equal(sidebarFolder(get, 'competitor', -1).children[0].children[0].textContent, 'Không nhóm · 0');
   const body = get('overview-watches').children[0].children[1];
-  const headings = body.children.filter((row) => row.className === 'overview-folder');
+  const headings = body.children.filter((row) => row.className?.startsWith('overview-folder '));
   const overview = headings[0].children[0].children[0];
   assert.match(overview.textContent, /Nhóm A · Đối thủ · 1 mục · 2 ads đang chạy · 1 ads mới/);
   overview.onclick();

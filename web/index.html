@@ -16,8 +16,8 @@
         <input name="input" aria-label="Tìm nhà quảng cáo hoặc tên miền" autocomplete="off"
           placeholder="Tìm nhà quảng cáo hoặc dán đường dẫn" required disabled>
         <div class="watch-kinds" role="group" aria-label="Loại theo dõi">
-          <button id="kind-competitor" type="button" aria-pressed="true" disabled>Đối thủ</button>
-          <button id="kind-project" type="button" aria-pressed="false" disabled>Dự án</button>
+          <button id="kind-competitor" class="kind-competitor" type="button" aria-pressed="true" disabled>Đối thủ</button>
+          <button id="kind-project" class="kind-project" type="button" aria-pressed="false" disabled>Dự án</button>
         </div>
         <button type="submit" aria-label="Thêm theo dõi" title="Thêm theo dõi" disabled>↵</button>
         <div id="suggestions" class="suggestions" aria-label="Gợi ý theo dõi" hidden></div>
@@ -42,9 +42,12 @@
         <button id="home" class="watch-choice" type="button" aria-pressed="true">
           <span aria-hidden="true">▦</span> Tổng quan
         </button>
-        <div class="watch-group">
+        <div class="watch-group kind-competitor">
           <details id="group-competitor" open>
-            <summary>Đối thủ</summary>
+            <summary class="watch-group-title">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="4.5" r="2.5"/><path d="M2.5 14v-1.5a5.5 5.5 0 0 1 11 0V14"/></svg>
+              Đối thủ
+            </summary>
             <div class="watch-tools sidebar-tools">
               <button id="add-competitor" type="button" aria-label="Thêm đối thủ" disabled>+ Thêm</button>
               <button id="new-group-competitor" type="button" disabled>+ Nhóm</button>
@@ -55,9 +58,12 @@
             <ul id="watches-competitor"></ul>
           </details>
         </div>
-        <div class="watch-group">
+        <div class="watch-group kind-project">
           <details id="group-project" open>
-            <summary>Dự án</summary>
+            <summary class="watch-group-title">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m8 1.5 6 3.3v6.4l-6 3.3-6-3.3V4.8zM2 4.8l6 3.3 6-3.3M8 8.1v6.4"/></svg>
+              Dự án
+            </summary>
             <div class="watch-tools sidebar-tools">
               <button id="add-project" type="button" aria-label="Thêm dự án" disabled>+ Thêm</button>
               <button id="new-group-project" type="button" disabled>+ Nhóm</button>
@@ -116,7 +122,7 @@
           </form>
         </dialog>
         <div id="overview">
-          <p id="comparison-note" hidden>Chọn khoảng ngày để so sánh</p>
+          <p id="comparison-note" hidden><span aria-hidden="true">ⓘ</span> Chọn khoảng ngày để so sánh</p>
           <div id="totals" class="totals" role="group" aria-label="Lọc theo thay đổi"></div>
           <div id="overview-watches"></div>
         </div>

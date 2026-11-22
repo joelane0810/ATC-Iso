@@ -167,7 +167,7 @@ async function loadGrid(results, groupResponse, storage = new Map(), browser = {
     ...browser,
   });
   assert.equal(nodes.get('error').hidden, true);
-  const rows = () => nodes.get('overview-watches').children[0].children[1].children.filter((row) => row.className !== 'overview-folder');
+  const rows = () => nodes.get('overview-watches').children[0].children[1].children.filter((row) => !row.className?.startsWith('overview-folder '));
   const expand = (index = 0) => {
     rows()[index * 2].children[0].children[0].onclick();
     return rows()[index * 2 + 1].children[0].children;
@@ -438,9 +438,12 @@ test('overview shows grouped changes, stable watch colors and all seven totals',
   assert.equal(nodes.get('range-value').textContent, 'Hôm nay');
   assert.equal(nodes.get('comparison').textContent, 'So với 20/11 – 20/11');
   const [competitor, , project] = rows();
-  assert.equal(competitor.children[2].textContent, '5 (−2)');
+  const [running, delta] = competitor.children[2].children[0].children;
+  assert.equal(running.textContent, '5');
+  assert.equal(delta.textContent, '▼ −2');
+  assert.equal(delta.className, 'delta-down');
   assert.equal(competitor.children[4].children[0].attributes.get('role'), 'img');
-  assert.equal(project.children[1].textContent, 'Dự án');
+  assert.equal(project.children[1].children[0].textContent, 'Dự án');
   const sidebar = sidebarRow((id) => nodes.get(id), 'competitor').children[0];
   const dotStyle = (name) => name.children[0].attributes.get('style');
   assert.match(dotStyle(sidebar.children[0]), /^--watch-color: #[a-f0-9]{6}$/);

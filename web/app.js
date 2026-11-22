@@ -33,10 +33,10 @@ let ads = [];
 const kindLabels = { competitor: 'Đối thủ', project: 'Dự án' };
 const groupLabels = { increase: 'Tăng', decrease: 'Giảm', stopped: 'Đã dừng', steady: 'Ổn định' };
 const overviewTotals = [
-  ['newProjects', 'Dự án mới', 'new'], ['newAdvertisers', 'Nhà QC mới', 'new'],
+  ['newProjects', 'Dự án mới', 'competitor'], ['newAdvertisers', 'Nhà QC mới', 'project'],
   ['newAds', 'Ads mới', 'new'], ['increased', 'Tăng', 'increase'],
   ['decreased', 'Giảm', 'decrease'], ['stopped', 'Đã dừng', 'stopped'],
-  ['runningAds', 'Ads đang chạy', 'steady'],
+  ['runningAds', 'Ads đang chạy', 'running'],
 ];
 const watchColors = [
   '#00796b', '#3949ab', '#ad1457', '#8d6e00', '#6a1b9a',
@@ -436,9 +436,17 @@ function renderWatchItem(watch, kind, management) {
   row.className = 'watch-item';
   const choose = button('', () => chooseWatch(watch.id), 'watch-choice');
   choose.setAttribute('aria-pressed', String(watchId === watch.id));
-  const { runningNow = 0 } = watchCounts.get(watch.id) ?? {};
-  const counts = element('span', formatCount.format(runningNow) + ' ads đang chạy');
+  const { runningNow = 0, newAds = 0 } = watchCounts.get(watch.id) ?? {};
+  const counts = element('span');
   counts.className = 'watch-counts';
+  const running = element('span', formatCount.format(runningNow) + ' ads đang chạy');
+  running.className = 'count-pill';
+  counts.append(running);
+  if (newAds > 0) {
+    const fresh = element('span', formatCount.format(newAds) + ' ads mới');
+    fresh.className = 'count-pill count-new';
+    counts.append(fresh);
+  }
   choose.append(watchName('strong', watch.label, watch.id), counts);
   const scanWatch = scanButton('⟳', watch.id, 'Quét ' + watch.label);
   scanWatch.className = 'sidebar-scan';
@@ -529,6 +537,7 @@ function renderWatches() {
     byId('watches-' + kind).replaceChildren(...buckets.map((group) => renderWatchBucket(group, management)));
   }
   byId('trash-open').disabled = !management;
+  byId('trash-open').className = trashedWatches.length ? 'has-trash' : '';
   byId('trash-count').textContent = formatCount.format(trashedWatches.length);
   if (byId('trash-dialog').open) renderTrash();
 }
@@ -862,11 +871,12 @@ function renderOverview() {
   byId('comparison-note').hidden = !allTime;
   if (allTime) {
     byId('totals').replaceChildren(...[
-      ['Tổng ads trong dữ liệu', summary?.watches.reduce((sum, watch) => sum + totalWatchAds(watch), 0) ?? 0],
-      ['Ads đang chạy (ngày dữ liệu mới nhất)', summary?.totals.runningAds ?? 0],
-    ].map(([label, count]) => {
+      ['Tổng ads trong dữ liệu', summary?.watches.reduce((sum, watch) => sum + totalWatchAds(watch), 0) ?? 0, 'running'],
+      ['Ads đang chạy', summary?.totals.runningAds ?? 0, 'new'],
+    ].map(([label, count, tone]) => {
       const card = element('div');
-      card.className = 'total tone-steady';
+      card.className = 'total tone-' + tone;
+      if (tone === 'new') card.title = 'Ads đang chạy trong ngày dữ liệu mới nhất';
       card.append(element('span', label), element('strong', formatCount.format(count)));
       return card;
     }));
@@ -941,7 +951,7 @@ function renderOverviewWatches() {
       if (!rows.length) continue;
       const key = JSON.stringify([kind, folder.id]);
       const header = element('tr');
-      header.className = 'overview-folder';
+      header.className = 'overview-folder kind-' + kind;
       const cell = element('td');
       cell.setAttribute('colspan', labels.length);
       const open = !collapsedOverview.has(key);
@@ -1009,12 +1019,26 @@ function overviewWatchRows(watch, groups, columns, allTime) {
   row.onclick = (event) => {
     if (!event.target.closest('button')) update();
   };
+  const kind = kindOf(watch);
+  const type = element('span', kindLabels[kind]);
+  type.className = 'kind-chip kind-' + kind;
+  const running = element('strong', formatCount.format(watch.runningNow));
+  const counts = element('span');
+  counts.className = 'overview-counts';
+  counts.append(running);
+  if (!allTime) {
+    const arrow = watch.delta > 0 ? '▲ ' : watch.delta < 0 ? '▼ ' : '';
+    const delta = element('span', arrow + signed(watch.delta));
+    delta.className = watch.delta > 0 ? 'delta-up' : watch.delta < 0 ? 'delta-down' : 'delta-steady';
+    counts.append(delta);
+  }
+  const scan = scanButton('⟳ Quét', watch.watchId, 'Quét ' + watch.label);
+  scan.className = 'overview-scan';
   const values = [
-    toggle, kindLabels[watch.kind],
-    ...(allTime ? [formatCount.format(totalWatchAds(watch)), formatCount.format(watch.runningNow)]
-      : [formatCount.format(watch.runningNow) + ' (' + signed(watch.delta) + ')',
-        formatCount.format(watch.newAds), sparkline(watch.spark)]),
-    scanButton('Quét', watch.watchId, 'Quét ' + watch.label),
+    toggle, type,
+    ...(allTime ? [formatCount.format(totalWatchAds(watch)), counts]
+      : [counts, formatCount.format(watch.newAds), sparkline(watch.spark)]),
+    scan,
   ];
   for (const value of values) {
     const cell = element('td');
@@ -1591,7 +1615,7 @@ function showDetail(ad) {
     const add = async (groupId) => {
       await addWatch(value, kind, groupId, true);
     };
-    const control = mutationButton(action, () => add(null));
+    const control = mutationButton(action, () => add(null), 'kind-' + kind);
     control.disabled = followed;
     if (followed) control.setAttribute('aria-label', 'Đang theo dõi ' + label);
     follow.append(control);
@@ -2026,6 +2050,7 @@ byId('trash-open').onclick = () => run(async () => {
   const items = await api(profilePath(id) + '/trash');
   if (profile.value !== id || byId('trash-dialog').open) return;
   trashedWatches = items;
+  byId('trash-open').className = items.length ? 'has-trash' : '';
   byId('trash-count').textContent = formatCount.format(items.length);
   trashSelection.clear();
   renderTrash();
