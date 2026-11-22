@@ -117,8 +117,10 @@ function calendarDateToIso(value) {
 }
 
 export function parseCreativeRegions(json) {
-  if (!Array.isArray(json?.[17])) return null;
-  return json[17].flatMap(region => {
+  // Phản hồi thật đặt danh sách nơi hiển thị ở json["1"]["17"].
+  const list = Array.isArray(json?.[1]?.[17]) ? json[1][17] : json?.[17];
+  if (!Array.isArray(list)) return null;
+  return list.flatMap(region => {
     const regionId = Number(region?.[1]);
     const lastShown = calendarDateToIso(region?.[5]);
     if (!Number.isSafeInteger(regionId) || regionId <= 0 || !lastShown) return [];

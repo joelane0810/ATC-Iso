@@ -88,3 +88,12 @@ test('creative detail distinguishes omitted countries from a confirmed empty lis
   assert.equal(parseCreativeRegions({}), null);
   assert.deepEqual(parseCreativeRegions({ 17: [] }), []);
 });
+
+test('parseCreativeRegions reads the real nested GetCreativeById shape', async () => {
+  const { parseCreativeRegions } = await import('../src/atc.js');
+  const real = {"1":{"1":"AR05501100765344694273","2":"CR02578544063523323905","4":{"1":"1795292602","2":466232000},"8":1,"17":[{"1":2250,"4":20261121,"5":20261121,"6":20270219,"7":20261121}],"19":{"4":20261121}}};
+  assert.deepEqual(parseCreativeRegions(real), [
+    { regionId: 2250, firstShown: '2026-11-21T00:00:00.000Z', lastShown: '2026-11-21T00:00:00.000Z' },
+  ]);
+  assert.equal(parseCreativeRegions({ "1": { "1": "AR1" } }), null);
+});
