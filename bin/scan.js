@@ -1,3 +1,4 @@
+import { existsSync, rmSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
@@ -105,6 +106,15 @@ export function scanFromArgs(args, options) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  // Tự cập nhật máy chủ: có tệp cờ data/.restart-server và tiến trình này do máy chủ web mở
+  // -> tắt máy chủ cũ để launchd bật lại bằng mã mới, rồi dừng (không quét lượt này).
+  const restartFlag = join(projectRoot, 'data', '.restart-server');
+  if (typeof process.send === 'function' && existsSync(restartFlag)) {
+    rmSync(restartFlag, { force: true });
+    console.error('Khởi động lại máy chủ web để dùng bản mới.');
+    process.kill(process.ppid, 'SIGTERM');
+    process.exit(0);
+  }
   const notify = (state) => {
     if (process.connected) process.send(state);
   };
