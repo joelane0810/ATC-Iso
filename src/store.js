@@ -440,6 +440,8 @@ export function createStore(root, options) {
           JOIN watch_creatives wc ON wc.watch_id = p.watch_id
           WHERE p.profile_id = ? AND p.deleted_at IS NULL AND wc.platform = 'search') matches ON matches.creative_id = r.creative_id
         ORDER BY r.region_id`, pid));
+      const sources = new Map(all(`SELECT id, domain, domain_source AS domainSource FROM creatives
+        WHERE domain_source IS NOT NULL`).map(row => [row.id, row]));
       return [...creatives.values()].filter((ad) => {
         if (filter === 'new' && !ad.isNew) return false;
         if (filter === 'running' && !ad.isRunning) return false;
@@ -449,7 +451,11 @@ export function createStore(root, options) {
           (value) => value?.toLowerCase().includes(query),
         );
       }).sort((a, b) => Date.parse(b.firstSeenByUs) - Date.parse(a.firstSeenByUs))
-        .map(ad => ({ ...ad, regions: byCreative.get(ad.creativeId) ?? [] }));
+        .map(ad => {
+          const source = sources.get(ad.creativeId);
+          return { ...ad, ...(source ? { domain: source.domain ?? ad.domain, domainSource: source.domainSource } : {}),
+            regions: byCreative.get(ad.creativeId) ?? [] };
+        });
     },
     imagesDir() {
       const directory = resolve(data, 'images');

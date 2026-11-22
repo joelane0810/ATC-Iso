@@ -718,3 +718,18 @@ test('nâng DB phiên bản 4 phân loại lại mục theo dõi đúng một l�
   assert.equal(reopened.getWatchlist(id)[0].kind, 'competitor');
   assert.equal(kind.get(domain.id).kind, 'competitor');
 });
+
+test('listAdsForProfile exposes OCR domain source', async () => {
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { createStore } = await import('../src/store.js');
+  const store = createStore(mkdtempSync(join(tmpdir(), 'atc-ocr-')));
+  const profile = store.addProfile("Dai");
+  const watch = store.addWatch(profile.id, 'AR01234567890123456789');
+  store.mergeAds(watch, [{ creativeId: "CR1", advertiserId: 'AR01234567890123456789', advertiserName: 'X', format: 'image', platform: 'search', firstShown: '2026-11-20T00:00:00Z', lastShown: '2026-11-21T00:00:00Z' }], new Date('2026-11-21T15:00:00Z'));
+  store.setCreativeDomain('CR1', 'shop.com', 'ocr');
+  const [ad] = store.listAdsForProfile(profile.id, {}, new Date('2026-11-21T15:00:00Z'));
+  assert.equal(ad.domain, 'shop.com');
+  assert.equal(ad.domainSource, 'ocr');
+});
