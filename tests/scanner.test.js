@@ -222,3 +222,19 @@ test('scan continues past unconfirmed ads and records search changes at the two-
     newIds: ['new'], stoppedIds: ['newlyStopped'], running: 2, total: 5,
   }]);
 });
+
+test('later scans stop after 10 pages even when every page has new ads', async () => {
+  const { runScan } = await import('../src/scanner.js');
+  const { createStore } = await import('../src/store.js');
+  const fs = await import('node:fs'); const os = await import('node:os'); const path = await import('node:path');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cap-'));
+  const store = createStore(root);
+  const p = store.addProfile('A'); store.addWatch(p.id, 'cap.com');
+  let n = 0;
+  const page = () => { const id = `CR${n++}`; return { ads: [{ creativeId: id, advertiserId: 'AR1', format: 'text', firstShown: '2026-11-20T00:00:00Z', lastShown: '2026-11-22T00:00:00Z', domain: 'cap.com' }], nextToken: `t${n}` }; };
+  const client = { calls: 0, async rpc() { this.calls++; return page(); }, async captureImage() { return null; }, async close() {} };
+  await runScan({ store, client, log: () => {} });
+  client.calls = 0;
+  await runScan({ store, client, log: () => {} });
+  assert.equal(client.calls, 10);
+});

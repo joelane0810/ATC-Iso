@@ -3,6 +3,8 @@ import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import { BlockedError, buildSearchCreativesReq, parseCreatives } from './atc.js';
 
+const MAX_PAGES_FIRST = 5;
+const MAX_PAGES_LATER = 10;
 const RUNNING_WINDOW = 2 * 24 * 60 * 60 * 1000;
 
 export async function runScan({
@@ -44,7 +46,9 @@ export async function runScan({
           }
         }
 
-        if (previous ? !hasUnconfirmedAds : pages >= 5) break;
+        log(`Đang quét ${watch.label || watch.value}: trang ${pages}, ${ads.size} mẫu`);
+        if (pages >= (previous ? MAX_PAGES_LATER : MAX_PAGES_FIRST)) break;
+        if (previous && !hasUnconfirmedAds) break;
         if (!nextToken || tokens.has(nextToken)) break;
         tokens.add(nextToken);
         pageToken = nextToken;
