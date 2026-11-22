@@ -966,7 +966,8 @@ function signedCount(count) {
 
 function renderOverviewTotals(totals, comparisonDates) {
   const buttons = new Map();
-  const row = (key, label, tone, symbol, title, value, note, noteTone) => {
+  // Thẻ số: nhãn · số lớn · đơn vị (đếm cái gì) · thay đổi ads.
+  const card = (key, label, tone, symbol, title, value, unit, note, noteTone) => {
     const button = element('button');
     button.type = 'button';
     button.className = 'overview-total tone-' + tone;
@@ -979,15 +980,16 @@ function renderOverviewTotals(totals, comparisonDates) {
     const heading = element('span');
     heading.className = 'overview-total-label';
     heading.append(icon, element('span', label));
-    const details = element('span');
-    details.className = 'overview-total-value';
-    details.append(element('strong', value));
+    const number = element('strong', value);
+    number.className = 'overview-total-number';
+    const unitText = element('span', unit);
+    unitText.className = 'overview-total-unit';
+    button.append(heading, number, unitText);
     if (note) {
       const change = element('small', note);
-      if (noteTone) change.className = noteTone;
-      details.append(change);
+      change.className = 'overview-total-note' + (noteTone ? ' ' + noteTone : '');
+      button.append(change);
     }
-    button.append(heading, details);
     buttons.set(key, button);
     button.onclick = () => {
       overviewFilter = key === 'runningAds' || overviewFilter === key ? '' : key;
@@ -1000,45 +1002,39 @@ function renderOverviewTotals(totals, comparisonDates) {
     };
     return button;
   };
-  const block = (title, ...rows) => {
+  const block = (title, className, ...cards) => {
     const section = element('section');
-    section.className = 'overview-total-block';
+    section.className = 'overview-total-block ' + className;
     const list = element('div');
     list.className = 'overview-total-rows';
-    list.append(...rows);
+    list.append(...cards);
     section.append(element('h3', title), list);
     return section;
   };
-  const count = (key) => totals?.[key] == null ? '—' : formatCount.format(totals[key]);
+  const count = (value) => value == null ? '—' : formatCount.format(value);
   const delta = totals?.runningAds - totals?.runningAdsPrev;
-  const ads = block('Quảng cáo',
-    row('runningAds', 'Đang chạy', 'running', '●', 'Số quảng cáo có hiển thị trong khoảng ngày đã chọn.',
-      count('runningAds'), comparisonDates && Number.isFinite(delta) ? signedCount(delta) + ' so với ' + comparisonDates : '',
-      delta > 0 ? 'delta-up' : delta < 0 ? 'delta-down' : ''),
-    row('newAds', 'Mới bắt đầu chạy', 'new', '★', 'Số quảng cáo bắt đầu chạy trong khoảng ngày đã chọn.',
-      totals?.newAds == null ? '—' : count('newAds') + ' ads'));
-  const competitors = block('Đối thủ thay đổi',
-    row('newGroups', 'Mới xuất hiện', 'new', '★', 'Dự án và nhà quảng cáo lần đầu xuất hiện trong khoảng ngày đã chọn.',
-      totals ? count('newProjects') + ' dự án mới · ' + count('newAdvertisers') + ' nhà quảng cáo mới' : '—'),
+  const tone = (value) => value > 0 ? 'delta-up' : value < 0 ? 'delta-down' : '';
+  const ads = block('Quảng cáo', 'overview-ads',
+    card('runningAds', 'Đang chạy', 'running', '●', 'Số quảng cáo có hiển thị trong khoảng ngày đã chọn.',
+      count(totals?.runningAds), 'ads',
+      comparisonDates && Number.isFinite(delta) ? signedCount(delta) + ' so với ' + comparisonDates : '', tone(delta)),
+    card('newAds', 'Mới bắt đầu chạy', 'new', '★', 'Số quảng cáo bắt đầu chạy trong khoảng ngày đã chọn.',
+      count(totals?.newAds), 'ads'));
+  const newTotal = totals ? (totals.newProjects ?? 0) + (totals.newAdvertisers ?? 0) : null;
+  const competitors = block('Đối thủ thay đổi', 'overview-competitors',
+    card('newGroups', 'Mới xuất hiện', 'new', '★', 'Dự án và nhà quảng cáo lần đầu xuất hiện trong khoảng ngày đã chọn.',
+      count(newTotal), totals ? count(totals.newProjects) + ' dự án · ' + count(totals.newAdvertisers) + ' nhà QC' : ''),
     ...[
-      ['increased', 'increase', '↑', 'Kỳ này chạy nhiều quảng cáo hơn kỳ trước.'],
-      ['decreased', 'decrease', '↓', 'Kỳ này vẫn chạy quảng cáo nhưng ít hơn kỳ trước.'],
-      ['stopped', 'stopped', '■', 'Kỳ trước có chạy, kỳ này không còn ads nào.'],
+      ['increased', 'increase', '↑', 'Số nhà quảng cáo/dự án kỳ này chạy NHIỀU ads hơn kỳ trước.'],
+      ['decreased', 'decrease', '↓', 'Số nhà quảng cáo/dự án kỳ này vẫn chạy nhưng ÍT ads hơn kỳ trước.'],
+      ['stopped', 'stopped', '■', 'Số nhà quảng cáo/dự án kỳ trước có chạy, kỳ này không còn ads nào.'],
     ].map(([key, status, symbol, hint]) => {
-      const { advertiser, domain } = totals?.byType?.[key] ?? {};
-      const counts = [
-        advertiser && formatCount.format(advertiser) + ' nhà quảng cáo',
-        domain && formatCount.format(domain) + ' dự án',
-      ].filter(Boolean).join(' · ');
+      const { advertiser = 0, domain = 0 } = totals?.byType?.[key] ?? {};
+      const unit = advertiser && domain ? formatCount.format(advertiser) + ' nhà QC · ' + formatCount.format(domain) + ' dự án'
+        : advertiser ? 'nhà quảng cáo' : domain ? 'dự án' : 'nhà QC / dự án';
       const change = totals?.[key + 'Ads'];
-      const button = row(key, groupLabels[status], status, symbol, hint,
-        totals ? counts || 'Không có' : '—', change == null ? '' : signedCount(change) + ' ads');
-      if (status === 'stopped') {
-        const explanation = element('small', 'kỳ trước có chạy, kỳ này không còn ads nào');
-        explanation.className = 'overview-total-explanation';
-        button.append(explanation);
-      }
-      return button;
+      return card(key, groupLabels[status], status, symbol, hint, count(totals?.[key]), unit,
+        change == null ? '' : signedCount(change) + ' ads', tone(change));
     }));
   byId('totals').replaceChildren(ads, competitors);
 }

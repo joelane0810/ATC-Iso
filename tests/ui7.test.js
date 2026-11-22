@@ -169,11 +169,11 @@ test('overview selects the period, displays grouped totals and expands only five
   const [adsBlock, competitorsBlock] = get('totals').children;
   const [runningTotal, newAdsTotal] = adsBlock.children[1].children;
   const [newGroupsTotal, , , stoppedTotal] = competitorsBlock.children[1].children;
-  assert.deepEqual(stoppedTotal.children[1].children.map((node) => node.textContent), ['Không có', '0 ads']);
-  const [runningCount, runningChange] = runningTotal.children[1].children;
+  assert.deepEqual(stoppedTotal.children.slice(1).map((node) => node.textContent), ['1', 'nhà QC / dự án', '0 ads']);
+  const [, runningCount, , runningChange] = runningTotal.children;
   assert.equal(runningCount.textContent, '4');
   assert.equal(runningChange.textContent, '+1 so với 21/11');
-  assert.equal(runningChange.className, 'delta-up');
+  assert.equal(runningChange.className, 'overview-total-note delta-up');
   assert.equal(rows()[1].hidden, true);
   const [running, delta] = rows()[0].children[2].children[0].children;
   assert.equal(running.textContent, '2');
@@ -414,7 +414,7 @@ test('Vietnamese date ranges filter grids and groups by overlap and survive relo
 test('all time displays historical totals and latest-day counts without comparisons', async () => {
   const { get, rows, requests } = await boot();
   const [runningTotal, newAdsTotal] = get('totals').children[0].children[1].children;
-  const change = runningTotal.children[1].children[1];
+  const change = runningTotal.children[3];
   assert.equal(change.textContent, '0 so với 21/11');
   assert.ok(!['delta-up', 'delta-down'].includes(change.className));
   newAdsTotal.onclick();

@@ -513,15 +513,14 @@ test('overview shows grouped changes, stable watch colors and the two totals blo
   const blocks = nodes.get('totals').children;
   assert.deepEqual(blocks.map((block) => block.children[0].textContent), ['Quảng cáo', 'Đối thủ thay đổi']);
   const [runningTotal, newAds, newGroups, increased, decreased, stopped] = blocks.flatMap((block) => block.children[1].children);
-  const values = (button) => button.children[1].children.map((node) => node.textContent);
-  assert.deepEqual(values(runningTotal), ['7', '−35 so với 20/11']);
-  assert.equal(runningTotal.children[1].children[1].className, 'delta-down');
-  assert.deepEqual(values(newAds), ['4 ads']);
-  assert.deepEqual(values(newGroups), ['1 dự án mới · 0 nhà quảng cáo mới']);
-  assert.deepEqual(values(increased), ['2 nhà quảng cáo · 1 dự án', '+12 ads']);
-  assert.deepEqual(values(decreased), ['8 nhà quảng cáo', '−22 ads']);
-  assert.deepEqual(values(stopped), ['13 nhà quảng cáo', '−13 ads']);
-  assert.equal(stopped.children[2].textContent, 'kỳ trước có chạy, kỳ này không còn ads nào');
+  const values = (button) => button.children.slice(1).map((node) => node.textContent);
+  assert.deepEqual(values(runningTotal), ['7', 'ads', '−35 so với 20/11']);
+  assert.equal(runningTotal.children[3].className, 'overview-total-note delta-down');
+  assert.deepEqual(values(newAds), ['4', 'ads']);
+  assert.deepEqual(values(newGroups), ['1', '1 dự án · 0 nhà QC']);
+  assert.deepEqual(values(increased), ['3', '2 nhà QC · 1 dự án', '+12 ads']);
+  assert.deepEqual(values(decreased), ['8', 'nhà quảng cáo', '−22 ads']);
+  assert.deepEqual(values(stopped), ['13', 'nhà quảng cáo', '−13 ads']);
   const visibleStatuses = () => rows().filter((_, index) => index % 2).flatMap((row) =>
     row.children[0].children.map((group) => group.children[0].children[0].children[0].children[0].textContent));
   for (const [button, status] of [[newGroups, 'Dự án mới'], [increased, 'Chạy thêm ads'],
