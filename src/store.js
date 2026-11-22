@@ -309,6 +309,12 @@ export function createStore(root, options) {
         ORDER BY domain_ocr_attempted_at, first_seen_by_us DESC, id LIMIT ?`,
       ocrCutoff(at), ...(watchId == null ? [] : [watchId]), limit);
     },
+    creativesNeedingPreviewDomains(limit, { now: at = now() } = {}) {
+      return all(`SELECT id AS creativeId, preview_url AS previewUrl FROM creatives
+        WHERE ${missingDomain} AND ${ocrDue}
+          AND preview_url GLOB 'https://displayads-formats.googleusercontent.com/*content.js*'
+        ORDER BY domain_ocr_attempted_at, first_seen_by_us DESC, id LIMIT ?`, ocrCutoff(at), limit);
+    },
     claimDomainOcr(creativeId, at = now()) {
       return Boolean(transaction(() => run(`UPDATE creatives SET domain_ocr_attempted_at = ?
         WHERE id = ? AND ${missingDomain} AND ${ocrDue}`,

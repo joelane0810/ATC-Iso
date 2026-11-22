@@ -1,6 +1,7 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { BlockedError, isBlockedResponse } from './atc.js';
 import { createDomainReader } from './domain-ocr.js';
+import { extractPreviewDomain } from './preview-domain.js';
 
 let running = false;
 
@@ -30,8 +31,22 @@ async function fetchImage(url, fetchImageResponse) {
   return null;
 }
 
+async function fetchPreview(url, fetchText) {
+  const response = await fetchText(url, { signal: AbortSignal.timeout(15_000), redirect: 'manual' });
+  const contentType = response.headers?.get('content-type') ?? '';
+  if (isBlockedResponse({ url: response.url, status: response.status, contentType }) || response.status === 403) {
+    await response.body?.cancel();
+    throw new BlockedError('Google đã chặn tải bản xem trước.');
+  }
+  if (!response.ok) {
+    await response.body?.cancel();
+    return null;
+  }
+  return response.text();
+}
+
 export async function backfillDomains({
-  store, fetchImageResponse = globalThis.fetch, createReader = createDomainReader,
+  store, fetchImageResponse = globalThis.fetch, fetchPreviewResponse = globalThis.fetch, createReader = createDomainReader,
   wait = delay, log = console.log, now = () => new Date(),
 }) {
   if (running) return;
@@ -40,7 +55,7 @@ export async function backfillDomains({
   let attempted = 0;
   let found = 0;
   try {
-    const candidates = await store.creativesNeedingDomains(500, { remoteOnly: true, now: now() });
+    const candidates = await store.creativesNeedingDomains(2000, { remoteOnly: true, now: now() });
     for (const { creativeId, imageUrl } of candidates) {
       if (!await store.claimDomainOcr(creativeId, now())) continue;
       if (attempted) await wait(300);
@@ -56,6 +71,22 @@ export async function backfillDomains({
       reader ??= await createReader();
       const domain = await reader.read(image).catch(() => null);
       if (domain && await store.setCreativeDomain(creativeId, domain)) found++;
+    }
+    // Mẫu chữ/video: tên miền nằm sẵn trong tệp xem trước của Google.
+    const previews = (await store.creativesNeedingPreviewDomains?.(1000, { now: now() })) ?? [];
+    for (const { creativeId, previewUrl } of previews) {
+      if (!await store.claimDomainOcr(creativeId, now())) continue;
+      if (attempted) await wait(300);
+      attempted++;
+      let script;
+      try {
+        script = await fetchPreview(previewUrl, fetchPreviewResponse);
+      } catch (error) {
+        if (error instanceof BlockedError) throw error;
+        continue;
+      }
+      const domain = script ? extractPreviewDomain(script) : null;
+      if (domain && await store.setCreativeDomain(creativeId, domain, 'preview')) found++;
     }
   } catch (error) {
     log(`Đọc bù tên miền dừng: ${error.message}`);

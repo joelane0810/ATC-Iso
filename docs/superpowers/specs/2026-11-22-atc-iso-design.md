@@ -103,3 +103,8 @@ Thư viện cụ thể, cấu trúc mã, kiểu dáng giao diện (theo bố c�
 - Cả máy tối đa 2 tab ATC cùng lúc (mở nhiều tab là nguyên nhân lớn bị Google khoá).
 - Trước mỗi lượt quét: đếm tab ATC đang mở ở Chrome/Brave/Edge/Arc của người dùng (macOS). Còn 2 chỗ → quét dùng 2 tab; còn 1 → dùng 1 tab (tra quốc gia trên chính tab chính); hết chỗ → chờ tối đa 10 phút (kiểm lại mỗi 30 giây), quá thì hoãn lượt, ghi lý do.
 - Trình duyệt quét tự đóng tab cũ được khôi phục và mọi tab bật ra ngoài ý muốn. Không đóng tab ở trình duyệt riêng của người dùng.
+
+## Bổ sung 22/11 23:11 — Tên miền cho mẫu chữ/video
+- Mẫu chữ/video không có ảnh: tải tệp xem trước của Google (content.js) và đọc tên miền hiển thị (visible_url → destination_url → máy chủ được liên kết nhiều nhất, ≥2 lần, bỏ máy chủ hạ tầng/Google). Nguồn ghi 'preview'.
+- Đọc bù chạy lúc bật máy chủ, sau mỗi lượt quét, và mỗi 30 phút; tối đa 2000 ảnh + 1000 bản xem trước mỗi lượt, thử lại sau 7 ngày nếu chưa ra.
+- Còn sót: mẫu Google đã gỡ ảnh/bản xem trước (trả lỗi 404/500) — không còn dữ liệu để đọc.

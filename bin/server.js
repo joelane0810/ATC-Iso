@@ -9,6 +9,8 @@ import { createStore } from '../src/store.js';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const scanScript = fileURLToPath(new URL('./scan.js', import.meta.url));
 
+let afterScan = () => {};
+
 function triggerScan(acquired, watchId) {
   return new Promise((resolve, reject) => {
     const child = fork(scanScript, watchId ? [`--watch=${watchId}`] : [], { cwd: root, stdio: ['inherit', 'inherit', 'inherit', 'ipc'] });
@@ -22,6 +24,7 @@ function triggerScan(acquired, watchId) {
     });
     child.once('error', reject);
     child.once('close', (code) => {
+      afterScan();
       if (code === 0) resolve();
       else if (!busy) reject(new Error('Tiến trình quét kết thúc bất thường.'));
     });
@@ -42,6 +45,8 @@ const server = await startServer({
 });
 const lan = Object.values(networkInterfaces()).flat().filter((a) => a && a.family === 'IPv4' && !a.internal).map((a) => a.address);
 console.log(`Mở http://127.0.0.1:${server.address().port}` + (host === '0.0.0.0' ? ` · máy cùng wifi: ${lan.map((ip) => `http://${ip}:${server.address().port}`).join(' ')}` : ''));
-setImmediate(() => {
-  void backfillDomains({ store }).catch(error => console.error(`Đọc bù tên miền: ${error.message}`));
-});
+// Đọc bù tên miền: lúc bật máy chủ, sau mỗi lượt quét và cứ 30 phút một lần.
+const runBackfill = () => void backfillDomains({ store }).catch(error => console.error(`Đọc bù tên miền: ${error.message}`));
+setImmediate(runBackfill);
+setInterval(runBackfill, 30 * 60_000).unref();
+afterScan = runBackfill;
