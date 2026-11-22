@@ -12,14 +12,20 @@ test('installer finds a Homebrew pair outside PATH and writes absolute launchd p
   const root = await mkdtemp(join(tmpdir(), 'atc installer '));
   t.after(() => rm(root, { recursive: true, force: true }));
   const home = join(root, 'Fake Home');
+  const local = join(home, '.local', 'bin');
   const brew = join(home, '.homebrew', 'bin');
   const tools = join(root, 'tools');
   const apps = join(root, 'Applications');
   const chrome = join(apps, 'Google Chrome.app', 'Contents', 'MacOS');
   const ops = join(root, 'ops');
-  for (const dir of [brew, tools, chrome, ops]) await mkdir(dir, { recursive: true });
+  for (const dir of [local, brew, tools, chrome, ops]) await mkdir(dir, { recursive: true });
   const executable = (path, body) => writeFile(path, '#!/bin/bash\n' + body + '\n', { mode: 0o755 });
-  await executable(join(brew, 'node'), 'exit 0');
+  await executable(join(local, 'node'), `[[ "$2" != 'require("node:sqlite")' ]]`);
+  await executable(join(brew, 'node'), `
+    if [[ "$2" = 'require("node:sqlite")' ]]; then
+      printf '%s' "$2" > sqlite-checked
+    fi
+    exit 0`);
   await executable(join(brew, 'npm'), '[[ "$*" = ci ]] && printf "%s" "$PWD" > npm-ran');
   await executable(join(chrome, 'Google Chrome'), 'exit 0');
   await executable(join(tools, 'uname'), 'echo Darwin');
@@ -35,6 +41,7 @@ test('installer finds a Homebrew pair outside PATH and writes absolute launchd p
     cwd: root, env: { ...process.env, HOME: home, PATH: './relative::' + tools + ':relative' },
   });
   assert.equal(await readFile(join(root, 'npm-ran'), 'utf8'), root);
+  assert.equal(await readFile(join(root, 'sqlite-checked'), 'utf8'), 'require("node:sqlite")');
   for (const job of ['server', 'scan']) {
     const plist = await readFile(join(home, 'Library', 'LaunchAgents', 'com.atciso.' + job + '.plist'), 'utf8');
     assert.ok(plist.includes('<string>' + join(brew, 'node') + '</string>'));

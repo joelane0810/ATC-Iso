@@ -159,11 +159,12 @@ test('profile summary and group filters follow the API contract', async t => {
   });
 
   const ad = { creativeId: 'CR1', advertiserId: 'AR1', domain: 'example.com', lastShown: at, format: 'text' };
-  store.mergeAds(project, [ad], at);
-  store.mergeAds(competitor, [ad], at);
-  store.mergeAds(other, [{ ...ad, creativeId: 'other' }], at);
+  const scanId = store.beginScan(at);
+  store.mergeAds(project, [ad], at, scanId);
+  store.mergeAds(competitor, [ad], at, scanId);
+  store.mergeAds(other, [{ ...ad, creativeId: 'other' }], at, scanId);
   store.setCreativeRegions('CR1', [{ regionId: 2840, lastShown: at }]);
-  store.recordGroupSnapshots(store.appendScanLog({ at, status: 'ok' }), at);
+  store.appendScanLog({ at, status: 'ok', scanId });
 
   const result = await (await request(summary)).json();
   assert.deepEqual(result.lastScan, { at, status: 'ok' });
@@ -178,4 +179,54 @@ test('profile summary and group filters follow the API contract', async t => {
   assert.deepEqual(await (await request(`${adsUrl}?watchId=${project.id}&group=example.com`)).json(), []);
   assert.deepEqual(await (await request(`${adsUrl}?watchId=${other.id}`)).json(), []);
   assert.equal((await (await request(adsUrl)).json()).length, 1);
+});
+
+test('web GET reads under a WAL writer and reports DELETE contention in Vietnamese', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'atc-web-lock-'));
+  const store = createStore(root);
+  const { DatabaseSync } = await import('node:sqlite');
+  const db = new DatabaseSync(join(root, 'data', 'atc.db'));
+  store.addProfile('Dai');
+  const request = await startRequest(t, { store, port: 0 });
+  t.after(() => {
+    db.close();
+    store.close();
+    return rm(root, { recursive: true, force: true });
+  });
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const opened = createStore(root);
+    opened.close();
+    assert.equal((await request('/api/profiles')).status, 200);
+    const write = await request('/api/profiles', { method: 'POST', body: '{"name":"Lan"}' });
+    assert.equal(write.status, 503);
+    assert.deepEqual(await write.json(), { error: 'Đang cập nhật dữ liệu, thử lại sau vài giây' });
+  } finally {
+    db.exec('ROLLBACK');
+  }
+
+  // A separate database starts in rollback mode before the web worker opens it.
+  const deleteRoot = await mkdtemp(join(tmpdir(), 'atc-web-delete-'));
+  const deleteStore = createStore(deleteRoot);
+  deleteStore.close();
+  const locker = new DatabaseSync(join(deleteRoot, 'data', 'atc.db'));
+  assert.equal(locker.prepare('PRAGMA journal_mode = DELETE').get().journal_mode, 'delete');
+  const readyStore = createStore(deleteRoot);
+  const deleteRequest = await startRequest(t, { store: readyStore, port: 0 });
+  t.after(() => {
+    readyStore.close();
+    locker.close();
+    return rm(deleteRoot, { recursive: true, force: true });
+  });
+  locker.exec('BEGIN EXCLUSIVE');
+  try {
+    const start = performance.now();
+    const busy = await deleteRequest('/api/profiles');
+    assert.equal(busy.status, 503);
+    assert.deepEqual(await busy.json(), { error: 'Đang cập nhật dữ liệu, thử lại sau vài giây' });
+    assert.ok(performance.now() - start < 1000);
+  } finally {
+    locker.exec('ROLLBACK');
+  }
+  assert.equal((await deleteRequest('/api/profiles')).status, 200);
 });

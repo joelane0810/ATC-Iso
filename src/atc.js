@@ -117,7 +117,7 @@ function calendarDateToIso(value) {
 }
 
 export function parseCreativeRegions(json) {
-  if (!Array.isArray(json?.[17])) return [];
+  if (!Array.isArray(json?.[17])) return null;
   return json[17].flatMap(region => {
     const regionId = Number(region?.[1]);
     const lastShown = calendarDateToIso(region?.[5]);
