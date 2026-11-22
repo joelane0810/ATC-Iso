@@ -1,14 +1,18 @@
 import { basename, join } from 'node:path';
+import { performance } from 'node:perf_hooks';
+import { setTimeout as delay } from 'node:timers/promises';
 import { BlockedError, buildSearchCreativesReq, parseCreatives } from './atc.js';
 
 export async function runScan({
   store, client, now = () => new Date(), log = console.log,
-  record = entry => store.appendScanLog(entry),
+  record = entry => store.appendScanLog(entry), waitForCapture = delay,
 }) {
   const scannedAt = now();
   const result = { status: 'ok', watched: 0, newAds: 0 };
 
   let retries = 0;
+  let captures = 0;
+  let nextCaptureAt = 0;
   try {
     for (const watch of await store.allWatches()) {
       const previous = await store.getAds(watch.id);
@@ -39,7 +43,7 @@ export async function runScan({
       } while (pageToken);
 
       // A blocked page must leave this watch's existing data intact.
-      // The store retains previewUrl, so image ads can be retried off the current page.
+      // Retain the preview URL for retries outside the current page.
       const { file, newIds } = await store.mergeAds(watch, [...ads.values()].map(ad => ({
         ...ad,
         previewUrl: ad.previewUrl ?? ad.imageUrl ?? previous?.ads[ad.creativeId]?.previewUrl ?? null,
@@ -49,15 +53,25 @@ export async function runScan({
 
       const fresh = new Set(newIds);
       for (const id of [...newIds, ...Object.keys(file.ads).filter(id => !fresh.has(id))]) {
+        if (captures >= 40) break;
         if (basename(id) !== id || id === '..' || id === '.') continue;
         const saved = file.ads[id];
-        const ad = { ...saved, ...ads.get(id), previewUrl: saved.previewUrl };
-        if (ad.format === 'image') ad.imageUrl ??= saved.previewUrl;
+        const ad = { ...saved };
+        const previewUrl = ad.previewUrl ?? '';
+        if (/^https:\/\/tpc\.googlesyndication\.com\/archive\/simgad\//i.test(previewUrl)
+            || (ad.format === 'image' && previewUrl && !/\/content\.js(?:[?#]|$)/i.test(previewUrl))) {
+          ad.imageUrl ??= previewUrl;
+        }
+        if (ad.image || !(ad.imageUrl || ad.previewUrl)) continue;
         if (!fresh.has(id)) {
-          if (saved.image || !(ad.imageUrl || ad.previewUrl) || retries >= 20) continue;
+          if (retries >= 20) continue;
           retries++;
         }
+        const waitMs = Math.ceil(nextCaptureAt - performance.now());
+        if (waitMs > 0) await waitForCapture(waitMs);
+        captures++;
         const image = await client.captureImage(ad, join(store.imagesDir(), id));
+        nextCaptureAt = performance.now() + 1500;
         if (image) await store.setAdImage(watch.id, id, `images/${basename(image)}`);
       }
     }

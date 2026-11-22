@@ -7,7 +7,18 @@ import { BlockedError, isBlockedResponse, RPC_BASE } from './atc.js';
 
 const landingUrl = 'https://adstransparency.google.com/?region=anywhere';
 const blockedMessage = 'Google đã chặn lượt quét';
-const previewTimeout = 10_000;
+const previewTimeout = 8_000;
+const imageExtensions = new Map([
+  ['image/jpeg', '.jpg'],
+  ['image/png', '.png'],
+  ['image/webp', '.webp'],
+  ['image/gif', '.gif'],
+  ['image/avif', '.avif'],
+  ['image/bmp', '.bmp'],
+  ['image/x-icon', '.ico'],
+  ['image/vnd.microsoft.icon', '.ico'],
+  ['image/tiff', '.tiff'],
+]);
 const rpcTimeout = 30_000;
 
 function responseMetadata(response) {
@@ -51,12 +62,12 @@ export function hasVisiblePreview({ parentId, videoRequired }) {
     return style.visibility === 'visible' && style.opacity !== '0'
       && [...element.getClientRects()].some(rect => rect.width && rect.height);
   };
+  const images = [...root.querySelectorAll('img')].filter(visible);
+  if (images.some(image => image.complete && image.naturalWidth > 0)) return true;
   const videos = [...root.querySelectorAll('video')].filter(visible);
   if (videoRequired || videos.length) {
     return videos.some(video => video.readyState >= 2 && video.videoWidth && video.videoHeight);
   }
-  const images = [...root.querySelectorAll('img')].filter(visible);
-  if (images.some(image => !image.complete || !image.naturalWidth)) return false;
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   while (walker.nextNode()) {
     const node = walker.currentNode;
@@ -65,7 +76,7 @@ export function hasVisiblePreview({ parentId, videoRequired }) {
     range.selectNodeContents(node);
     if ([...range.getClientRects()].some(rect => rect.width && rect.height)) return true;
   }
-  return images.length > 0;
+  return false;
 }
 
 async function frameInPreview(frame, page, parentId) {
@@ -93,7 +104,8 @@ async function waitForPreview(page, parentId, format, signal) {
       if (frame === page.mainFrame()) continue;
       try {
         if (await frameInPreview(frame, page, parentId) &&
-            await frame.evaluate(hasVisiblePreview, { ...options, parentId: null })) return;
+            (frame.url() !== 'about:blank' ||
+              await frame.evaluate(hasVisiblePreview, { ...options, parentId: null }))) return;
       } catch (error) {
         if (!/detached|context was destroyed/i.test(error.message)) throw error;
       }
@@ -105,9 +117,17 @@ async function waitForPreview(page, parentId, format, signal) {
 async function renderPreview(context, previewUrl, format, path) {
   const url = new URL(previewUrl);
   assertUnblocked({ url: url.href });
-  const parentId = url.searchParams.get('htmlParentId');
-  const callback = url.searchParams.get('responseCallback');
-  if (!parentId || !callback || url.protocol !== 'https:') throw new Error('URL xem trước thiếu tham số');
+  if (url.protocol !== 'https:') throw new Error('URL xem trước không hợp lệ');
+  const parentId = url.searchParams.get('htmlParentId') || 'atc-preview';
+  const callback = url.searchParams.get('responseCallback') || 'atcRenderPreview';
+  for (const [name, value] of Object.entries({ htmlParentId: parentId, responseCallback: callback })) {
+    if (!url.searchParams.has(name)) {
+      url.search += (url.search ? '&' : '?') + name + '=' + encodeURIComponent(value);
+    } else if (!url.searchParams.get(name)) {
+      url.searchParams.set(name, value);
+    }
+  }
+  url.hash = '';
 
   const page = await context.newPage();
   const deadline = performance.now() + previewTimeout;
@@ -169,8 +189,8 @@ async function captureDirectImage(context, imageUrl, destNoExt) {
         continue;
       }
       if (!response.ok()) throw new Error(`Tải ảnh xem trước thất bại (${metadata.status})`);
-      const contentType = metadata.contentType?.split(';')[0];
-      const extension = { 'image/jpeg': '.jpg', 'image/png': '.png' }[contentType];
+      const contentType = metadata.contentType?.split(';')[0].trim().toLowerCase();
+      const extension = imageExtensions.get(contentType);
       const body = await response.body();
       assertUnblocked({ text: body.subarray(0, 1024).toString() });
       if (!extension) throw new Error('Định dạng ảnh xem trước chưa được hỗ trợ');
@@ -275,11 +295,11 @@ export async function openChromeClient({
     async captureImage(ad, destNoExt) {
       if (blocked || isSorry()) throw new BlockedError(blockedMessage);
       try {
-        if (ad.format === 'image' && ad.imageUrl) {
+        if (ad.imageUrl) {
           await mkdir(dirname(destNoExt), { recursive: true });
           return await captureDirectImage(context, ad.imageUrl, destNoExt);
         }
-        if ((ad.format === 'text' || ad.format === 'video') && ad.previewUrl) {
+        if (ad.previewUrl) {
           await mkdir(dirname(destNoExt), { recursive: true });
           return await renderPreview(context, ad.previewUrl, ad.format, destNoExt + '.png');
         }

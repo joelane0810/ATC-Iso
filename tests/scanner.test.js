@@ -65,10 +65,15 @@ function setup(respond, { watches = [first], previous = [], capture, saved = {} 
       return capture ? capture(ad, destNoExt) : destNoExt + '.png';
     },
   };
-  return { scan: () => runScan({ store, client, now, log: () => {} }), files, logs, requests, captures, images };
+  const waits = [];
+  const waitForCapture = async ms => { waits.push(ms); };
+  return {
+    scan: () => runScan({ store, client, now, log: () => {}, waitForCapture }),
+    files, logs, requests, captures, images, waits,
+  };
 }
 
-const page = (ids, nextToken) => ({ ads: ids.map(creativeId => ({ creativeId })), nextToken });
+const page = (ids, nextToken) => ({ ads: ids.map(creativeId => ({ creativeId, previewUrl: 'https://example.com/content.js' })), nextToken });
 
 test('first scan stops after five pages', async () => {
   const run = setup((req, n) => page(['CR' + n], String(n)));
@@ -80,7 +85,9 @@ test('first scan stops after five pages', async () => {
 });
 
 test('later scan stops on a page with no new ads', async () => {
-  const run = setup((req, n) => page(n === 1 ? ['CRnew', 'CRold'] : ['CRold'], String(n)), { previous: ['CRold'] });
+  const run = setup((req, n) => page(n === 1 ? ['CRnew', 'CRold'] : ['CRold'], String(n)), {
+    previous: ['CRold'], saved: { CRold: { image: 'images/CRold.png' } },
+  });
   assert.deepEqual(await run.scan(), { status: 'ok', watched: 1, newAds: 1 });
   assert.equal(run.requests.length, 2);
   assert.deepEqual(run.captures, ['CRnew']);
@@ -164,4 +171,27 @@ test('two processes contend for a stale lock and only one acquires it', { timeou
   }
   assert.equal(await isScanLocked(path), false);
   assert.equal(await withLock(path, () => 42), 42);
+});
+
+test('capture attempts share a limit of 40 and a capture interval across watches', async () => {
+  const ids = Array.from({ length: 30 }, (_, i) => 'CR' + i);
+  const run = setup(() => page(ids, null), { watches: [first, second], capture: () => null });
+  assert.deepEqual(await run.scan(), { status: 'ok', watched: 2, newAds: 60 });
+  assert.deepEqual(run.captures, [...ids, ...ids.slice(0, 10)]);
+  assert.equal(run.waits.length, 39);
+  assert.ok(run.waits.every(ms => ms > 0 && ms <= 1500));
+});
+
+test('missing current imageUrl still uses the saved archive URL on a video ad', async () => {
+  const imageUrl = 'https://tpc.googlesyndication.com/archive/simgad/123';
+  const run = setup(() => page([], null), {
+    previous: ['CR1'],
+    saved: { CR1: { creativeId: 'CR1', format: 'video', previewUrl: imageUrl } },
+    capture(ad, dest) {
+      assert.equal(ad.imageUrl, imageUrl);
+      return dest + '.jpg';
+    },
+  });
+  assert.equal((await run.scan()).status, 'ok');
+  assert.deepEqual(run.images, [[first.id, 'CR1', 'images/CR1.jpg']]);
 });
