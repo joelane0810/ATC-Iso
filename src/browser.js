@@ -1,3 +1,5 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join as joinPath } from 'node:path';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -216,7 +218,7 @@ async function captureDirectImage(context, imageUrl, destNoExt) {
 }
 
 export async function openChromeClient({
-  profileDir, minDelayMs = 8000, jitterMs = 4000, headless = false,
+  profileDir, minDelayMs = 8000, jitterMs = 4000, headless = false, debugDir = null,
   launch = (dir, options) => chromium.launchPersistentContext(dir, options), log = console.error,
 }) {
   const context = await launch(profileDir, { channel: 'chrome', headless });
@@ -309,8 +311,13 @@ export async function openChromeClient({
     return parseJson(response.text);
   }
 
+  let debugSaved = false;
+  const seenUrls = [];
   async function lookupRegions({ advertiserId, creativeId }) {
-    detailPage ??= await context.newPage();
+    if (!detailPage) {
+      detailPage = await context.newPage();
+      detailPage.on?.('response', r => { try { seenUrls.push(r.status() + ' ' + r.url().slice(0, 160)); } catch {} });
+    }
     const url = new URL(
       `/advertiser/${encodeURIComponent(advertiserId)}/creative/${encodeURIComponent(creativeId)}?region=anywhere&platform=SEARCH`,
       landingUrl,
@@ -346,6 +353,14 @@ export async function openChromeClient({
     } catch (error) {
       if (!(error instanceof errors.TimeoutError)) throw error;
       if (isSorry() || await detailPage.evaluate(hasCaptcha)) throw new BlockedError(blockedMessage);
+      if (debugDir && !debugSaved) {
+        debugSaved = true;
+        try {
+          mkdirSync(debugDir, { recursive: true });
+          await detailPage.screenshot({ path: joinPath(debugDir, 'quoc-gia-loi.png'), fullPage: true });
+          writeFileSync(joinPath(debugDir, 'quoc-gia-loi.txt'), [detailPage.url(), ...seenUrls.slice(-60)].join('\n'));
+        } catch {}
+      }
       return null;
     }
   }

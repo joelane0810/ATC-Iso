@@ -34,7 +34,7 @@ export async function scanOnce({
     try {
       let showWindow = false;
       try { showWindow = JSON.parse(readFileSync(join(root, 'config.json'), 'utf8'))?.showBrowser === true; } catch {}
-      client = await open({ profileDir: join(root, 'chrome-profile'), headless: !showWindow });
+      client = await open({ profileDir: join(root, 'chrome-profile'), headless: !showWindow, debugDir: join(root, 'logs') });
     } catch (error) {
       log(error);
       entry = {

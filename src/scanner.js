@@ -25,6 +25,7 @@ export async function runScan({
   let nextCaptureAt = 0;
   try {
     const watches = await store.allWatches();
+    let regionFailures = 0;
     const watchCount = watches.length || 1;
     const baseQuota = Math.floor(maxDetails / watchCount);
     const extra = maxDetails % watchCount;
@@ -96,7 +97,9 @@ export async function runScan({
         for (const creative of pending.filter(ad => !attemptedDetails.has(ad.creativeId)).slice(0, quota)) {
           attemptedDetails.add(creative.creativeId);
           const { advertiserId, creativeId } = creative;
+          if (regionFailures >= 3) break;
           const regions = await client.lookupRegions({ advertiserId, creativeId });
+          regionFailures = regions === null ? regionFailures + 1 : 0;
           await store.setCreativeRegions(creative.creativeId, regions, scannedAt);
         }
       }

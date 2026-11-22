@@ -327,3 +327,18 @@ test('a missing country response is retried next scan while a confirmed empty re
   }
   assert.equal(detailCalls, 2);
 });
+
+test('region lookups stop for the scan after 3 consecutive empty results', async () => {
+  const { runScan: scan } = await import('../src/scanner.js');
+  let lookups = 0;
+  const pending = Array.from({ length: 10 }, (_, i) => ({ creativeId: `CR${i}`, advertiserId: 'AR1' }));
+  const store = {
+    allWatches: () => [{ id: 'w', type: 'domain', value: 'w.com' }], getAds: () => null,
+    mergeAds: (watch, ads) => ({ file: { ads: {} }, newIds: [] }), appendScanLog: () => 1,
+    creativesNeedingRegions: () => pending, setCreativeRegions: () => {}, imagesDir: () => '/tmp',
+    recordGroupSnapshots: () => {}, setAdImage: () => {},
+  };
+  const client = { async rpc() { return { ads: [], nextToken: null }; }, async lookupRegions() { lookups++; return null; }, async captureImage() { return null; }, async close() {} };
+  await scan({ store, client, log: () => {} });
+  assert.equal(lookups, 3);
+});
