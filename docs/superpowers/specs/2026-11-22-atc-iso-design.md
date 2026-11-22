@@ -111,5 +111,5 @@ Thư viện cụ thể, cấu trúc mã, kiểu dáng giao diện (theo bố c�
 
 ## Bổ sung 22/11 23:45 — Truy cập qua Tailscale, dạng cắm rút
 - Mặc định chỉ máy trong mạng Tailscale (100.64.0.0/10, fd7a:115c:a1e0::/48) và chính máy Mac được vào; máy cùng wifi bị từ chối (403).
-- Địa chỉ: http://norman:4317 (tên máy Mac trong Tailscale là norman).
+- Địa chỉ: http://atc-iso — app có một máy riêng tên atc-iso trong mạng Tailscale (cổng gateway/ viết bằng Go, dùng tsnet), chuyển về 127.0.0.1:4317. Không dùng tên máy Mac. Máy chủ web tự bật/tắt cổng này; lần đầu cần duyệt đăng nhập (đường dẫn trả về ở /api/status → gateway.loginUrl). Tắt cổng: "gateway": false.
 - Cách truy cập nằm trong src/access/ (tailscale · lan · cidr). Đổi bằng config.json "access" — vd. ZeroTier: {"provider":"cidr","name":"ZeroTier","cidrs":["10.147.17.0/24"]}; quay lại wifi: {"provider":"lan"}. Không sửa mã.

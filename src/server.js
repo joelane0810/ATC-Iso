@@ -63,7 +63,7 @@ async function serveFile(res, dir, name, headers = {}) {
 }
 
 export async function startServer({
-  store, port = 4317, host = '127.0.0.1', triggerScan, isScanning, waitForAcquisition = false, lanUrls = () => [], access = null,
+  store, port = 4317, host = '127.0.0.1', triggerScan, isScanning, waitForAcquisition = false, lanUrls = () => [], access = null, accessStatus = () => null,
 }) {
   const webStore = store.forWeb?.();
   store = webStore ?? store;
@@ -92,7 +92,7 @@ export async function startServer({
         const active = await scanning();
         const last = await store.getLastScan();
         const scanningWatchId = active ? (scanPending ? pendingWatchId : await store.getScanningWatchId()) : null;
-        return json(res, 200, { scanning: active, scanningWatchId, last, lanUrls: lanUrls() });
+        return json(res, 200, { scanning: active, scanningWatchId, last, lanUrls: lanUrls(), ...(accessStatus() ? { gateway: accessStatus() } : {}) });
       }
       if (method === 'GET' && path === '/api/suggest') {
         return json(res, 200, await store.suggest(params.get('q') ?? ''));

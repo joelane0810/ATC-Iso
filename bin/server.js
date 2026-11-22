@@ -43,10 +43,14 @@ const server = await startServer({
   isScanning: () => isScanLocked(join(root, 'data', '.scan.lock')),
   access,
   lanUrls: () => host === '0.0.0.0' ? access.urls(server.address().port) : [],
+  accessStatus: () => access.status(),
 });
+access.start({ root, port: server.address().port, log: message => console.error(message) });
 console.log(`Mở http://127.0.0.1:${server.address().port} · máy khác qua ${access.name}: ${access.urls(server.address().port).join(' ')}`);
 // Đọc bù tên miền: lúc bật máy chủ, sau mỗi lượt quét và cứ 30 phút một lần.
 const runBackfill = () => void backfillDomains({ store }).catch(error => console.error(`Đọc bù tên miền: ${error.message}`));
 setImmediate(runBackfill);
 setInterval(runBackfill, 30 * 60_000).unref();
 afterScan = runBackfill;
+
+for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => { access.stop(); process.exit(0); });
