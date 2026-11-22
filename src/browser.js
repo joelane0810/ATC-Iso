@@ -360,7 +360,17 @@ export async function openChromeClient({
       }
       const text = await response.text();
       assertUnblocked({ text });
-      return parseCreativeRegions(parseJson(text));
+      const regions = parseCreativeRegions(parseJson(text));
+      if (regions === null && debugDir && !debugSaved) {
+        debugSaved = true;
+        try {
+          mkdirSync(debugDir, { recursive: true });
+          const request = response.request();
+          writeFileSync(joinPath(debugDir, 'quoc-gia-loi.txt'), ['thiếu 17', 'req: ' + String(request.postData() || '').slice(0, 400), 'res: ' + text.replace(/https?:[^"]+/g, 'URL').slice(0, 1500), detailPage.url()].join('\n'));
+          await detailPage.screenshot({ path: joinPath(debugDir, 'quoc-gia-loi.png'), fullPage: true });
+        } catch {}
+      }
+      return regions;
     } catch (error) {
       if (!(error instanceof errors.TimeoutError)) throw error;
       log(`Trang chi tiết ${creativeId}: hết thời gian chờ (${detailPage.url()})`);
