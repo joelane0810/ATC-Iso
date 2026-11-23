@@ -777,14 +777,14 @@ test('ad details follow a domain or advertiser with same-kind folders and update
   assert.deepEqual(requests.findLast(({ method }) => method === 'POST').body,
     { input: 'example.com', kind: 'project', groupId: 'projects', region: null });
   assert.equal(get('trash-count').textContent, '0');
-  assert.equal(action(follow(), 'Đang theo dõi').disabled, true);
+  assert.equal(action(follow(), '✓ Đang theo dõi dự án example.com').disabled, true);
   action(follow(), '+ Theo dõi nhà quảng cáo Example').onclick();
   chooser = follow().children.at(-1);
   assert.deepEqual(chooser.children.slice(1).map((node) => node.textContent), ['Nhóm đối thủ', 'Không nhóm', 'Huỷ']);
   await action(chooser, 'Không nhóm').onclick();
   assert.deepEqual(requests.findLast(({ method }) => method === 'POST').body,
     { input: 'AR1', kind: 'competitor', groupId: null, region: null });
-  assert.equal(follow().children.filter((node) => node.textContent === 'Đang theo dõi').length, 2);
+  assert.equal(follow().children.filter((node) => node.textContent.startsWith('✓ Đang theo dõi')).length, 2);
 });
 
 test('chart redraws at the measured pixel width without scaling text or increasing the date label limit', async () => {

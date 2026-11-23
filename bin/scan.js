@@ -55,12 +55,14 @@ const projectRoot = fileURLToPath(new URL('../', import.meta.url));
 export async function scanOnce({
   root = projectRoot, store = createStore(root), open = openChromeClient,
   sync = syncData, log = console.error, onAcquired = () => {}, watchId = null, creativeIds = null, probe = false,
+  manual = false,
   tabBudget = () => acquireTabBudget({ log }),
 } = {}) {
   return withLock(join(root, 'data', '.scan.lock'), async () => {
     if (!creativeIds) await store.purgeExpiredTrash?.();
     const history = (await store.getScanLog?.()) ?? [];
-    const resumeAt = scanResumeAt(history);
+    // Người dùng tự bấm quét thì quét luôn (đầy đủ); thời gian nghỉ chỉ áp cho lượt tự động.
+    const resumeAt = manual ? null : scanResumeAt(history);
     if (creativeIds && resumeAt) {
       throw Object.assign(new Error('Đang tạm nghỉ sau khi Google chặn.'), {
         code: 'SCAN_COOLDOWN', resumeAt,
@@ -166,7 +168,8 @@ export function scanFromArgs(args, options) {
     throw new Error('Chọn từ một đến mười mẫu quảng cáo hợp lệ.');
   }
   const probe = args.includes('--probe');
-  return scanOnce({ ...options, watchId, probe, creativeIds: ids ? [...new Set(ids)] : null });
+  const manual = args.includes('--manual');
+  return scanOnce({ ...options, watchId, probe, manual, creativeIds: ids ? [...new Set(ids)] : null });
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

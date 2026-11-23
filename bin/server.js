@@ -15,7 +15,9 @@ let afterScan = () => {};
 
 function triggerScan(acquired, watchId, creativeIds, extraArgs = []) {
   return new Promise((resolve, reject) => {
-    const args = [...(creativeIds ? [`--regions=${creativeIds.join(',')}`] : watchId ? [`--watch=${watchId}`] : []), ...extraArgs];
+    // Thao tác anh bấm trên web (--manual) không bị giới hạn thời gian nghỉ; chỉ lượt tự động phải nghỉ.
+    const manual = extraArgs.includes('--probe') ? [] : ['--manual'];
+    const args = [...(creativeIds ? [`--regions=${creativeIds.join(',')}`] : watchId ? [`--watch=${watchId}`] : []), ...manual, ...extraArgs];
     const child = fork(scanScript, args, { cwd: root, stdio: ['inherit', 'inherit', 'inherit', 'ipc'] });
     let busy = false;
     child.once('message', state => {

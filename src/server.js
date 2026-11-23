@@ -137,8 +137,6 @@ export async function startServer({
             if (!await hasCreativeForProfile(pid, creativeId)) {
               return json(res, 409, { error: 'Không tìm thấy mẫu quảng cáo trong hồ sơ này.' });
             }
-            const last = await store.getLastScan();
-            if (last?.resumeAt) return regionsCooldown(res, last.resumeAt);
           }
           if (watchId && store.isWatchActive && !await store.isWatchActive(watchId)) {
             throw Object.assign(new Error('Không tìm thấy mục theo dõi.'), { code: 'NOT_FOUND' });

@@ -382,11 +382,8 @@ test('region requests use the scan lock and require a creative from the profile'
   assert.equal(race.status, 409);
   assert.deepEqual(await race.json(), cooldownMessage);
   cooldownAtAcquisition = false;
+  // Bấm tay không bị chặn bởi thời gian nghỉ: máy chủ không tự từ chối khi lượt trước bị chặn.
   store.appendScanLog({ at: now.toISOString(), status: 'blocked', resumeAt });
-  const cooldown = await post();
-  assert.equal(cooldown.status, 409);
-  assert.deepEqual(await cooldown.json(), cooldownMessage);
-  store.appendScanLog({ at: now.toISOString(), status: 'ok' });
   assert.equal((await post()).status, 202);
   assert.equal((await post()).status, 409);
   assert.equal(launched, 1);

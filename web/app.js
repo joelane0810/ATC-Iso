@@ -1884,13 +1884,25 @@ function showDetail(ad) {
     ['project', ad.domain, ad.domain],
     ['competitor', ad.advertiserId, ad.advertiserName || ad.advertiserId],
   ]) {
-    if (!value || !profile.value) continue;
+    if (!profile.value) continue;
+    if (!value) {
+      // Mẫu chưa rõ tên miền: vẫn hiện chỗ theo dõi dự án để biết vì sao chưa bấm được.
+      if (kind === 'project') {
+        const missing = element('button', 'Chưa rõ tên miền — chưa theo dõi dự án được');
+        missing.type = 'button';
+        missing.className = 'kind-project';
+        missing.disabled = true;
+        follow.append(missing);
+      }
+      continue;
+    }
     const normalized = (input) => (kind === 'project'
       ? input.toLowerCase().replace(/^www\./, '').replace(/\.$/, '')
       : input.toUpperCase());
     const followed = watches.some((watch) => kindOf(watch) === kind && watch.value
       && normalized(watch.value) === normalized(value));
-    const action = followed ? 'Đang theo dõi' : '+ Theo dõi ' + (kind === 'project' ? 'dự án ' : 'nhà quảng cáo ') + label;
+    const noun = kind === 'project' ? 'dự án ' : 'nhà quảng cáo ';
+    const action = (followed ? '✓ Đang theo dõi ' : '+ Theo dõi ') + noun + label;
     const add = async (groupId) => {
       await addWatch(value, kind, groupId, true);
     };
