@@ -2209,8 +2209,12 @@ function renderScanStatus() {
     ?? watchCounts.get(scanningWatchId)?.label;
   const labels = { ok: 'Hoàn tất', blocked: 'Bị Google chặn', error: 'Gặp lỗi' };
   let message = labels[last?.status] ?? 'Chưa có lượt quét.';
-  if (last?.status === 'cooldown') {
-    message = 'Đang nghỉ' + (last.resumeAt ? ' · quét lại lúc ' + displayDate(last.resumeAt, vietnamTime) : '');
+  const at = (value) => displayDate(value, vietnamTime);
+  if (last?.status === 'blocked' || last?.status === 'cooldown') {
+    // App tự gửi 1 lần hỏi nhẹ khi hết giờ nghỉ để biết Google đã bỏ chặn chưa.
+    message = 'Google đang chặn' + (last.resumeAt ? ' · tự kiểm tra lại lúc ' + at(last.resumeAt) : '');
+  } else if (last?.status === 'ok' && last.probe) {
+    message = 'Google đã bỏ chặn · kiểm tra lúc ' + at(last.at);
   }
   if (scanning || startingScan) {
     message = scanningWatchId === 'regions' ? 'Đang lấy quốc gia…'

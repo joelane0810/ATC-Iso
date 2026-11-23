@@ -13,9 +13,9 @@ const scanScript = fileURLToPath(new URL('./scan.js', import.meta.url));
 
 let afterScan = () => {};
 
-function triggerScan(acquired, watchId, creativeIds) {
+function triggerScan(acquired, watchId, creativeIds, extraArgs = []) {
   return new Promise((resolve, reject) => {
-    const args = creativeIds ? [`--regions=${creativeIds.join(',')}`] : watchId ? [`--watch=${watchId}`] : [];
+    const args = [...(creativeIds ? [`--regions=${creativeIds.join(',')}`] : watchId ? [`--watch=${watchId}`] : []), ...extraArgs];
     const child = fork(scanScript, args, { cwd: root, stdio: ['inherit', 'inherit', 'inherit', 'ipc'] });
     let busy = false;
     child.once('message', state => {
@@ -60,3 +60,21 @@ setInterval(runBackfill, 30 * 60_000).unref();
 afterScan = runBackfill;
 
 for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => { access.stop(); process.exit(0); });
+
+// Tự kiểm tra Google đã bỏ chặn chưa: hết thời gian nghỉ mà lượt gần nhất vẫn là "bị chặn"
+// thì gửi đúng 1 lần hỏi nhẹ. Qua → quét lại bình thường; còn chặn → nghỉ tiếp 6 tiếng.
+const probeTimer = setInterval(async () => {
+  try {
+    if (isScanLocked(join(root, 'data', '.scan.lock'))) return;
+    const log = (await store.getScanLog?.()) ?? [];
+    const last = [...log].reverse().find(entry => entry.status !== 'cooldown');
+    if (last?.status !== 'blocked') return;
+    const resume = last.resumeAt ? Date.parse(last.resumeAt) : Date.parse(last.at) + 6 * 3600_000;
+    if (Date.now() < resume) return;
+    console.error('Hết thời gian nghỉ — kiểm tra Google đã bỏ chặn chưa.');
+    await triggerScan(() => {}, null, null, ['--probe']).catch(() => {});
+  } catch (error) {
+    console.error(`Kiểm tra bỏ chặn: ${error.message}`);
+  }
+}, 10 * 60_000);
+probeTimer.unref();

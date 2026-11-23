@@ -54,7 +54,7 @@ const projectRoot = fileURLToPath(new URL('../', import.meta.url));
 
 export async function scanOnce({
   root = projectRoot, store = createStore(root), open = openChromeClient,
-  sync = syncData, log = console.error, onAcquired = () => {}, watchId = null, creativeIds = null,
+  sync = syncData, log = console.error, onAcquired = () => {}, watchId = null, creativeIds = null, probe = false,
   tabBudget = () => acquireTabBudget({ log }),
 } = {}) {
   return withLock(join(root, 'data', '.scan.lock'), async () => {
@@ -69,6 +69,14 @@ export async function scanOnce({
     const watches = creativeIds ? [] : await store.allWatches();
     if (watchId && !watches.some(watch => watch.id === watchId)) throw new Error('Không tìm thấy mục theo dõi.');
     const scanOptions = { onlyWatchIds: watchId ? [watchId] : null, maxDetails: watchId ? 20 : 80 };
+    // Kiểm tra Google đã bỏ chặn chưa: chỉ 1 lần hỏi (1 trang của 1 mục), không ảnh, không quốc gia.
+    if (probe) {
+      if (resumeAt || !watches.length) {
+        onAcquired();
+        return { status: 'cooldown', resumeAt };
+      }
+      Object.assign(scanOptions, { onlyWatchIds: [watches[0].id], maxPages: 1, maxDetails: 0, skipCaptures: true });
+    }
     if (resumeAt) {
       const eligible = [];
       if (watchId) eligible.push(watchId);
@@ -86,6 +94,7 @@ export async function scanOnce({
       ...value,
       ...(scanTarget ? { watchId: scanTarget } : {}),
       ...(scanOptions.light ? { light: true } : {}),
+      ...(probe ? { probe: true } : {}),
       ...(value.status === 'blocked'
         ? { resumeAt: new Date(Date.parse(value.at) + REST_MS).toISOString() }
         : resumeAt ? { resumeAt } : {}),
@@ -123,7 +132,7 @@ export async function scanOnce({
           entry = await lookupCreativeRegions({ store, client, creativeIds, scannedAt, scanId, tracker, log });
           scanId = await store.appendScanLog(withRest(entry));
         } else await runScan({
-          store, client, log, ...scanOptions, skipCaptures: Boolean(watchId && scanOptions.light),
+          store, client, log, ...scanOptions, skipCaptures: Boolean(scanOptions.skipCaptures || (watchId && scanOptions.light)),
           scanId, now: () => scannedAt, progress: event => tracker.handle(event),
           record: async value => {
             entry = value;
@@ -156,7 +165,8 @@ export function scanFromArgs(args, options) {
   if (ids && (watchId || ids.length > 10 || ids.some(id => !/^CR\d+$/.test(id)))) {
     throw new Error('Chọn từ một đến mười mẫu quảng cáo hợp lệ.');
   }
-  return scanOnce({ ...options, watchId, creativeIds: ids ? [...new Set(ids)] : null });
+  const probe = args.includes('--probe');
+  return scanOnce({ ...options, watchId, probe, creativeIds: ids ? [...new Set(ids)] : null });
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

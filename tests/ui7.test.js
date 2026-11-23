@@ -292,12 +292,12 @@ test('scan buttons target the correct scope and poll through Vietnamese statuses
   assert.equal(get('status').textContent, 'Đang quét Dự án A…');
   setStatus({ scanning: false, last: { status: 'blocked' } });
   await advance(5000);
-  assert.equal(get('status').textContent, 'Bị Google chặn');
+  assert.equal(get('status').textContent, 'Google đang chặn');
   await sidebarRow(get, 'competitor').children[0].onclick();
   await get('scan-watch').onclick();
   setStatus({ scanning: false, last: { status: 'cooldown', resumeAt: '2026-11-22T13:45:00Z' } });
   await advance(5000);
-  assert.equal(get('status').textContent, 'Đang nghỉ · quét lại lúc 20:45');
+  assert.equal(get('status').textContent, 'Google đang chặn · tự kiểm tra lại lúc 20:45');
   await get('scan').onclick();
   assert.deepEqual(requests.filter(({ method }) => method === 'POST').map(({ body }) => body),
     [{ watchId: 'rival' }, { watchId: 'project' }, { watchId: 'rival' }, {}]);

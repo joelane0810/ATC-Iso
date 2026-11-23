@@ -183,3 +183,36 @@ test('full scans look up up to 80 creatives and single-watch scans keep the limi
   assert.equal(await scanFromArgs([], options), 'ok');
   assert.equal(seen.length, 80);
 });
+
+test('--probe asks Google once after the rest period and never during it', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'atc-probe-'));
+  const store = createStore(root);
+  t.after(() => {
+    store.close();
+    return rm(root, { recursive: true, force: true });
+  });
+  const { id } = store.addProfile('Dai');
+  store.addWatch(id, 'first.com');
+  store.addWatch(id, 'second.com');
+  const requests = [];
+  let lookups = 0;
+  const options = {
+    root, store, tabBudget: async () => 1, log: () => {}, sync: async () => ({ pushed: false }),
+    async open() {
+      return {
+        async rpc(method, req) { requests.push(req); return { 1: [] }; },
+        async lookupRegions() { lookups++; return []; },
+        async close() {},
+      };
+    },
+  };
+  store.appendScanLog({ at: new Date().toISOString(), status: 'blocked', watched: 0, newAds: 0 });
+  assert.equal((await scanFromArgs(['--probe'], options)).status, 'cooldown');
+  assert.equal(requests.length, 0);
+  store.appendScanLog({ at: new Date(Date.now() - 7 * 3600_000).toISOString(), status: 'blocked', watched: 0, newAds: 0,
+    resumeAt: new Date(Date.now() - 3600_000).toISOString() });
+  assert.equal(await scanFromArgs(['--probe'], options), 'ok');
+  assert.equal(requests.length, 1);
+  assert.equal(lookups, 0);
+  assert.equal(store.getScanLog().at(-1).probe, true);
+});
