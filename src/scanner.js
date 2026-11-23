@@ -17,6 +17,7 @@ export async function runScan({
   onlyWatchIds = null, maxPages = null, skipCaptures = false, scanId,
   createReader = createDomainReader,
   record = entry => store.appendScanLog(entry), waitForCapture = delay,
+  progress = () => {},
 }) {
   const scannedAt = now();
   const result = { status: 'ok', watched: 0, newAds: 0 };
@@ -39,9 +40,17 @@ export async function runScan({
     nextCaptureAt = performance.now() + 1500;
     return image;
   }
+  // Báo tiến độ từng mục cho giao diện: chờ → đang quét (trang x/y) → quốc gia → xong.
+  const report = event => { try { progress(event); } catch {} };
+  let currentWatchId = null;
+  const finishWatch = () => {
+    if (currentWatchId) report({ type: 'done', watchId: currentWatchId });
+    currentWatchId = null;
+  };
   try {
     await store.purgeExpiredTrash?.(scannedAt);
     const watches = (await store.allWatches()).filter(w => !onlyWatchIds || onlyWatchIds.includes(w.id));
+    report({ type: 'start', watchIds: watches.map(w => w.id) });
     let regionFailures = 0;
     const watchCount = watches.length || 1;
     const baseQuota = Math.floor(maxDetails / watchCount);
@@ -49,7 +58,11 @@ export async function runScan({
     const offset = Math.floor(scannedAt.getTime() / 86_400_000) % watchCount;
     watchesLoop: for (const [index, watch] of watches.entries()) {
       const quota = baseQuota + Number((index - offset + watches.length) % watches.length < extra);
+      finishWatch();
       const previous = await store.getAds(watch.id);
+      const pageLimit = maxPages ?? (previous ? MAX_PAGES_LATER : MAX_PAGES_FIRST);
+      currentWatchId = watch.id;
+      report({ type: 'page', watchId: watch.id, page: 0, maxPages: pageLimit, ads: 0 });
       const seen = new Set(Object.entries(previous?.ads ?? {})
         .filter(([, ad]) => ad.platform === 'search').map(([id]) => id));
       const previouslyRunning = [...seen].filter(
@@ -80,7 +93,8 @@ export async function runScan({
         }
 
         log(`Đang quét ${watch.label || watch.value}: trang ${pages}, ${ads.size} mẫu`);
-        if (pages >= (maxPages ?? (previous ? MAX_PAGES_LATER : MAX_PAGES_FIRST))) break;
+        report({ type: 'page', watchId: watch.id, page: pages, maxPages: pageLimit, ads: ads.size });
+        if (pages >= pageLimit) break;
         if (previous && !hasUnconfirmedAds && refreshThrough == null) refreshThrough = pages + 3;
         if (pages === refreshThrough) break;
         if (!nextToken || tokens.has(nextToken)) break;
@@ -99,6 +113,7 @@ export async function runScan({
       })), scannedAt, scanId);
       result.watched++;
       result.newAds += newIds.length;
+      report({ type: 'saved', watchId: watch.id, ads: ads.size, newAds: newIds.length });
 
       const searchAds = Object.values(file.ads).filter(ad => ad.platform === 'search');
       changes.push({
@@ -115,7 +130,10 @@ export async function runScan({
         const pending = await store.creativesNeedingRegions(quota + attemptedDetails.size, {
           watchId: watch.id, now: scannedAt,
         });
-        for (const creative of pending.filter(ad => !attemptedDetails.has(ad.creativeId)).slice(0, quota)) {
+        const regionList = pending.filter(ad => !attemptedDetails.has(ad.creativeId)).slice(0, quota);
+        let regionDone = 0;
+        if (regionList.length) report({ type: 'regions', watchId: watch.id, done: 0, total: regionList.length });
+        for (const creative of regionList) {
           attemptedDetails.add(creative.creativeId);
           const { advertiserId, creativeId } = creative;
           if (regionFailures >= 3) break;
@@ -124,6 +142,7 @@ export async function runScan({
           regionFailures = regions === null ? regionFailures + 1 : 0;
           log(`Quốc gia ${creativeId}: ${regions === null ? 'chưa lấy được' : regions.length + ' nước'}`);
           await store.setCreativeRegions(creative.creativeId, regions, scannedAt);
+          report({ type: 'regions', watchId: watch.id, done: ++regionDone, total: regionList.length });
         }
       }
 
@@ -178,7 +197,10 @@ export async function runScan({
         if (domain) await store.setCreativeDomain(id, domain);
       }
     }
+    finishWatch();
   } catch (error) {
+    if (currentWatchId) report({ type: 'error', watchId: currentWatchId, blocked: error instanceof BlockedError });
+    currentWatchId = null;
     result.status = error instanceof BlockedError ? 'blocked' : 'error';
     result.error = error instanceof Error ? error.message : String(error);
     log(result.error);

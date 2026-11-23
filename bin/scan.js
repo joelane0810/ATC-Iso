@@ -10,6 +10,7 @@ import { ScanBusyError, withLock } from '../src/lock.js';
 import { REST_MS, scanResumeAt } from '../src/scan-rest.js';
 import { runScan } from '../src/scanner.js';
 import { acquireTabBudget, TabLimitError } from '../src/tab-guard.js';
+import { createProgressTracker, progressPath } from '../src/scan-progress.js';
 import { createStore } from '../src/store.js';
 import { syncToGitHub } from '../src/sync.js';
 
@@ -79,16 +80,18 @@ export async function scanOnce({
       scanId = await store.appendScanLog(withRest(entry));
     }
     if (client) {
+      const tracker = createProgressTracker({ file: progressPath(root) });
       try {
         await runScan({
           store, client, log, ...scanOptions, skipCaptures: Boolean(watchId && scanOptions.light),
-          scanId, now: () => scannedAt,
+          scanId, now: () => scannedAt, progress: event => tracker.handle(event),
           record: async value => {
             entry = value;
             scanId = await store.appendScanLog(withRest(value));
           },
         });
       } finally {
+        tracker.finish();
         try {
           await client.close();
         } catch (error) {

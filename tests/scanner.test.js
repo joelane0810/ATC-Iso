@@ -68,7 +68,7 @@ function setup(respond, { watches = [first], previous = [], capture, saved = {},
   const waits = [];
   const waitForCapture = async ms => { waits.push(ms); };
   return {
-    scan: () => runScan({ store, client, now, log: () => {}, waitForCapture, maxDetails: 60 }),
+    scan: (extra = {}) => runScan({ store, client, now, log: () => {}, waitForCapture, maxDetails: 60, ...extra }),
     files, logs, requests, captures, images, waits,
   };
 }
@@ -361,4 +361,21 @@ test('region lookups stop for the scan after 3 consecutive empty results', async
   const client = { async rpc() { return { ads: [], nextToken: null }; }, async lookupRegions() { lookups++; return null; }, async captureImage() { return null; }, async close() {} };
   await scan({ store, client, log: () => {} });
   assert.equal(lookups, 3);
+});
+
+test('scan reports per-watch progress so each watch can finish before the scan ends', async () => {
+  const third = { ...second, id: 'third' };
+  const run = setup(({ watch }, n) => {
+    if (n === 1) return page(['CR1'], null);
+    if (watch === second && n === 2) return page(['CR2'], 'next');
+    throw new BlockedError('Bị chặn');
+  }, { watches: [first, second, third] });
+  const events = [];
+  await run.scan({ progress: event => events.push(event) });
+  assert.deepEqual(events[0], { type: 'start', watchIds: ['first', 'second', 'third'] });
+  const firstDone = events.findIndex(event => event.type === 'done' && event.watchId === 'first');
+  const secondStart = events.findIndex(event => event.type === 'page' && event.watchId === 'second');
+  assert.ok(firstDone > 0 && firstDone < secondStart, 'first watch is done before second starts');
+  assert.ok(events.some(event => event.type === 'page' && event.watchId === 'first' && event.page === 1 && event.maxPages === 5));
+  assert.deepEqual(events.at(-1), { type: 'error', watchId: 'second', blocked: true });
 });

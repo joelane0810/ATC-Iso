@@ -2092,18 +2092,78 @@ function renderScanStatus() {
     message = 'Đang quét ' + (label || (scanningWatchId ? 'một mục' : 'tất cả')) + '…';
   }
   const active = scanning || startingScan;
+  const progress = scanStatus?.progress;
+  const states = progress?.watches ?? {};
+  const order = progress?.order ?? [];
+  if (active && order.length > 1) {
+    const done = order.filter(id => ['done', 'blocked', 'error', 'skipped'].includes(states[id]?.state)).length;
+    const current = order.find(id => states[id]?.state === 'scanning');
+    const name = watches.find(({ id }) => id === current)?.label ?? watchCounts.get(current)?.label;
+    message = 'Đang quét ' + (name ? name + ' · ' : '') + done + '/' + order.length + ' mục xong';
+  }
   const status = byId('status');
   status.textContent = message;
   status.classList?.toggle('is-scanning', active);
   for (const button of [scan, byId('scan-watch'), ...document.querySelectorAll('[data-scan]')]) {
     if (!button) continue;
     button.disabled = active;
-    // Mục đang quét: nút quét xoay và cả dòng/thẻ nhấp nháy nhẹ. Quét tất cả: mọi mục cùng hiện.
     const target = button === scan ? '' : button === byId('scan-watch') ? watchId : button.getAttribute?.('data-scan');
-    const mine = active && target != null && (scanningWatchId ? target === scanningWatchId : true);
-    button.classList?.toggle('is-scanning', mine);
-    button.closest?.('.watch-item, .overview-card')?.classList?.toggle('row-scanning', mine && button !== scan);
+    // Có tiến độ thì chỉ mục đang quét mới xoay; chưa có thì theo mục được yêu cầu (hoặc tất cả).
+    const itemState = target ? states[target]?.state : null;
+    const mine = active && target != null && (button === scan ? !scanningWatchId
+      : progress ? itemState === 'scanning' : scanningWatchId ? target === scanningWatchId : true);
+    button.classList?.toggle('is-scanning', Boolean(mine));
+    const row = button.closest?.('.watch-item, .overview-card');
+    if (!row || button === scan) continue;
+    row.classList?.toggle('row-scanning', Boolean(mine));
+    renderItemProgress(row, target ? states[target] : null, active || Boolean(progress));
   }
+}
+
+// Dòng tiến độ nhỏ trong từng mục: chờ tới lượt · trang x/y · quốc gia · xong.
+function renderItemProgress(row, state, show) {
+  let box = row.querySelector?.(':scope > .scan-progress');
+  if (!show || !state) {
+    box?.remove();
+    return;
+  }
+  if (!box) {
+    box = element('div');
+    box.className = 'scan-progress';
+    const bar = element('span');
+    bar.className = 'scan-progress-bar';
+    bar.append(element('i'));
+    box.append(bar, element('small'));
+    row.append(box);
+  }
+  const [bar, text] = box.children;
+  let percent = 0;
+  let label = '';
+  switch (state.state) {
+    case 'queued': label = 'Chờ tới lượt'; break;
+    case 'scanning':
+      if (state.step === 'regions') {
+        percent = 70 + 30 * (state.regionsDone ?? 0) / Math.max(1, state.regionsTotal ?? 1);
+        label = 'Đang lấy quốc gia ' + (state.regionsDone ?? 0) + '/' + (state.regionsTotal ?? 0);
+      } else if (state.step === 'saved') {
+        percent = 70;
+        label = 'Đang lưu · ' + formatCount.format(state.ads ?? 0) + ' ads';
+      } else {
+        percent = 70 * (state.page ?? 0) / Math.max(1, state.maxPages ?? 1);
+        label = 'Trang ' + (state.page ?? 0) + '/' + (state.maxPages ?? '?') + ' · ' + formatCount.format(state.ads ?? 0) + ' ads';
+      }
+      break;
+    case 'done':
+      percent = 100;
+      label = '✓ Xong' + (state.newAds ? ' · ' + formatCount.format(state.newAds) + ' ads mới' : '');
+      break;
+    case 'blocked': label = 'Google chặn — dừng quét'; break;
+    case 'error': label = 'Gặp lỗi'; break;
+    case 'skipped': label = 'Chưa quét lượt này'; break;
+  }
+  box.dataset.state = state.state;
+  bar.children[0].style.width = Math.round(percent) + '%';
+  text.textContent = label;
 }
 
 function renderLanUrls(urls = []) {
@@ -2114,14 +2174,20 @@ function renderLanUrls(urls = []) {
   box.textContent = urls.length ? 'Máy khác mở: ' + urls.join('  ·  ') : '';
 }
 
+function finishedCount(progress) {
+  return Object.values(progress?.watches ?? {}).filter(item => item.state === 'done').length;
+}
+
 async function refreshStatus(reload = false) {
   clearTimeout(pollTimer);
   const version = ++statusVersion;
   try {
     const result = await api('status');
     if (version !== statusVersion) return;
+    const doneBefore = finishedCount(scanStatus?.progress);
     scanStatus = result;
     scanning = result.scanning;
+    if (scanning && finishedCount(result.progress) > doneBefore) await loadProfileData().catch(() => {});
     renderLanUrls(result.lanUrls);
     if (reload) startingScan = false;
     renderScanStatus();

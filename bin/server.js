@@ -6,6 +6,7 @@ import { startServer } from '../src/server.js';
 import { backfillDomains } from '../src/domain-backfill.js';
 import { createStore } from '../src/store.js';
 import { createAccess, readAccessConfig } from '../src/access/index.js';
+import { readProgress } from '../src/scan-progress.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const scanScript = fileURLToPath(new URL('./scan.js', import.meta.url));
@@ -44,6 +45,7 @@ const server = await startServer({
   access,
   lanUrls: () => host === '0.0.0.0' ? access.urls(server.address().port) : [],
   accessStatus: () => access.status(),
+  readScanProgress: () => readProgress(root),
 });
 access.start({ root, port: server.address().port, log: message => console.error(message) });
 console.log(`Mở http://127.0.0.1:${server.address().port} · máy khác qua ${access.name}: ${access.urls(server.address().port).join(' ')}`);
