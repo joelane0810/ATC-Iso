@@ -2150,7 +2150,7 @@ function renderItemProgress(row, state, show) {
         label = 'Đang lưu · ' + formatCount.format(state.ads ?? 0) + ' ads';
       } else {
         percent = 70 * (state.page ?? 0) / Math.max(1, state.maxPages ?? 1);
-        label = 'Trang ' + (state.page ?? 0) + '/' + (state.maxPages ?? '?') + ' · ' + formatCount.format(state.ads ?? 0) + ' ads';
+        label = state.page ? 'Trang ' + state.page + ' · ' + formatCount.format(state.ads ?? 0) + ' ads' : 'Đang mở ATC…';
       }
       break;
     case 'done':
