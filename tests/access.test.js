@@ -51,7 +51,7 @@ test('readAccessConfig merges config.json over the default', t => {
   writeFileSync(join(root, 'config.json'), JSON.stringify({ showBrowser: false, access: { domain: 'tail1234.ts.net' } }));
   const config = readAccessConfig(root);
   assert.equal(config.provider, 'tailscale');
-  assert.deepEqual(createAccess(config, { interfaces }).urls(4317), ['http://atc-iso', 'https://atc-iso.tail1234.ts.net']);
+  assert.deepEqual(createAccess(config, { interfaces }).urls(4317), ['http://atc-iso', 'http://atc-iso.tail1234.ts.net']);
 });
 
 test('tailscale gateway starts once, reports login link, restarts and stops', async t => {
@@ -70,7 +70,9 @@ test('tailscale gateway starts once, reports login link, restarts and stops', as
   assert.deepEqual(children[0].args.slice(0, 4), ['-hostname', 'atc-iso', '-target', 'http://127.0.0.1:4317']);
   children[0].stderr.emit('data', 'To start this tsnet server, go to: https://login.tailscale.com/a/abc123\n');
   assert.equal(gw.state.loginUrl, 'https://login.tailscale.com/a/abc123');
-  children[0].stderr.emit('data', 'Cổng ATC Iso sẵn sàng: http://atc-iso\n');
+  children[0].stderr.emit('data', 'Cổng ATC Iso sẵn sàng: http://atc-iso ip=100.71.2.3,fd7a:115c:a1e0::9 dns=atc-iso.tail1234.ts.net\n');
+  assert.deepEqual(gw.state.ips, ['100.71.2.3', 'fd7a:115c:a1e0::9']);
+  assert.equal(gw.state.dnsName, 'atc-iso.tail1234.ts.net');
   assert.equal(gw.state.running, true);
   assert.equal(gw.state.loginUrl, null);
   gw.stop();

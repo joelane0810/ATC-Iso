@@ -11,7 +11,13 @@ export function tailscaleProvider({ hostname = 'atc-iso', domain = '', gateway =
     name: 'Tailscale',
     allows: ip => ranges.some(range => inCidr(ip, range)),
     urls(port) {
-      if (gateway) return [`http://${hostname}`, ...(domain ? [`https://${hostname}.${domain}`] : [])];
+      if (gateway) {
+        // Tên ngắn chỉ chạy khi máy kia bật "Use Tailscale DNS"; tên đầy đủ và IP luôn chạy.
+        const live = running?.state ?? {};
+        const ipv4 = (live.ips ?? []).filter(ip => !ip.includes(':'));
+        const full = live.dnsName ?? (domain ? `${hostname}.${domain}` : null);
+        return [`http://${hostname}`, ...(full ? [`http://${full}`] : []), ...ipv4.map(ip => `http://${ip}`)];
+      }
       const names = [hostname, domain ? `${hostname}.${domain}` : null].filter(Boolean);
       const ips = localAddresses(interfaces).filter(ip => !ip.includes(':') && inCidr(ip, ranges[0]));
       return [...names, ...ips].map(host => `http://${host}:${port}`);

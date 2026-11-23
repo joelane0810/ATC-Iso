@@ -57,9 +57,18 @@ func main() {
 		}
 		return lc.GetCertificate(h)
 	}})
-	if _, err := srv.Up(context.Background()); err != nil {
+	status, err := srv.Up(context.Background())
+	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("Cổng ATC Iso sẵn sàng: http://%s", *hostname)
+	ips := []string{}
+	for _, ip := range status.TailscaleIPs {
+		ips = append(ips, ip.String())
+	}
+	dnsName := ""
+	if status.Self != nil {
+		dnsName = strings.TrimSuffix(status.Self.DNSName, ".")
+	}
+	log.Printf("Cổng ATC Iso sẵn sàng: http://%s ip=%s dns=%s", *hostname, strings.Join(ips, ","), dnsName)
 	log.Fatal(http.Serve(tlsLn, handler))
 }

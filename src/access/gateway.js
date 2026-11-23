@@ -50,7 +50,14 @@ export function startGateway({ root, port, hostname, log = console.error, spawnP
       const text = String(chunk);
       const login = text.match(/https:\/\/login\.tailscale\.com\/a\/[\w-]+/);
       if (login) state.loginUrl = login[0];
-      if (text.includes('Cổng ATC Iso sẵn sàng')) { state.running = true; state.loginUrl = null; }
+      if (text.includes('Cổng ATC Iso sẵn sàng')) {
+        state.running = true;
+        state.loginUrl = null;
+        const ips = text.match(/ip=([\d.,:a-f]*)/i)?.[1];
+        const dns = text.match(/dns=(\S+)/)?.[1];
+        if (ips) state.ips = ips.split(',').filter(Boolean);
+        if (dns) state.dnsName = dns;
+      }
       for (const line of text.split('\n')) if (line.trim()) log(`[cổng Tailscale] ${line.trim()}`);
     };
     try { if (child.pid) writeFileSync(pidFile, String(child.pid)); } catch {}
