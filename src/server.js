@@ -1,5 +1,5 @@
 import { isSqliteBusy } from './db.js';
-import { readFile, realpath } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -62,7 +62,17 @@ async function serveFile(res, dir, name, headers = {}) {
     const file = await realpath(join(root, name));
     const path = relative(root, file);
     if (!path || path === '..' || path.startsWith('..' + sep) || isAbsolute(path)) return false;
-    const data = await readFile(file);
+    let data = await readFile(file);
+    if (name === 'index.html') {
+      // Gắn số phiên bản vào app.js/style.css để trình duyệt (nhất là iPhone) luôn tải bản mới sau khi cài.
+      const version = async (asset) => {
+        try { return Math.round((await stat(join(root, asset))).mtimeMs).toString(36); } catch { return '0'; }
+      };
+      const [js, css] = await Promise.all([version('app.js'), version('style.css')]);
+      data = Buffer.from(String(data).replace('src="/app.js"', `src="/app.js?v=${js}"`)
+        .replace('href="/style.css"', `href="/style.css?v=${css}"`));
+      headers = { ...headers, 'Cache-Control': 'no-store' };
+    }
     res.writeHead(200, { 'Content-Type': type, 'X-Content-Type-Options': 'nosniff', ...headers });
     res.end(data);
     return true;

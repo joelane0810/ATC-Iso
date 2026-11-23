@@ -137,8 +137,11 @@ test('Task 3 HTTP API and static files', async (t) => {
   finishScan();
 
   const home = await get('/');
-  assert.equal(home.headers.get('cache-control'), 'no-cache');
-  assert.match(await home.text(), /Quét ngay/);
+  assert.equal(home.headers.get('cache-control'), 'no-store');
+  const homeText = await home.text();
+  assert.match(homeText, /Quét ngay/);
+  assert.match(homeText, /src="\/app\.js\?v=[0-9a-z]+"/);
+  assert.equal((await get('/app.js?v=abc')).status, 200);
   const app = await get('/app.js');
   assert.equal(app.headers.get('cache-control'), 'no-cache');
   assert.match(app.headers.get('content-type'), /javascript/);
