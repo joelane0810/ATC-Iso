@@ -24,20 +24,51 @@ function syncData(root) {
   });
 }
 
+const regionsWatchId = 'regions';
+
+async function lookupCreativeRegions({ store, client, creativeIds, scannedAt, scanId, tracker, log }) {
+  const entry = { at: scannedAt.toISOString(), watched: 0, newAds: 0, scanId, status: 'ok' };
+  const progress = (type, fields) => tracker.handle({ type, watchId: regionsWatchId, ...fields });
+  try {
+    let done = 0;
+    progress('regions', { done, total: creativeIds.length });
+    for (const creativeId of creativeIds) {
+      const advertiserId = await store.getCreativeAdvertiserId(creativeId);
+      if (!advertiserId) throw new Error('Không tìm thấy nhà quảng cáo của mẫu này.');
+      const regions = await client.lookupRegions({ advertiserId, creativeId });
+      await store.setCreativeRegions(creativeId, regions, scannedAt);
+      progress('regions', { done: ++done, total: creativeIds.length });
+    }
+    progress('done');
+  } catch (error) {
+    log(error);
+    const blocked = error instanceof BlockedError;
+    progress('error', { blocked });
+    entry.status = blocked ? 'blocked' : 'error';
+    entry.error = blocked ? 'Google đã chặn lượt quét' : 'Không lấy được quốc gia.';
+  }
+  return entry;
+}
+
 const projectRoot = fileURLToPath(new URL('../', import.meta.url));
 
 export async function scanOnce({
   root = projectRoot, store = createStore(root), open = openChromeClient,
-  sync = syncData, log = console.error, onAcquired = () => {}, watchId = null,
+  sync = syncData, log = console.error, onAcquired = () => {}, watchId = null, creativeIds = null,
   tabBudget = () => acquireTabBudget({ log }),
 } = {}) {
   return withLock(join(root, 'data', '.scan.lock'), async () => {
-    await store.purgeExpiredTrash?.();
+    if (!creativeIds) await store.purgeExpiredTrash?.();
     const history = (await store.getScanLog?.()) ?? [];
     const resumeAt = scanResumeAt(history);
-    const watches = await store.allWatches();
+    if (creativeIds && resumeAt) {
+      throw Object.assign(new Error('Đang tạm nghỉ sau khi Google chặn.'), {
+        code: 'SCAN_COOLDOWN', resumeAt,
+      });
+    }
+    const watches = creativeIds ? [] : await store.allWatches();
     if (watchId && !watches.some(watch => watch.id === watchId)) throw new Error('Không tìm thấy mục theo dõi.');
-    const scanOptions = { onlyWatchIds: watchId ? [watchId] : null };
+    const scanOptions = { onlyWatchIds: watchId ? [watchId] : null, maxDetails: watchId ? 20 : 80 };
     if (resumeAt) {
       const eligible = [];
       if (watchId) eligible.push(watchId);
@@ -50,9 +81,10 @@ export async function scanOnce({
       }
       Object.assign(scanOptions, { onlyWatchIds: eligible, maxPages: 2, maxDetails: 0, light: true });
     }
+    const scanTarget = creativeIds ? regionsWatchId : watchId;
     const withRest = value => ({
       ...value,
-      ...(watchId ? { watchId } : {}),
+      ...(scanTarget ? { watchId: scanTarget } : {}),
       ...(scanOptions.light ? { light: true } : {}),
       ...(value.status === 'blocked'
         ? { resumeAt: new Date(Date.parse(value.at) + REST_MS).toISOString() }
@@ -61,14 +93,16 @@ export async function scanOnce({
     let client;
     let entry;
     const scannedAt = new Date();
-    let scanId = await store.beginScan?.(scannedAt.toISOString(), watchId);
+    let scanId = await store.beginScan?.(scannedAt.toISOString(), scanTarget);
+    const tracker = createProgressTracker({ file: progressPath(root) });
+    if (creativeIds) tracker.handle({ type: 'start', watchIds: [regionsWatchId] });
     onAcquired();
     try {
       let showWindow = false;
       try { showWindow = JSON.parse(readFileSync(join(root, 'config.json'), 'utf8'))?.showBrowser === true; } catch {}
       // Trước khi quét: đếm tab ATC đang mở trên máy; cả máy tối đa 2 tab ATC cùng lúc.
       const maxTabs = await tabBudget();
-      client = await open({ profileDir: join(root, 'chrome-profile'), headless: !showWindow, debugDir: join(root, 'logs'), maxTabs });
+      client = await open({ profileDir: join(root, 'chrome-profile'), headless: !showWindow, debugDir: creativeIds ? undefined : join(root, 'logs'), maxTabs });
     } catch (error) {
       log(error);
       entry = {
@@ -78,11 +112,17 @@ export async function scanOnce({
           : error instanceof TabLimitError ? error.message : 'Không mở được trình duyệt.',
       };
       scanId = await store.appendScanLog(withRest(entry));
+      if (creativeIds) {
+        tracker.handle({ type: 'error', watchId: regionsWatchId, blocked: entry.status === 'blocked' });
+        tracker.finish();
+      }
     }
     if (client) {
-      const tracker = createProgressTracker({ file: progressPath(root) });
       try {
-        await runScan({
+        if (creativeIds) {
+          entry = await lookupCreativeRegions({ store, client, creativeIds, scannedAt, scanId, tracker, log });
+          scanId = await store.appendScanLog(withRest(entry));
+        } else await runScan({
           store, client, log, ...scanOptions, skipCaptures: Boolean(watchId && scanOptions.light),
           scanId, now: () => scannedAt, progress: event => tracker.handle(event),
           record: async value => {
@@ -99,6 +139,7 @@ export async function scanOnce({
         }
       }
     }
+    if (creativeIds) return entry.status;
     const checkpointed = await store.checkpoint();
     const syncResult = checkpointed ? await sync(root)
       : { pushed: false, reason: 'Dữ liệu đang được sử dụng.' };
@@ -110,7 +151,12 @@ export async function scanOnce({
 export function scanFromArgs(args, options) {
   const watchId = args.find(arg => arg.startsWith('--watch='))?.slice(8) ?? null;
   if (watchId === '') throw new Error('Vui lòng chọn mục theo dõi.');
-  return scanOnce({ ...options, watchId });
+  const regionsArg = args.find(arg => arg.startsWith('--regions='));
+  const ids = regionsArg?.slice('--regions='.length).split(',');
+  if (ids && (watchId || ids.length > 10 || ids.some(id => !/^CR\d+$/.test(id)))) {
+    throw new Error('Chọn từ một đến mười mẫu quảng cáo hợp lệ.');
+  }
+  return scanOnce({ ...options, watchId, creativeIds: ids ? [...new Set(ids)] : null });
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -131,6 +177,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     if (status !== 'ok') process.exitCode = 1;
   } catch (error) {
     if (error instanceof ScanBusyError) notify('busy');
+    if (error.code === 'SCAN_COOLDOWN') notify({ resumeAt: error.resumeAt });
     console.error(error.message);
     process.exitCode = 1;
   }

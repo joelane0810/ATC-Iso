@@ -231,7 +231,7 @@ export function createTimeReport({ all, scanHistory }) {
           FROM members WHERE firstDay <= ? OR firstDay IS NULL
         )
         SELECT watchId, key, observation, image, label, kind,
-          (SELECT json_group_array(json_object('regionId', region_id, 'lastShown', last_shown))
+          (SELECT json_group_array(json_object('regionId', region_id, 'firstShown', first_shown, 'lastShown', last_shown))
             FROM creative_regions WHERE creative_id = ranked.creativeId) AS regions
         FROM ranked WHERE rank <= 4 ORDER BY rank`, pid, end, start, end);
       for (const { watchId, key, observation, image, label, kind, regions } of samples) {

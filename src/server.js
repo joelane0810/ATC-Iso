@@ -7,6 +7,16 @@ import { fileURLToPath } from 'node:url';
 const webDir = fileURLToPath(new URL('../web/', import.meta.url));
 const webFiles = new Map([['/', 'index.html'], ['/index.html', 'index.html'],
   ['/app.js', 'app.js'], ['/style.css', 'style.css']]);
+const vietnamTime = new Intl.DateTimeFormat('vi-VN', {
+  hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'Asia/Ho_Chi_Minh',
+});
+
+function regionsCooldown(res, resumeAt) {
+  return json(res, 409, {
+    error: 'Đang tạm nghỉ sau khi Google chặn — thử lại sau ' + vietnamTime.format(new Date(resumeAt)) + '.',
+  });
+}
+
 const contentTypes = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -65,6 +75,7 @@ async function serveFile(res, dir, name, headers = {}) {
 export async function startServer({
   store, port = 4317, host = '127.0.0.1', triggerScan, isScanning, waitForAcquisition = false, lanUrls = () => [], access = null, accessStatus = () => null, readScanProgress = () => null,
 }) {
+  const hasCreativeForProfile = store.hasCreativeForProfile?.bind(store);
   const webStore = store.forWeb?.();
   store = webStore ?? store;
   let scanPending = false;
@@ -102,33 +113,52 @@ export async function startServer({
       if (method === 'GET' && path === '/api/suggest') {
         return json(res, 200, await store.suggest(params.get('q') ?? ''));
       }
-      if (method === 'POST' && path === '/api/scan') {
-        const { watchId = null } = await readBody(req, true);
-        if (watchId !== null && (typeof watchId !== 'string' || !/^[a-z0-9-]+$/i.test(watchId))) {
-          throw new Error('Mục theo dõi không hợp lệ.');
+      const regionsRoute = path.match(/^\/api\/profiles\/([\w-]+)\/creatives\/([^/]*)\/regions$/);
+      if (method === 'POST' && (path === '/api/scan' || regionsRoute)) {
+        let watchId = null;
+        let creativeIds;
+        if (regionsRoute) {
+          const [, , creativeId] = regionsRoute;
+          if (!/^CR\d+$/.test(creativeId)) return json(res, 409, { error: 'Mã mẫu quảng cáo không hợp lệ.' });
+          creativeIds = [creativeId];
+        } else {
+          ({ watchId = null } = await readBody(req, true));
+          if (watchId !== null && (typeof watchId !== 'string' || !/^[a-z0-9-]+$/i.test(watchId))) {
+            throw new Error('Mục theo dõi không hợp lệ.');
+          }
         }
         if (await scanning() || scanPending) return json(res, 409, { error: 'Đang có lượt quét.' });
         scanPending = true;
-        pendingWatchId = watchId;
-        if (watchId && store.isWatchActive) {
-          try {
-            if (!await store.isWatchActive(watchId)) throw Object.assign(
-              new Error('Không tìm thấy mục theo dõi.'), { code: 'NOT_FOUND' },
-            );
-          } catch (error) {
+        pendingWatchId = regionsRoute ? 'regions' : watchId;
+        let validated = false;
+        try {
+          if (regionsRoute) {
+            const [, pid, creativeId] = regionsRoute;
+            if (!await hasCreativeForProfile(pid, creativeId)) {
+              return json(res, 409, { error: 'Không tìm thấy mẫu quảng cáo trong hồ sơ này.' });
+            }
+            const last = await store.getLastScan();
+            if (last?.resumeAt) return regionsCooldown(res, last.resumeAt);
+          }
+          if (watchId && store.isWatchActive && !await store.isWatchActive(watchId)) {
+            throw Object.assign(new Error('Không tìm thấy mục theo dõi.'), { code: 'NOT_FOUND' });
+          }
+          validated = true;
+        } finally {
+          if (!validated) {
             scanPending = false;
             pendingWatchId = null;
-            throw error;
           }
         }
         const accepted = new Promise((resolve, reject) => {
           let acknowledged = false;
           const acquired = () => {
             acknowledged = true;
-            resolve(202);
+            resolve({});
           };
-          Promise.resolve().then(() => triggerScan(acquired, watchId)).then(acquired, (error) => {
-            if (error.code === 'SCAN_BUSY') resolve(409);
+          Promise.resolve().then(() => triggerScan(acquired, watchId, creativeIds)).then(acquired, (error) => {
+            if (error.code === 'SCAN_BUSY') resolve({ busy: true });
+            else if (error.code === 'SCAN_COOLDOWN') resolve({ resumeAt: error.resumeAt });
             else {
               reject(Object.assign(new Error(error.message), { code: 'SCAN_START_FAILED' }));
               if (!waitForAcquisition || acknowledged) console.error('Không thể hoàn tất lượt quét:', error.message);
@@ -136,9 +166,10 @@ export async function startServer({
           }).finally(() => { scanPending = false; pendingWatchId = null; });
           if (!waitForAcquisition) acquired();
         });
-        const status = await accepted;
-        if (status === 409) return json(res, status, { error: 'Đang có lượt quét.' });
-        return json(res, status, { scanning: true });
+        const { busy, resumeAt } = await accepted;
+        if (busy) return json(res, 409, { error: 'Đang có lượt quét.' });
+        if (resumeAt) return regionsCooldown(res, resumeAt);
+        return json(res, 202, { scanning: true });
       }
 
       const profile = path.match(/^\/api\/profiles\/([\w-]+)\/(watchlist|ads|summary|series|groups|trash)(?:\/([\w.-]+))?$/);

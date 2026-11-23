@@ -842,3 +842,64 @@ test('ad detail follows directly when the matching kind has no folders', async (
   assert.deepEqual(requests.findLast(({ method }) => method === 'POST').body,
     { input: 'example.com', kind: 'project', groupId: null, region: null });
 });
+
+test('ad detail requests countries, polls every three seconds and shows the refreshed dates in order', async () => {
+  const regions = [
+    { iso: 'VN', firstShown: '2026-11-16', lastShown: '2026-11-20' },
+    { iso: 'JP', lastShown: '2026-11-21' },
+    { iso: 'DE', firstShown: '2026-11-21', lastShown: '2026-11-21' },
+    { iso: 'US', firstShown: '2026-11-19', lastShown: '2026-11-22' },
+  ];
+  let refresh = false;
+  let responseStatus = 409;
+  const error = 'Đang tạm nghỉ sau khi Google chặn — thử lại sau 20:45.';
+  const { get, advance, requests, setStatus } = await boot({
+    reply: ({ url }) => {
+      if (url.pathname.endsWith('/regions')) {
+        return responseStatus === 409
+          ? { ok: false, status: 409, json: async () => ({ error }) }
+          : { ok: true, status: 202 };
+      }
+      if (refresh && url.pathname.endsWith('/ads')) {
+        return { ok: true, json: async () => [{ ...ad, regions }] };
+      }
+    },
+  });
+  await sidebarRow(get, 'competitor').children[0].onclick();
+  await get('mode-grid').onclick();
+  get('ads').children[0].onclick();
+  const detail = get('detail');
+  const find = text => detail.children.find(node => node.textContent === text);
+  assert.ok(find('Quốc gia hiển thị (0)'));
+  assert.ok(find('Chưa có dữ liệu quốc gia cho mẫu này.'));
+  const control = find('Lấy quốc gia');
+  await control.onclick();
+  assert.ok(find(error));
+  assert.equal(control.disabled, false);
+
+  responseStatus = 202;
+  const lookup = control.onclick();
+  assert.equal(control.textContent, 'Đang lấy quốc gia…');
+  assert.equal(control.disabled, true);
+  assert.equal(requests.at(-1).url.pathname, '/api/profiles/dai/creatives/CR1/regions');
+  assert.equal(requests.at(-1).method, 'POST');
+  await new Promise(setImmediate);
+  setStatus({ scanning: true, scanningWatchId: 'regions', last: null });
+  advance(3000);
+  await new Promise(setImmediate);
+  assert.equal(requests.at(-1).url.pathname, '/api/status');
+  assert.equal(control.disabled, true);
+
+  refresh = true;
+  setStatus({ scanning: false, scanningWatchId: null, last: { status: 'ok' } });
+  advance(3000);
+  await lookup;
+  assert.ok(find('Quốc gia hiển thị (4)'));
+  const list = detail.children.find(node => node.className === 'detail-regions');
+  assert.deepEqual(list.children.map(row => row.children.map(node => node.textContent)), [
+    ['🇺🇸 Hoa Kỳ', '19/11/2026 → 22/11/2026', '4 ngày', 'Đang chạy'],
+    ['🇩🇪 Đức', '21/11/2026 → 21/11/2026', '1 ngày', 'Đang chạy'],
+    ['🇯🇵 Nhật Bản', 'đến 21/11/2026', '', 'Đang chạy'],
+    ['🇻🇳 Việt Nam', '16/11/2026 → 20/11/2026', '5 ngày', 'Đã dừng'],
+  ]);
+});

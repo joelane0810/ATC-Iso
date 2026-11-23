@@ -464,9 +464,10 @@ test('clicking a card opens and updates the right-hand detail panel', async () =
     'Số ngày chạy', '3', 'Trạng thái', '',
   ]);
   assert.equal(fields.children.at(-1).children[0].textContent, 'Đã dừng');
-  assert.equal(regionHeading.textContent, 'Lần chạy gần nhất theo quốc gia');
-  assert.deepEqual(countries.children.map((node) => node.textContent), [
-    '🇺🇸 Hoa Kỳ · 10/11/2026', '🇻🇳 Việt Nam · 08/11/2026',
+  assert.equal(regionHeading.textContent, 'Quốc gia hiển thị (2)');
+  assert.deepEqual(countries.children.map((row) => row.children.map((node) => node.textContent)), [
+    ['🇺🇸 Hoa Kỳ', 'đến 10/11/2026', '', 'Đã dừng'],
+    ['🇻🇳 Việt Nam', 'đến 08/11/2026', '', 'Đã dừng'],
   ]);
   assert.equal(copy.textContent, 'Sao chép link');
   assert.equal(link.href, creative.detailsUrl);

@@ -32,6 +32,7 @@ const dateFormat = new Intl.DateTimeFormat('vi-VN', {
 const formats = { image: 'Hình ảnh', text: 'Chữ', video: 'Video' };
 let watchId = '';
 let selectedAd;
+let regionLookup;
 let ads = [];
 let rangeAds = [];
 let previousRangeAds = null;
@@ -922,6 +923,8 @@ function renderWatchStats(watch) {
 }
 
 function renderAds() {
+  const keepRegionDetail = regionLookup?.pid === profile.value
+    && selectedAd?.creativeId === regionLookup.creativeId ? selectedAd : null;
   closeGroup();
   renderedGroups.clear();
   renderRangeControl();
@@ -938,7 +941,7 @@ function renderAds() {
     }
     if (mode === 'groups') renderWatchGroups();
     const visible = mode === 'grid' ? ads : [];
-    selectedAd = visible.find((ad) => ad.creativeId === selectedAd?.creativeId);
+    selectedAd = keepRegionDetail ?? visible.find((ad) => ad.creativeId === selectedAd?.creativeId);
     const domain = watch.type === 'domain' ? watch.value : visible.find((ad) => ad.domain)?.domain;
     byId('gallery-heading').textContent = watch.label;
     byId('gallery-summary').textContent = domain || '';
@@ -949,7 +952,8 @@ function renderAds() {
     selectedAd = undefined;
     renderOverview();
   }
-  showDetail(selectedAd);
+  if (keepRegionDetail) selectedAd = keepRegionDetail;
+  else showDetail(selectedAd);
 }
 
 function renderOverview() {
@@ -1317,8 +1321,10 @@ function groupRow(watch, group) {
   row.onclick = () => {
     const alreadyOpen = openGroup?.row === row;
     closeGroup();
-    selectedAd = undefined;
-    showDetail();
+    if (!regionLookup || regionLookup.pid !== profile.value || regionLookup.creativeId !== selectedAd?.creativeId) {
+      selectedAd = undefined;
+      showDetail();
+    }
     if (alreadyOpen) return;
     const request = { row, panel, watchId: watch.watchId, key: group.key };
     openGroup = request;
@@ -1720,6 +1726,93 @@ function isRunningAd(ad) {
   return Boolean(first && last && first <= summary.refDate && last >= summary.refDate);
 }
 
+function renderDetailRegions(ad) {
+  const regions = ad.regions ?? [];
+  detail.append(element('h3', 'Quốc gia hiển thị (' + regions.length + ')'));
+  if (regions.length) {
+    const cutoff = shiftDate(summary?.refDate || dateInVietnam(new Date()), -1);
+    const countries = element('ul');
+    countries.className = 'detail-regions';
+    const rows = regions.map(region => {
+      const lastDay = region.lastShown.slice(0, 10);
+      return { ...region, ...regionLabel(region.iso), lastDay, running: lastDay >= cutoff };
+    }).sort((a, b) => Number(b.running) - Number(a.running)
+      || b.lastDay.localeCompare(a.lastDay) || a.name.localeCompare(b.name, 'vi'));
+    for (const { flag, name, firstShown, lastShown, running } of rows) {
+      const row = element('li');
+      const country = element('span', flag + ' ' + name);
+      country.className = 'detail-region-name';
+      country.title = name;
+      const dates = firstShown ? displayDate(firstShown) + ' → ' + displayDate(lastShown)
+        : 'đến ' + displayDate(lastShown);
+      const interval = element('span', dates);
+      interval.className = 'detail-region-dates';
+      const duration = firstShown ? (Date.parse(lastShown) - Date.parse(firstShown)) / dayMs + 1 : 0;
+      const count = element('span', duration > 0 ? formatCount.format(duration) + ' ngày' : '');
+      count.className = 'detail-region-days';
+      const state = badge(running ? 'Đang chạy' : 'Đã dừng', running ? 'new' : 'steady');
+      state.className += ' detail-region-status';
+      row.append(country, interval, count, state);
+      countries.append(row);
+    }
+    detail.append(countries);
+    return;
+  }
+
+  const control = element('button', 'Lấy quốc gia');
+  control.type = 'button';
+  const message = element('p');
+  message.className = 'region-lookup-message';
+  message.setAttribute('role', 'status');
+  const setPending = (active) => {
+    control.disabled = active;
+    control.textContent = active ? 'Đang lấy quốc gia…' : 'Lấy quốc gia';
+    control.className = 'action region-lookup' + (active ? ' region-lookup-pending' : '');
+  };
+  setPending(regionLookup?.pid === profile.value && regionLookup?.creativeId === ad.creativeId);
+  control.onclick = async () => {
+    if (regionLookup) {
+      message.textContent = 'Đang có lượt quét.';
+      return;
+    }
+    const pid = profile.value;
+    const creativeId = ad.creativeId;
+    const path = profilePath(pid);
+    const stillSelected = () => profile.value === pid && selectedAd?.creativeId === creativeId;
+    const lookup = { pid, creativeId, setPending, message };
+    regionLookup = lookup;
+    setPending(true);
+    message.textContent = '';
+    try {
+      await api(path + '/creatives/' + encodeURIComponent(creativeId) + '/regions', 'POST');
+      let status;
+      do {
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        status = await refreshStatus();
+      } while (!status || status.scanning);
+      await loadProfileData({ refreshChart: false, reopenGroup: Boolean(stillSelected() && openGroup) });
+      if (stillSelected()) {
+        const matches = candidate => candidate.creativeId === creativeId;
+        const updated = rangeAds.find(matches)
+          ?? summary?.watches.flatMap(watch => (watch.groups ?? []).flatMap(group => group.sampleAds ?? [])).find(matches)
+          ?? (await api(path + '/ads')).find(matches);
+        if (stillSelected() && updated) {
+          selectedAd = updated;
+          regionLookup = undefined;
+          showDetail(updated);
+        }
+      }
+    } catch (error) {
+      lookup.message.textContent = error.status ? error.message : 'Không tải được thông tin. Vui lòng thử lại.';
+    } finally {
+      regionLookup = undefined;
+      lookup.setPending(false);
+    }
+  };
+  if (control.disabled) Object.assign(regionLookup, { setPending, message });
+  detail.append(element('p', 'Chưa có dữ liệu quốc gia cho mẫu này.'), control, message);
+}
+
 function showDetail(ad) {
   detail.replaceChildren();
   if (!ad) {
@@ -1747,15 +1840,7 @@ function showDetail(ad) {
     running === false ? 'stopped' : 'steady'));
   fields.append(element('dt', 'Trạng thái'), status);
   detail.append(preview(ad, false, true), fields);
-  if (ad.regions?.length) {
-    const countries = element('ul');
-    countries.className = 'detail-regions';
-    for (const region of ad.regions) {
-      const { flag, name } = regionLabel(region.iso);
-      countries.append(element('li', flag + ' ' + name + ' · ' + displayDate(region.lastShown)));
-    }
-    detail.append(element('h3', 'Lần chạy gần nhất theo quốc gia'), countries);
-  }
+  renderDetailRegions(ad);
   if (/^https:\/\/adstransparency\.google\.com\/advertiser\//.test(ad.detailsUrl || '')) {
     const actions = element('div');
     actions.className = 'detail-actions';
@@ -2128,7 +2213,8 @@ function renderScanStatus() {
     message = 'Đang nghỉ' + (last.resumeAt ? ' · quét lại lúc ' + displayDate(last.resumeAt, vietnamTime) : '');
   }
   if (scanning || startingScan) {
-    message = 'Đang quét ' + (label || (scanningWatchId ? 'một mục' : 'tất cả')) + '…';
+    message = scanningWatchId === 'regions' ? 'Đang lấy quốc gia…'
+      : 'Đang quét ' + (label || (scanningWatchId ? 'một mục' : 'tất cả')) + '…';
   }
   const active = scanning || startingScan;
   const progress = scanStatus?.progress;
@@ -2226,13 +2312,14 @@ async function refreshStatus(reload = false) {
     const doneBefore = finishedCount(scanStatus?.progress);
     scanStatus = result;
     scanning = result.scanning;
-    if (scanning && finishedCount(result.progress) > doneBefore) await loadProfileData().catch(() => {});
+    if (!regionLookup && scanning && finishedCount(result.progress) > doneBefore) await loadProfileData().catch(() => {});
     renderLanUrls(result.lanUrls);
     if (reload) startingScan = false;
     renderScanStatus();
-    if (reload && !scanning) {
+    if (reload && !scanning && !regionLookup) {
       await loadProfileData();
     }
+    return result;
   } finally {
     if (version === statusVersion) {
       pollTimer = setTimeout(() => refreshStatus(scanning).catch(report), 5000);

@@ -174,7 +174,7 @@ test('profile summary and group filters follow the API contract', async t => {
   store.mergeAds(project, [ad], at, scanId);
   store.mergeAds(competitor, [ad], at, scanId);
   store.mergeAds(other, [{ ...ad, creativeId: 'other' }], at, scanId);
-  store.setCreativeRegions('CR1', [{ regionId: 2840, lastShown: at }]);
+  store.setCreativeRegions('CR1', [{ regionId: 2840, firstShown, lastShown: at }]);
   store.appendScanLog({ at, status: 'ok', scanId });
 
   const result = await (await request(summary)).json();
@@ -197,7 +197,9 @@ test('profile summary and group filters follow the API contract', async t => {
   const ads = await (await request(`${adsUrl}?watchId=${project.id}&group=AR1&format=text&q=example`)).json();
   assert.equal(ads.length, 1);
   assert.equal(ads[0].watchKind, 'project');
-  assert.deepEqual(ads[0].regions, [{ regionId: 2840, iso: 'US', lastShown: at }]);
+  const regions = [{ regionId: 2840, iso: 'US', firstShown, lastShown: at }];
+  assert.deepEqual(ads[0].regions, regions);
+  assert.deepEqual(result.watches[0].groups[0].sampleAds[0].regions, regions);
   assert.deepEqual(await (await request(`${adsUrl}?watchId=${project.id}&group=example.com`)).json(), []);
   assert.deepEqual(await (await request(`${adsUrl}?watchId=${other.id}`)).json(), []);
   assert.equal((await (await request(adsUrl)).json()).length, 1);
@@ -329,4 +331,63 @@ test('API quản lý nhóm và thùng rác theo hồ sơ', async t => {
   assert.equal((await send('POST', trash + '/purge', { ids: [first.id, second.id] })).status, 204);
   assert.deepEqual(await (await send('GET', trash)).json(), []);
   assert.equal((await send('POST', trash + '/restore', { ids: [first.id] })).status, 404);
+});
+
+test('region requests use the scan lock and require a creative from the profile', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'atc-regions-api-'));
+  const store = createStore(root);
+  const { id } = store.addProfile('Dai');
+  const other = store.addProfile('Lan');
+  const watch = store.addWatch(id, 'example.com');
+  const now = new Date();
+  store.mergeAds(watch, [{ creativeId: 'CR1', advertiserId: 'AR1' }], now);
+  const lockPath = join(root, 'data', '.scan.lock');
+  let launched = 0;
+  let finish;
+  const lifetime = new Promise(resolve => { finish = resolve; });
+  const resumeAt = new Date(+now + 60 * 60 * 1000).toISOString();
+  let cooldownAtAcquisition = false;
+  const request = await startRequest(t, {
+    store, port: 0, waitForAcquisition: true, isScanning: () => isScanLocked(lockPath),
+    triggerScan(acquired, watchId, ids) {
+      assert.equal(watchId, null);
+      assert.deepEqual(ids, ['CR1']);
+      if (cooldownAtAcquisition) throw Object.assign(new Error(), { code: 'SCAN_COOLDOWN', resumeAt });
+      launched++;
+      acquired();
+      return lifetime;
+    },
+  });
+  t.after(async () => {
+    finish();
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  });
+  const post = (profileId = id, creativeId = 'CR1') =>
+    request(`/api/profiles/${profileId}/creatives/${creativeId}/regions`, { method: 'POST' });
+
+  assert.equal((await post(id, 'AR1')).status, 409);
+  assert.equal((await post(other.id)).status, 409);
+  assert.equal((await post(id, 'CR999')).status, 409);
+  await withLock(lockPath, async () => {
+    const response = await post();
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { error: 'Đang có lượt quét.' });
+  });
+  assert.equal(launched, 0);
+  const time = new Date(+new Date(resumeAt) + 7 * 3_600_000).toISOString().slice(11, 16);
+  const cooldownMessage = { error: `Đang tạm nghỉ sau khi Google chặn — thử lại sau ${time}.` };
+  cooldownAtAcquisition = true;
+  const race = await post();
+  assert.equal(race.status, 409);
+  assert.deepEqual(await race.json(), cooldownMessage);
+  cooldownAtAcquisition = false;
+  store.appendScanLog({ at: now.toISOString(), status: 'blocked', resumeAt });
+  const cooldown = await post();
+  assert.equal(cooldown.status, 409);
+  assert.deepEqual(await cooldown.json(), cooldownMessage);
+  store.appendScanLog({ at: now.toISOString(), status: 'ok' });
+  assert.equal((await post()).status, 202);
+  assert.equal((await post()).status, 409);
+  assert.equal(launched, 1);
 });

@@ -13,12 +13,16 @@ const scanScript = fileURLToPath(new URL('./scan.js', import.meta.url));
 
 let afterScan = () => {};
 
-function triggerScan(acquired, watchId) {
+function triggerScan(acquired, watchId, creativeIds) {
   return new Promise((resolve, reject) => {
-    const child = fork(scanScript, watchId ? [`--watch=${watchId}`] : [], { cwd: root, stdio: ['inherit', 'inherit', 'inherit', 'ipc'] });
+    const args = creativeIds ? [`--regions=${creativeIds.join(',')}`] : watchId ? [`--watch=${watchId}`] : [];
+    const child = fork(scanScript, args, { cwd: root, stdio: ['inherit', 'inherit', 'inherit', 'ipc'] });
     let busy = false;
     child.once('message', state => {
       if (state === 'acquired') acquired();
+      if (state?.resumeAt) reject(Object.assign(new Error('Đang tạm nghỉ sau khi Google chặn.'), {
+        code: 'SCAN_COOLDOWN', resumeAt: state.resumeAt,
+      }));
       if (state === 'busy') {
         busy = true;
         reject(new ScanBusyError());
@@ -26,7 +30,7 @@ function triggerScan(acquired, watchId) {
     });
     child.once('error', reject);
     child.once('close', (code) => {
-      afterScan();
+      if (!creativeIds) afterScan();
       if (code === 0) resolve();
       else if (!busy) reject(new Error('Tiến trình quét kết thúc bất thường.'));
     });

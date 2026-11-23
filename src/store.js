@@ -103,9 +103,9 @@ export function createStore(root, options) {
   const getScanLog = () => scanHistory(null);
   function regionsByCreative(rows) {
     const result = new Map();
-    for (const { creativeId, regionId, lastShown } of rows) {
+    for (const { creativeId, regionId, firstShown, lastShown } of rows) {
       if (!result.has(creativeId)) result.set(creativeId, []);
-      result.get(creativeId).push({ regionId, iso: regionIdToIso(regionId), lastShown });
+      result.get(creativeId).push({ regionId, iso: regionIdToIso(regionId), firstShown, lastShown });
     }
     return result;
   }
@@ -347,6 +347,14 @@ export function createStore(root, options) {
       return get('PRAGMA wal_checkpoint(TRUNCATE)').busy === 0;
     },
     getScanLog,
+    hasCreativeForProfile(pid, creativeId) {
+      return Boolean(get(`SELECT 1 FROM watch_creatives wc
+        JOIN profile_watches p ON p.watch_id = wc.watch_id
+        WHERE wc.creative_id = ? AND p.profile_id = ? AND p.deleted_at IS NULL LIMIT 1`, creativeId, pid));
+    },
+    getCreativeAdvertiserId(creativeId) {
+      return get('SELECT advertiser_id FROM creatives WHERE id = ?', creativeId)?.advertiser_id ?? null;
+    },
     setCreativeRegions(cr, regions, now = new Date()) {
       transaction(() => {
         if (regions == null) {
@@ -441,7 +449,7 @@ export function createStore(root, options) {
         }
       }
       const byCreative = regionsByCreative(all(`SELECT r.creative_id AS creativeId,
-        r.region_id AS regionId, r.last_shown AS lastShown FROM creative_regions r
+        r.region_id AS regionId, r.first_shown AS firstShown, r.last_shown AS lastShown FROM creative_regions r
         JOIN (SELECT DISTINCT wc.creative_id FROM profile_watches p
           JOIN watch_creatives wc ON wc.watch_id = p.watch_id
           WHERE p.profile_id = ? AND p.deleted_at IS NULL AND wc.platform = 'search') matches ON matches.creative_id = r.creative_id
