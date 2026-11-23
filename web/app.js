@@ -2264,7 +2264,9 @@ function renderScanStatus() {
 
 // Dòng tiến độ nhỏ trong từng mục: chờ tới lượt · trang x/y · quốc gia · xong.
 function renderItemProgress(row, state, show) {
-  let box = row.querySelector?.(':scope > .scan-progress');
+  // Trong bảng: đặt ngay dưới tên mục (ô đầu tiên), không thêm ô lạ vào cuối hàng.
+  const host = row.querySelector?.('.overview-name-cell') ?? row.querySelector?.('.watch-meta') ?? row;
+  let box = host.querySelector?.(':scope > .scan-progress');
   if (!show || !state) {
     box?.remove();
     return;
@@ -2275,10 +2277,10 @@ function renderItemProgress(row, state, show) {
     const bar = element('span');
     bar.className = 'scan-progress-bar';
     bar.append(element('i'));
-    box.append(bar, element('small'));
-    row.append(box);
+    box.append(element('small'), bar);
+    host.append(box);
   }
-  const [bar, text] = box.children;
+  const [text, bar] = box.children;
   let percent = 0;
   let label = '';
   switch (state.state) {
