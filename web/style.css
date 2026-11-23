@@ -1009,3 +1009,7 @@ button.is-scanning::after {
 .scan-progress[data-state="skipped"] small { color: var(--muted); }
 .watch-item { flex-wrap: wrap; }
 .watch-item > .scan-progress { flex-basis: 100%; }
+
+.total .stat-delta { display: block; margin-top: 2px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.total .stat-delta.delta-up { color: #188038; }
+.total .stat-delta.delta-down { color: #c5221f; }

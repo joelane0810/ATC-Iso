@@ -34,6 +34,8 @@ let watchId = '';
 let selectedAd;
 let ads = [];
 let rangeAds = [];
+let previousRangeAds = null;
+let previousRangeLabel = ''; // ads của khoảng ngày liền trước (cùng độ dài) để so sánh
 const kindLabels = { competitor: 'Nhà quảng cáo', project: 'Dự án' };
 const groupLabels = { increase: 'Chạy thêm ads', decrease: 'Chạy bớt ads', stopped: 'Tắt hết ads', steady: 'Ổn định' };
 const watchColors = [
@@ -218,13 +220,18 @@ async function loadProfileData({ refreshChart = true, reopenGroup = false } = {}
   // and still includes historical totals for each group.
   const adParams = withRange(new URLSearchParams({ watchId: currentWatch }), range);
   const hasGridFilters = mode === 'grid' && (filters.filter !== 'all' || filters.q.trim() || filters.format);
-  const [list, data, groups, trash, rangeResults, gridResults] = await Promise.all([
+  const previous = currentWatch && range ? previousRangeOf(range) : null;
+  // Gọi khoảng liền trước trước tiên để các yêu cầu chính vẫn là yêu cầu cuối cùng.
+  const previousRequest = previous
+    ? api(path + '/ads?' + withRange(new URLSearchParams({ watchId: currentWatch }), previous)).catch(() => null) : null;
+  const [list, data, groups, trash, rangeResults, gridResults, previousResults] = await Promise.all([
     api(path + '/watchlist'), api(path + '/summary?' + withRange(new URLSearchParams(), range)),
     optionalList(path + '/groups'), optionalList(path + '/trash'),
     currentWatch ? api(path + '/ads?' + adParams) : [],
     currentWatch && hasGridFilters
       ? api(path + '/ads?' + new URLSearchParams({ ...Object.fromEntries(adParams), ...filters }))
       : null,
+    previousRequest,
   ]);
   if (version !== loadVersion) return;
   summary = data;
@@ -241,6 +248,9 @@ async function loadProfileData({ refreshChart = true, reopenGroup = false } = {}
     if (!trashedWatches.some((watch) => watch.watchId === id)) trashSelection.delete(id);
   }
   rangeAds = rangeResults.filter((ad) => ad.platform === 'search');
+  previousRangeAds = previousResults ? previousResults.filter((ad) => ad.platform === 'search') : null;
+  previousRangeLabel = previous ? displayDate(previous.from, shortDate)
+    + (previous.from === previous.to ? '' : ' – ' + displayDate(previous.to, shortDate)) : '';
   ads = gridResults ? gridResults.filter((ad) => ad.platform === 'search') : rangeAds;
   watchCounts = new Map(summary.watches.map((watch) => [watch.watchId, watch]));
   if (watchId && !watches.some((watch) => watch.id === watchId)) return chooseWatch('');
@@ -863,17 +873,11 @@ function preview(ad, thumbnail = false, large = false) {
   return image;
 }
 
-function renderWatchStats(watch) {
-  const stats = byId('watch-stats');
-  stats.hidden = !watch;
-  if (!watch) return;
-  const kind = kindOf(watch);
-  const project = kind === 'project';
+function watchStatCounts(list, project, range) {
   const identities = new Set();
-  const range = isAllTime() ? null : activeRange();
   let unknownDomains = 0;
   let newAds = 0;
-  for (const ad of rangeAds) {
+  for (const ad of list) {
     const identity = project ? ad.advertiserId || ad.advertiserName?.trim()
       : ad.domain?.trim().toLowerCase().replace(/^www\./, '').replace(/\.$/, '');
     if (identity) identities.add(identity);
@@ -881,20 +885,40 @@ function renderWatchStats(watch) {
     const first = dateInVietnam(ad.firstShown);
     if (first && (!range || (first >= range.from && first <= range.to))) newAds++;
   }
+  return { groups: identities.size, ads: list.length, newAds, unknownDomains };
+}
+
+function renderWatchStats(watch) {
+  const stats = byId('watch-stats');
+  stats.hidden = !watch;
+  if (!watch) return;
+  const kind = kindOf(watch);
+  const project = kind === 'project';
+  const range = isAllTime() ? null : activeRange();
+  const now = watchStatCounts(rangeAds, project, range);
+  // So với khoảng liền trước cùng độ dài (Hôm nay ↔ Hôm qua, 7 ngày ↔ 7 ngày trước…).
+  const before = range && previousRangeAds ? watchStatCounts(previousRangeAds, project, previousRangeOf(range)) : null;
   byId('watch-stats-cards').replaceChildren(...[
-    [project ? 'Nhà quảng cáo' : 'Dự án', identities.size],
-    ['Ads', rangeAds.length],
-    ['Ads mới', newAds],
-  ].map(([label, count]) => {
+    [project ? 'Nhà quảng cáo' : 'Dự án', 'groups'],
+    ['Ads', 'ads'],
+    ['Ads mới', 'newAds'],
+  ].map(([label, key]) => {
     const card = element('div');
     card.className = 'total tone-' + kind;
     card.setAttribute('data-label', label);
-    card.append(element('span', label), element('strong', formatCount.format(count)));
+    card.append(element('span', label), element('strong', formatCount.format(now[key])));
+    if (before) {
+      const change = now[key] - before[key];
+      const delta = element('small', (change > 0 ? '+' : change < 0 ? '−' : '±') + formatCount.format(Math.abs(change))
+        + ' so với ' + previousRangeLabel);
+      delta.className = 'stat-delta ' + (change > 0 ? 'delta-up' : change < 0 ? 'delta-down' : 'delta-flat');
+      card.append(delta);
+    }
     return card;
   }));
   const note = byId('watch-stats-unknown');
-  note.hidden = !unknownDomains;
-  note.textContent = '+' + formatCount.format(unknownDomains) + ' ads chưa rõ tên miền';
+  note.hidden = !now.unknownDomains;
+  note.textContent = '+' + formatCount.format(now.unknownDomains) + ' ads chưa rõ tên miền';
 }
 
 function renderAds() {
@@ -1411,6 +1435,12 @@ function dateBounds() {
   const ref = watchBounds?.refDate ?? summary?.refDate;
   const min = watchBounds ? watchBounds.minDate : summary?.minDate;
   return ref ? { from: min && min <= ref ? min : ref, to: ref } : null;
+}
+
+function previousRangeOf(range) {
+  const days = Math.round((Date.parse(range.to + 'T00:00:00Z') - Date.parse(range.from + 'T00:00:00Z')) / 86_400_000) + 1;
+  const to = shiftDate(range.from, -1);
+  return { from: shiftDate(to, -(days - 1)), to };
 }
 
 function isAllTime() {

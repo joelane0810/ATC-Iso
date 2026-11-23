@@ -722,7 +722,8 @@ test('each watch shows date-filtered totals from the same ads as the grid', asyn
     rangeResponse: (params) => fixtures.filter(({ firstShown, lastShown }) => !params.has('from')
       || (localDay(firstShown) <= params.get('to') && localDay(lastShown) >= params.get('from'))),
   });
-  const stats = () => nodes.get('watch-stats-cards').children.map((card) => card.children.map((node) => node.textContent));
+  const stats = () => nodes.get('watch-stats-cards').children.map((card) => card.children.slice(0, 2).map((node) => node.textContent));
+  const deltas = () => nodes.get('watch-stats-cards').children.map((card) => card.children[2]?.textContent ?? null);
   const select = (kind) => sidebarRow((id) => nodes.get(id), kind).children[0].onclick();
   const setDate = async (day) => {
     nodes.get('range-open').onclick();
@@ -737,6 +738,7 @@ test('each watch shows date-filtered totals from the same ads as the grid', asyn
   await nodes.get('mode-grid').onclick();
   await setDate(10);
   assert.deepEqual(stats(), [['Dự án', '2'], ['Ads', '2'], ['Ads mới', '1']]);
+  assert.ok(deltas().every((text) => /^[+−±]\d+ so với /.test(text)));
   assert.equal(note.hidden, true);
   assert.equal(nodes.get('ads').children.length, 2);
 
