@@ -67,7 +67,8 @@ const probeTimer = setInterval(async () => {
   try {
     if (isScanLocked(join(root, 'data', '.scan.lock'))) return;
     const log = (await store.getScanLog?.()) ?? [];
-    const last = [...log].reverse().find(entry => entry.status !== 'cooldown');
+    // Lượt chặn gần nhất mà sau đó chưa có lượt quét đầy đủ nào qua được (bỏ qua lượt nhẹ/nghỉ).
+    const last = [...log].reverse().find(entry => entry.status === 'blocked' || (entry.status === 'ok' && !entry.light));
     if (last?.status !== 'blocked') return;
     const resume = last.resumeAt ? Date.parse(last.resumeAt) : Date.parse(last.at) + 6 * 3600_000;
     if (Date.now() < resume) return;
