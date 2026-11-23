@@ -1248,8 +1248,17 @@ function renderWatchGroups() {
   const key = sort.value || 'runningNow';
   const groups = (watch?.groups ?? []).filter((group) => allTime
     || group.runningNow > 0 || group.runningPrev > 0 || group.newAds > 0);
-  groups.sort((a, b) =>
-    (key === 'name' ? 0 : b[key] - a[key]) || a.name.localeCompare(b.name, 'vi'));
+  // Số ads của nhóm: đang chạy trong khoảng ngày, hoặc tổng ads khi xem "Mọi lúc".
+  const adsOf = (group) => allTime ? group.totalAds : group.runningNow;
+  const started = (group) => Date.parse(group.firstShown) || 0;
+  const compare = {
+    name: () => 0,
+    mostAds: (a, b) => adsOf(b) - adsOf(a),
+    fewestAds: (a, b) => adsOf(a) - adsOf(b),
+    oldest: (a, b) => (started(a) || Infinity) - (started(b) || Infinity),
+    newest: (a, b) => started(b) - started(a),
+  }[key] ?? ((a, b) => b[key] - a[key]);
+  groups.sort((a, b) => compare(a, b) || a.name.localeCompare(b.name, 'vi'));
   byId('watch-groups').replaceChildren(...(groups.length
     ? groups.map((group) => groupRow(watch, group))
     : [element('p', 'Chưa có mẫu quảng cáo.')]));
