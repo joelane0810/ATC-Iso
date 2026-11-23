@@ -1013,3 +1013,12 @@ button.is-scanning::after {
 .total .stat-delta { display: block; margin-top: 2px; font-size: 12px; font-weight: 600; color: var(--muted); }
 .total .stat-delta.delta-up { color: #188038; }
 .total .stat-delta.delta-down { color: #c5221f; }
+
+/* Máy tính: 6 thẻ trên một hàng, đều nhau (2 thẻ Quảng cáo + 4 thẻ Đối thủ) */
+@media (width >= 1280px) {
+  .totals.overview-totals { grid-template-columns: minmax(0, 2fr) minmax(0, 4fr); align-items: stretch; }
+  .totals.overview-totals .overview-total-block { display: flex; flex-direction: column; }
+  .totals.overview-totals .overview-total-block .overview-total-rows { flex: 1; align-items: stretch; }
+  .totals.overview-totals .overview-ads .overview-total-rows { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .totals.overview-totals .overview-competitors .overview-total-rows { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
