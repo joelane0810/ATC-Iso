@@ -340,6 +340,16 @@ export function createStore(root, options) {
       return transaction(() => run(`UPDATE creatives SET snapshot_attempted_at = NULL
         WHERE image IS NULL AND snapshot_attempted_at < ?`, iso).changes);
     },
+    snapshotImages() {
+      return all(`SELECT id AS creativeId, image FROM creatives
+        WHERE snapshot_attempted_at IS NOT NULL AND image LIKE 'images/CR%.png'`);
+    },
+    clearCreativeImage(creativeId) {
+      transaction(() => {
+        run('UPDATE creatives SET image = NULL, snapshot_attempted_at = NULL WHERE id = ?', creativeId);
+        run(`UPDATE watch_creatives SET observation = json_remove(observation, '$.image') WHERE creative_id = ?`, creativeId);
+      });
+    },
     claimSnapshot(creativeId, at = now()) {
       return Boolean(transaction(() => run(`UPDATE creatives SET snapshot_attempted_at = ?
         WHERE id = ? AND ${snapshotCandidate} AND ${snapshotDue}`,

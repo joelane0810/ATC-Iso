@@ -8,14 +8,17 @@ import { createSnapshotBackfill, createSnapshotter } from '../src/preview-snapsh
 import { createStore } from '../src/store.js';
 
 const url = 'https://displayads-formats.googleusercontent.com/ad/content.js?htmlParentId=old&responseCallback=old&x=1&x=2';
-const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+const png = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), Buffer.alloc(3000, 1)]);
 
 test('snapshotter captures rendered content and skips errors, empty results and timeouts', async () => {
   let mode = 'content';
   let closed = 0;
   let html;
+  let routeHandler;
   const page = {
-    setContent(document) { html = document; },
+    async goto(address) {
+      await routeHandler({ request: () => ({ url: () => address }), fulfill: ({ body }) => { html = body; }, continue() {}, abort() {} });
+    },
     waitForFunction(fn, arg, options) {
       assert.equal(options.timeout, 12_000);
       const result = this.evaluate(fn, arg);
@@ -40,7 +43,7 @@ test('snapshotter captures rendered content and skips errors, empty results and 
       return {
         newContext: () => ({
           routeWebSocket() {},
-          route() {},
+          route(pattern, handler) { routeHandler = handler; },
           newPage: () => page,
           close: () => { closed++; },
         }),

@@ -1,11 +1,15 @@
 import { chromium } from 'playwright-core';
 import { isBlockedResponse } from './atc.js';
 import { randomUUID } from 'node:crypto';
-import { appendFile, mkdir, rename, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 const origin = 'https://displayads-formats.googleusercontent.com';
+// Trang chứa bản xem trước được đặt CÙNG nguồn với khung adframe (như trang ATC thật), để quảng cáo vẽ được vào khung.
+const hostPage = origin + '/atc-iso-preview.html';
+// Ảnh PNG nhỏ hơn mức này gần như chắc chắn là ảnh trắng.
+const MIN_PNG_BYTES = 2500;
 const allowedHosts = ['googlevideo.com', 'gstatic.com', 'googleusercontent.com', 'googlesyndication.com', 'googleapis.com', 'ggpht.com', 'ytimg.com'];
 const timeout = 12_000;
 
@@ -77,6 +81,9 @@ export async function createSnapshotter({ launch = options => chromium.launch(op
         await context.route('**/*', route => {
           const { protocol, hostname, pathname } = new URL(route.request().url());
           // Khung "adframe" vốn do trang ATC cung cấp (trang trống để quảng cáo vẽ vào) — tự trả trang trống.
+          if (route.request().url() === hostPage) {
+            return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: previewDocument(url) });
+          }
           if (pathname === '/adframe') {
             return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8',
               body: '<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0"></body></html>' });
@@ -85,7 +92,7 @@ export async function createSnapshotter({ launch = options => chromium.launch(op
           return forbidden ? route.abort() : route.continue();
         });
         const page = await context.newPage();
-        await page.setContent(previewDocument(url), { waitUntil: 'domcontentloaded', timeout });
+        await page.goto(hostPage, { waitUntil: 'domcontentloaded', timeout });
         const ready = await page.waitForFunction(previewReady, false, { timeout });
         if (await ready.jsonValue() === 'error' || blocked) {
           note('google-error');
@@ -117,6 +124,7 @@ export async function createSnapshotter({ launch = options => chromium.launch(op
           return null;
         }
         const png = await page.locator('#atc-preview').screenshot({ timeout, animations: 'disabled' });
+        if (png.length < MIN_PNG_BYTES) { note('blank'); return null; }
         return blocked ? null : png;
       } catch (error) {
         note('fail: ' + String(error?.message ?? error).split('\n')[0].slice(0, 160));
@@ -135,7 +143,16 @@ export function createSnapshotBackfill({ store, open = createSnapshotter, pause 
     if (running) return;
     running = true;
     try {
-      await store.resetSnapshotAttemptsBefore?.('2026-11-24T05:50:00.000Z');
+      await store.resetSnapshotAttemptsBefore?.('2026-11-24T06:10:00.000Z');
+      // Gỡ các ảnh trắng đã lỡ lưu ở bản trước.
+      for (const { creativeId, image } of (await store.snapshotImages?.()) ?? []) {
+        const path = join(store.imagesDir(), image.replace(/^images\//, ''));
+        const size = await stat(path).then(info => info.size).catch(() => 0);
+        if (size < MIN_PNG_BYTES) {
+          await rm(path, { force: true });
+          await store.clearCreativeImage?.(creativeId);
+        }
+      }
       const candidates = await store.creativesNeedingSnapshots(300);
       if (!candidates.length) return;
       const directory = store.imagesDir();
