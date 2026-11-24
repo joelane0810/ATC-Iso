@@ -1,12 +1,12 @@
 import { chromium } from 'playwright-core';
 import { isBlockedResponse } from './atc.js';
 import { randomUUID } from 'node:crypto';
-import { rename, rm, writeFile } from 'node:fs/promises';
+import { appendFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 const origin = 'https://displayads-formats.googleusercontent.com';
-const allowedHosts = ['googlevideo.com', 'gstatic.com', 'googleusercontent.com', 'tpc.googlesyndication.com'];
+const allowedHosts = ['googlevideo.com', 'gstatic.com', 'googleusercontent.com', 'googlesyndication.com', 'googleapis.com', 'ggpht.com', 'ytimg.com'];
 const timeout = 12_000;
 
 function scriptUrl(raw) {
@@ -61,7 +61,7 @@ function holdVideoStart() {
   }
 }
 
-export async function createSnapshotter({ launch = options => chromium.launch(options) } = {}) {
+export async function createSnapshotter({ launch = options => chromium.launch(options), note = () => {} } = {}) {
   const browser = await launch({ channel: 'chrome', headless: true });
   let blocked = false;
   return {
@@ -72,46 +72,26 @@ export async function createSnapshotter({ launch = options => chromium.launch(op
       const context = await browser.newContext({ viewport: { width: 400, height: 600 }, serviceWorkers: 'block' });
       try {
         await context.routeWebSocket('**/*', socket => socket.close());
-        await context.route('**/*', async route => {
-          const request = route.request();
-          const { protocol, hostname, username, password, port } = new URL(request.url());
-          if (blocked || protocol !== 'https:' || username || password || port ||
-              !allowedHosts.some(host => hostname === host || hostname.endsWith('.' + host)) ||
-              !['GET', 'HEAD'].includes(request.method())) return route.abort();
-          try {
-            // Kiểm tra từng yêu cầu, kể cả khi máy chủ trả về đích chuyển hướng.
-            const response = await route.fetch({ maxRedirects: 0, timeout });
-            try {
-              const status = response.status();
-              const headers = response.headers();
-              const location = headers.location ? new URL(headers.location, request.url()).href : '';
-              const html = /^text\/html\b/i.test(headers['content-type'] ?? '');
-              if (isBlockedResponse({ status, url: location }) ||
-                  (html && /unusual traffic from your computer network|id=["']captcha-form["']/i.test(await response.text()))) {
-                blocked = true;
-              }
-              if (blocked || (status >= 300 && status < 400)) await route.abort();
-              else await route.fulfill({ response });
-            } finally {
-              await response.dispose();
-            }
-          } catch {
-            await route.abort().catch(() => {});
-          }
+        // Chỉ cho tải từ máy chủ hiển thị quảng cáo của Google; không bao giờ mở trang ATC.
+        await context.route('**/*', route => {
+          const { protocol, hostname } = new URL(route.request().url());
+          const allowed = protocol === 'https:' && allowedHosts.some(host => hostname === host || hostname.endsWith('.' + host));
+          return allowed ? route.continue() : route.abort();
         });
         const page = await context.newPage();
         await page.setContent(previewDocument(url), { waitUntil: 'domcontentloaded', timeout });
         const ready = await page.waitForFunction(previewReady, false, { timeout });
-        if (await ready.jsonValue() === 'error' || blocked) return null;
+        if (await ready.jsonValue() === 'error' || blocked) { note('google-error'); return null; }
         await Promise.all(page.frames().map(frame => frame.evaluate(holdVideoStart).catch(() => {})));
         await page.waitForTimeout(1500);
-        if (blocked || await page.evaluate(previewReady, true) !== true) return null;
+        if (blocked || await page.evaluate(previewReady, true) !== true) { note('empty'); return null; }
         const childResults = await Promise.all(page.frames().filter(frame => frame.parentFrame()).map(frame =>
           frame.evaluate(previewReady, true).catch(() => false)));
-        if (childResults.includes('error')) return null;
+        if (childResults.includes('error')) { note('google-error'); return null; }
         const png = await page.locator('#atc-preview').screenshot({ timeout, animations: 'disabled' });
         return blocked ? null : png;
-      } catch {
+      } catch (error) {
+        note('fail: ' + String(error?.message ?? error).split('\n')[0].slice(0, 160));
         return null;
       } finally {
         await context.close();
@@ -130,13 +110,17 @@ export function createSnapshotBackfill({ store, open = createSnapshotter, pause 
       const candidates = await store.creativesNeedingSnapshots(300);
       if (!candidates.length) return;
       const directory = store.imagesDir();
-      const snapshotter = await open();
+      const logFile = join(directory, '..', 'snapshot-log.txt');
+      let current = '';
+      const note = reason => appendFile(logFile, `${new Date().toISOString()} ${current} ${reason}\n`).catch(() => {});
+      const snapshotter = await open({ note });
       try {
         let attempted = false;
         for (const { creativeId, previewUrl } of candidates) {
           if (!/^CR\d+$/.test(creativeId) || !await store.claimSnapshot(creativeId)) continue;
           if (attempted) await pause(300);
           attempted = true;
+          current = creativeId;
           const png = await snapshotter.snapshot(previewUrl);
           if (snapshotter.blocked) break;
           if (!png) continue;

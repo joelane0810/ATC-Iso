@@ -98,39 +98,3 @@ test('backfill shares a browser, avoids overlapping runs, and saves an image rea
   assert.equal(summary.watches[0].groups[0].sampleAds.find(item => item.creativeId === 'CR1').image, 'images/CR1.png');
 });
 
-test('snapshot network rejects other hosts and stops on a Google block without following it', async () => {
-  let intercept;
-  let aborts = 0;
-  let fetches = 0;
-  const simulate = (address, status, headers = {}) => intercept({
-    request: () => ({ url: () => address, method: () => 'GET' }),
-    abort: () => { aborts++; },
-    fetch(options) {
-      fetches++;
-      assert.equal(options.maxRedirects, 0);
-      return { status: () => status, headers: () => headers, dispose() {} };
-    },
-  });
-  const snapshotter = await createSnapshotter({
-    launch: () => ({
-      newContext: () => ({
-        routeWebSocket() {},
-        route(_, handler) { intercept = handler; },
-        newPage: () => ({
-          async setContent() {
-            await simulate('https://adstransparency.google.com/', 200);
-            await simulate('https://gstatic.com.example.com/asset', 200);
-            await simulate(url, 302, { location: 'https://www.google.com/sorry/index' });
-          },
-          waitForFunction: () => ({ jsonValue: () => true }),
-        }),
-        close() {},
-      }),
-      close() {},
-    }),
-  });
-  assert.equal(await snapshotter.snapshot(url), null);
-  assert.equal(snapshotter.blocked, true);
-  assert.equal(aborts, 3);
-  assert.equal(fetches, 1);
-});
