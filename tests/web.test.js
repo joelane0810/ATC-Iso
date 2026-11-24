@@ -402,7 +402,7 @@ test('cards show advertiser, website, Vietnamese dates and applicable badges', a
   assert.equal(note.textContent.trim(), '(đọc từ ảnh)');
   cards[1].onclick();
   for (const label of [cards[1].children[1].children[1], detail.children[1].children[3]]) {
-    assert.equal(label.textContent, 'Chưa rõ tên miền');
+    assert.equal(label.textContent, 'Video — ATC không công bố tên miền');
     assert.equal(label.className, 'domain-unknown');
   }
 });
