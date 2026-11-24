@@ -342,6 +342,21 @@ export function createStore(root, options) {
         WHERE ${missingDomain} AND coalesce(trim(image), '') != '' AND domain_snapshot_ocr_at IS NULL
         ORDER BY last_shown DESC, id LIMIT ?`, limit).map(row => ({ ...row }));
     },
+    // Tên miền đáng tin của cùng nhà quảng cáo (ATC báo hoặc đọc từ tệp xem trước) — để sửa lỗi đọc ảnh.
+    knownDomainsFor(creativeId) {
+      return all(`SELECT DISTINCT o.domain FROM creatives c JOIN creatives o ON o.advertiser_id = c.advertiser_id
+        WHERE c.id = ? AND coalesce(trim(o.domain), '') != '' AND (o.domain_source IS NULL OR o.domain_source = 'preview')`,
+      creativeId).map(row => row.domain);
+    },
+    // Tên miền đã đọc từ ảnh chụp, để soát lại bằng luật sửa lỗi mới.
+    snapshotDomains() {
+      return all(`SELECT id AS creativeId, domain FROM creatives WHERE domain_source = 'snapshot'`).map(row => ({ ...row }));
+    },
+    replaceSnapshotDomain(creativeId, domain) {
+      if (domain) run('INSERT OR IGNORE INTO domains VALUES (?)', domain);
+      return Boolean(run(`UPDATE creatives SET domain = ? WHERE id = ? AND domain_source = 'snapshot'`,
+        domain, creativeId).changes);
+    },
     claimSnapshotDomainOcr(creativeId, at = now()) {
       return Boolean(run(`UPDATE creatives SET domain_snapshot_ocr_at = ?
         WHERE id = ? AND ${missingDomain} AND domain_snapshot_ocr_at IS NULL`, new Date(at).toISOString(), creativeId).changes);

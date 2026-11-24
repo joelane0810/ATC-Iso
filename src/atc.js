@@ -161,6 +161,10 @@ const countryCodes = new Map(`
   return [2000 + Number(numeric), alpha2];
 }));
 
+export function countryIsoCodes() {
+  return [...countryCodes.values()];
+}
+
 export function regionIdToIso(regionId) {
   return countryCodes.get(regionId) ?? null;
 }

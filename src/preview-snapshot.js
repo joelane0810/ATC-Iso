@@ -83,7 +83,7 @@ export async function createSnapshotter({ launch = options => chromium.launch(op
     async snapshot(previewUrl) {
       const url = scriptUrl(previewUrl);
       if (!url || blocked) return null;
-      const context = await browser.newContext({ viewport: { width: 400, height: 600 }, serviceWorkers: 'block' });
+      const context = await browser.newContext({ viewport: { width: 400, height: 600 }, deviceScaleFactor: 2, serviceWorkers: 'block' });
       try {
         await context.routeWebSocket('**/*', socket => socket.close());
         // Bản xem trước cần tải thư viện từ nhiều máy chủ (Google, AMP…); chỉ chặn tuyệt đối trang ATC.

@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { BlockedError, isBlockedResponse } from './atc.js';
-import { createDomainReader } from './domain-ocr.js';
+import { createDomainReader, normalizeOcrDomain } from './domain-ocr.js';
 import { extractPreviewDomain } from './preview-domain.js';
 
 let running = false;
@@ -68,8 +68,14 @@ export async function backfillDomains({
       if (!input) continue;
       reader ??= await createReader();
       const read = reader.readSnapshot ?? reader.read;
-      const domain = await read.call(reader, input).catch(() => null);
+      const raw = await read.call(reader, input).catch(() => null);
+      const domain = normalizeOcrDomain(raw, (await store.knownDomainsFor?.(creativeId)) ?? []);
       if (domain && await store.setCreativeDomain(creativeId, domain, 'snapshot')) found++;
+    }
+    // Soát lại tên miền đã đọc từ ảnh trước đây theo luật sửa lỗi (đuôi sai, gần giống tên miền đã biết).
+    for (const { creativeId, domain } of (await store.snapshotDomains?.()) ?? []) {
+      const fixed = normalizeOcrDomain(domain, (await store.knownDomainsFor(creativeId)) ?? []);
+      if (fixed !== domain) await store.replaceSnapshotDomain(creativeId, fixed);
     }
     const candidates = await store.creativesNeedingDomains(2000, { remoteOnly: true, now: now() });
     for (const { creativeId, imageUrl } of candidates) {

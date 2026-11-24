@@ -174,3 +174,13 @@ test('backfill reads domains from saved preview snapshots once, including app-st
   assert.equal(store.getAds(watch.id).ads.CR8.domain, 'play.google.com');
   assert.deepEqual(await backfillDomains(options), { attempted: 0, found: 0 });
 });
+
+test('normalizeOcrDomain fixes OCR slips using known domains and rejects fake endings', async () => {
+  const { normalizeOcrDomain } = await import('../src/domain-ocr.js');
+  assert.equal(normalizeOcrDomain('bechoneyspa.com', ['beehoneyspa.com']), 'beehoneyspa.com');
+  assert.equal(normalizeOcrDomain('shop.example.con', []), 'shop.example.com');
+  assert.equal(normalizeOcrDomain('watch.on', []), null);
+  assert.equal(normalizeOcrDomain('viofo.com', ['abacus.ai']), 'viofo.com');
+  assert.equal(normalizeOcrDomain('cnn.vn', []), 'cnn.vn');
+  assert.equal(normalizeOcrDomain(null, []), null);
+});
