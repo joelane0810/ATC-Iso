@@ -10,6 +10,15 @@ const origin = 'https://displayads-formats.googleusercontent.com';
 const hostPage = origin + '/atc-iso-preview.html';
 // Ảnh PNG nhỏ hơn mức này gần như chắc chắn là ảnh trắng.
 const MIN_PNG_BYTES = 2500;
+// Giống trang /adframe của ATC: nhận nội dung quảng cáo từ trang cha qua postMessage rồi vẽ ra.
+export const ADFRAME_HTML = `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0"><script>
+window.addEventListener('message', function (e) {
+  if (e.source !== window.parent || !e.data || !e.data.html) return;
+  document.open('text/html', 'replace');
+  document.write(e.data.html);
+  document.close();
+});
+</script></body></html>`;
 const allowedHosts = ['googlevideo.com', 'gstatic.com', 'googleusercontent.com', 'googlesyndication.com', 'googleapis.com', 'ggpht.com', 'ytimg.com'];
 const timeout = 12_000;
 
@@ -86,7 +95,7 @@ export async function createSnapshotter({ launch = options => chromium.launch(op
           }
           if (pathname === '/adframe') {
             return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8',
-              body: '<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0"></body></html>' });
+              body: ADFRAME_HTML });
           }
           const forbidden = protocol !== 'https:' || hostname === 'adstransparency.google.com';
           return forbidden ? route.abort() : route.continue();

@@ -1,5 +1,6 @@
 import { isSqliteBusy } from './db.js';
 import { readFile, realpath, stat } from 'node:fs/promises';
+import { ADFRAME_HTML } from './preview-snapshot.js';
 import { createServer } from 'node:http';
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -261,6 +262,11 @@ export async function startServer({
         }
       }
 
+      if (method === 'GET' && path === '/adframe') {
+        // Khung vẽ quảng cáo cho bản xem trước trực tiếp (giống /adframe của ATC).
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
+        return res.end(ADFRAME_HTML);
+      }
       if (method === 'GET') {
         const name = webFiles.get(path);
         if (name && await serveFile(res, webDir, name, { 'Cache-Control': 'no-cache' })) return;

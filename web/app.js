@@ -725,6 +725,10 @@ function previewDocument(url) {
 <script>
   (() => {
     const target = document.getElementById('atc-preview');
+    // Khung "/adframe" phải trỏ về máy chủ app (nó vẽ quảng cáo nhận qua postMessage), không phải máy chủ Google.
+    const adframe = ${JSON.stringify((globalThis.location?.origin ?? '') + '/adframe')};
+    const fixFrames = () => target.querySelectorAll?.('iframe[src="/adframe"]').forEach((frame) => frame.setAttribute('src', adframe));
+    new MutationObserver(fixFrames).observe(target, { childList: true, subtree: true, attributes: true, attributeFilter: ['src'] });
     let dimensions;
     const observer = new MutationObserver(report);
     observer.observe(target, { childList: true, subtree: true, characterData: true });
