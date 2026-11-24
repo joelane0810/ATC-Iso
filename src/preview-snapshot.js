@@ -157,7 +157,25 @@ export async function createSnapshotter({ launch = options => chromium.launch(op
   };
 }
 
-export function createSnapshotBackfill({ store, open = createSnapshotter, pause = sleep }) {
+// Mẫu video: tệp xem trước của Google có sẵn đường dẫn ảnh bìa YouTube — tải thẳng, không cần chụp.
+export function extractVideoThumbnail(script) {
+  const text = String(script ?? '').replace(/\\x([0-9a-fA-F]{2})/g, (_, hex) => String.fromCharCode(Number.parseInt(hex, 16)))
+    .replace(/\\\//g, '/');
+  const direct = text.match(/https:\/\/i\d?\.ytimg\.com\/vi\/([A-Za-z0-9_-]{11})\//);
+  return direct ? `https://i.ytimg.com/vi/${direct[1]}/hqdefault.jpg` : null;
+}
+
+async function videoThumbnail(previewUrl, fetchImpl) {
+  const script = await fetchImpl(previewUrl, { signal: AbortSignal.timeout(15_000) }).then(r => r.ok ? r.text() : '').catch(() => '');
+  const thumbnail = extractVideoThumbnail(script);
+  if (!thumbnail) return null;
+  const response = await fetchImpl(thumbnail, { signal: AbortSignal.timeout(15_000) }).catch(() => null);
+  if (!response?.ok || !/^image\//.test(response.headers.get('content-type') ?? '')) return null;
+  const data = Buffer.from(await response.arrayBuffer());
+  return data.length > 2000 ? data : null;
+}
+
+export function createSnapshotBackfill({ store, open = createSnapshotter, pause = sleep, fetchImpl = globalThis.fetch }) {
   let running = false;
   return async () => {
     if (running) return;
@@ -184,11 +202,20 @@ export function createSnapshotBackfill({ store, open = createSnapshotter, pause 
       const snapshotter = await open({ note, debugDir });
       try {
         let attempted = false;
-        for (const { creativeId, previewUrl } of candidates) {
+        for (const { creativeId, previewUrl, format } of candidates) {
           if (!/^CR\d+$/.test(creativeId) || !await store.claimSnapshot(creativeId)) continue;
           if (attempted) await pause(300);
           attempted = true;
           current = creativeId;
+          if (format === 'video') {
+            const jpg = await videoThumbnail(previewUrl, fetchImpl);
+            if (jpg) {
+              const name = creativeId + '.jpg';
+              await writeFile(join(directory, name), jpg);
+              await store.setCreativeImage(creativeId, 'images/' + name);
+              continue;
+            }
+          }
           const png = await snapshotter.snapshot(previewUrl);
           if (snapshotter.blocked) break;
           if (!png) continue;

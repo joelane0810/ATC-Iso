@@ -101,3 +101,11 @@ test('backfill shares a browser, avoids overlapping runs, and saves an image rea
   assert.equal(summary.watches[0].groups[0].sampleAds.find(item => item.creativeId === 'CR1').image, 'images/CR1.png');
 });
 
+
+test('video previews give their YouTube cover image without a screenshot', async () => {
+  const { extractVideoThumbnail } = await import('../src/preview-snapshot.js');
+  assert.equal(extractVideoThumbnail('a \\x22https:\\/\\/i.ytimg.com\\/vi\\/s9-64Ptz6ZM\\/hqdefault.jpg\\x22'),
+    'https://i.ytimg.com/vi/s9-64Ptz6ZM/hqdefault.jpg');
+  assert.equal(extractVideoThumbnail('https://i9.ytimg.com/vi/l5JCMA68OKQ/mqdefault.jpg'), 'https://i.ytimg.com/vi/l5JCMA68OKQ/hqdefault.jpg');
+  assert.equal(extractVideoThumbnail('no video here'), null);
+});

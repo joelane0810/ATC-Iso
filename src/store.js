@@ -331,7 +331,7 @@ export function createStore(root, options) {
       new Date(at).toISOString(), creativeId, ocrCutoff(at)).changes));
     },
     creativesNeedingSnapshots(limit, at = now()) {
-      return all(`SELECT id AS creativeId, preview_url AS previewUrl FROM creatives
+      return all(`SELECT id AS creativeId, preview_url AS previewUrl, format FROM creatives
         WHERE ${snapshotCandidate} AND ${snapshotDue}
         ORDER BY last_shown DESC, id LIMIT ?`, ocrCutoff(at), limit).map(row => ({ ...row }));
     },
