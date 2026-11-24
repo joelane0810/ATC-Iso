@@ -772,7 +772,7 @@ test('ad details follow a domain or advertiser with same-kind folders and update
   action(follow(), '+ Theo dõi dự án example.com').onclick();
   let chooser = follow().children[1];
   assert.deepEqual(chooser.children.slice(1).map((node) => node.textContent), ['Nhóm dự án', 'Không nhóm', 'Huỷ']);
-  assert.equal(requestCount(requests, 'POST'), 0);
+  assert.equal(requests.filter(({ method, url }) => method === 'POST' && url.pathname.endsWith('/watchlist')).length, 0);
   await action(chooser, 'Nhóm dự án').onclick();
   assert.deepEqual(requests.findLast(({ method }) => method === 'POST').body,
     { input: 'example.com', kind: 'project', groupId: 'projects', region: null });
@@ -872,8 +872,11 @@ test('ad detail requests countries, polls every three seconds and shows the refr
   const find = text => detail.children.find(node => node.textContent === text);
   assert.ok(find('Quốc gia hiển thị (0)'));
   assert.ok(find('Chưa có dữ liệu quốc gia cho mẫu này.'));
+  const calls = () => requests.filter(({ url }) => url.pathname.endsWith('/regions'));
+  assert.equal(calls().length, 1);
+  assert.deepEqual(calls()[0].body, { automatic: true });
+  await new Promise(setImmediate);
   const control = find('Lấy quốc gia');
-  await control.onclick();
   assert.ok(find(error));
   assert.equal(control.disabled, false);
 
@@ -902,4 +905,58 @@ test('ad detail requests countries, polls every three seconds and shows the refr
     ['🇯🇵 Nhật Bản', 'đến 21/11/2026', '', 'Đang chạy'],
     ['🇻🇳 Việt Nam', '16/11/2026 → 20/11/2026', '5 ngày', 'Đã dừng'],
   ]);
+});
+
+test('detail waits during a scan, then automatically requests countries once', async () => {
+  const { get, advance, requests, setStatus } = await boot({
+    initialStatus: { scanning: true, scanningWatchId: 'rival', last: null },
+    reply: ({ url }) => url.pathname.endsWith('/regions') ? { ok: true, status: 202 } : undefined,
+  });
+  await sidebarRow(get, 'competitor').children[0].onclick();
+  await get('mode-grid').onclick();
+  get('ads').children[0].onclick();
+  const calls = () => requests.filter(({ url }) => url.pathname.endsWith('/regions')).length;
+  const find = text => get('detail').children.find(node => node.textContent === text);
+  assert.ok(find('Sẽ lấy sau khi lượt quét xong'));
+  assert.equal(calls(), 0);
+  advance(3000);
+  await new Promise(setImmediate);
+  assert.equal(calls(), 0);
+  setStatus({ scanning: false, last: { status: 'ok' } });
+  advance(3000);
+  await new Promise(setImmediate);
+  assert.ok(find('Đang lấy quốc gia…'));
+  assert.equal(calls(), 1);
+  advance(3000);
+  await new Promise(setImmediate);
+  assert.ok(find('Lấy quốc gia'));
+  assert.equal(calls(), 1);
+});
+
+test('text and video use local snapshots in group thumbnails and the gallery', async () => {
+  const textAd = { ...ad, format: 'text' };
+  const videoAd = { ...ad, creativeId: 'CR3', format: 'video', image: 'images/CR3.png' };
+  const { get } = await boot({
+    reply: ({ url }) => {
+      if (url.pathname.endsWith('/ads')) return { ok: true, json: async () => [textAd, videoAd] };
+      if (url.pathname.endsWith('/summary')) {
+        return { ok: true, json: async () => ({
+          refDate, minDate, totals: {}, watches: watches.map(watch => ({
+            ...watch, groups: watch.groups.map(group => ({ ...group, sampleAds: [textAd, videoAd] })),
+          })),
+        }) };
+      }
+    },
+  });
+  await sidebarRow(get, 'competitor').children[0].onclick();
+  const findSamples = node => node.className === 'group-samples' ? node
+    : node.children.map(findSamples).find(Boolean);
+  const check = ([text, video]) => {
+    assert.equal(text.src, '/images/CR1.png');
+    assert.equal(video.children[0].src, '/images/CR3.png');
+    assert.equal(video.children[1].textContent, '▶');
+  };
+  check(findSamples(get('watch-groups')).children);
+  await get('mode-grid').onclick();
+  check(get('ads').children.map(button => button.children[0]));
 });

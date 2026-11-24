@@ -127,10 +127,12 @@ export async function startServer({
       if (method === 'POST' && (path === '/api/scan' || regionsRoute)) {
         let watchId = null;
         let creativeIds;
+        let automatic = false;
         if (regionsRoute) {
           const [, , creativeId] = regionsRoute;
           if (!/^CR\d+$/.test(creativeId)) return json(res, 409, { error: 'Mã mẫu quảng cáo không hợp lệ.' });
           creativeIds = [creativeId];
+          automatic = (await readBody(req, true)).automatic === true;
         } else {
           ({ watchId = null } = await readBody(req, true));
           if (watchId !== null && (typeof watchId !== 'string' || !/^[a-z0-9-]+$/i.test(watchId))) {
@@ -164,7 +166,7 @@ export async function startServer({
             acknowledged = true;
             resolve({});
           };
-          Promise.resolve().then(() => triggerScan(acquired, watchId, creativeIds)).then(acquired, (error) => {
+          Promise.resolve().then(() => triggerScan(acquired, watchId, creativeIds, { automatic })).then(acquired, (error) => {
             if (error.code === 'SCAN_BUSY') resolve({ busy: true });
             else if (error.code === 'SCAN_COOLDOWN') resolve({ resumeAt: error.resumeAt });
             else {

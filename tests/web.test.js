@@ -264,29 +264,32 @@ test('cards and detail prefer images before live preview, with only images or fo
   ], undefined, undefined, live.browser);
   const [controls] = expand()[0].children;
   const thumbs = controls.children[0].children[3].children;
-  assert.deepEqual(thumbs.map((node) => node.src || node.textContent),
+  assert.deepEqual(thumbs.map((node) => node.children[0]?.src || node.textContent),
     ['/images/CR1.png', imageUrl, '▷', '▷']);
   assert.equal(live.observed.size, 0);
 
   expand();
   const cards = await open();
-  const [local] = cards[0].children;
+  const [localFrame] = cards[0].children;
+  const [local, play] = localFrame.children;
+  assert.equal(play.textContent, '▶');
   assert.equal(local.src, '/images/CR1.png');
-  assert.equal(cards[1].children[0].src, imageUrl);
+  assert.equal(cards[1].children[0].children[0].src, imageUrl);
   assert.equal(cards[3].children[0].children[1].textContent, 'Chưa có ảnh xem trước');
   assert.equal(live.observed.size, 1);
   local.onerror();
   assert.equal(local.src, imageUrl);
   local.onerror();
-  assert.ok(live.observed.has(local.replacement));
+  assert.ok(live.observed.has(localFrame.replacement));
 
   cards[0].onclick();
-  const [detailImage] = detail.children;
+  const [detailFrame] = detail.children;
+  const [detailImage] = detailFrame.children;
   assert.equal(detailImage.src, '/images/CR1.png');
   detailImage.onerror();
   assert.equal(detailImage.src, imageUrl);
   detailImage.onerror();
-  const box = detailImage.replacement;
+  const box = detailFrame.replacement;
   box.isConnected = true;
   live.visibility([box], true);
   const frame = box.children[1];
@@ -295,16 +298,16 @@ test('cards and detail prefer images before live preview, with only images or fo
   assert.equal(frame.style.transform, 'scale(1)');
   assert.equal(box.style.height, '160px');
 
-  const timedOut = local.replacement;
+  const timedOut = localFrame.replacement;
   timedOut.isConnected = true;
   live.visibility([timedOut], true);
   const pending = [...live.timers.values()].filter(({ delay }) => delay === 12_000);
   assert.equal(pending.length, 1);
   pending[0].callback();
   const retry = timedOut.replacement;
-  assert.equal(retry.tag, 'img');
-  assert.equal(retry.src, imageUrl);
-  retry.onerror();
+  assert.equal(retry.children[0].tag, 'img');
+  assert.equal(retry.children[0].src, imageUrl);
+  retry.children[0].onerror();
   assert.equal(retry.replacement.children[1].textContent, 'Chưa có ảnh xem trước');
   assert.ok([...live.timers.values()].every(({ delay }) => delay !== 12_000));
 });

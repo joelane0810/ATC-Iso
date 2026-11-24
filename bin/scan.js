@@ -24,6 +24,14 @@ function syncData(root) {
   });
 }
 
+export async function backfillRegions({ store, isScanning, triggerScan, now = Date.now }) {
+  if (await isScanning() || scanResumeAt(await store.getScanLog(), now())) return;
+  const candidates = await store.creativesNeedingRegions(5, { now: new Date(now()), runningWithoutRegions: true });
+  if (candidates.length && !await isScanning()) {
+    await triggerScan(() => {}, null, candidates.map(({ creativeId }) => creativeId), { automatic: true });
+  }
+}
+
 const regionsWatchId = 'regions';
 
 async function lookupCreativeRegions({ store, client, creativeIds, scannedAt, scanId, tracker, log }) {

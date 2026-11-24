@@ -349,10 +349,12 @@ test('region requests use the scan lock and require a creative from the profile'
   let finish;
   const lifetime = new Promise(resolve => { finish = resolve; });
   const resumeAt = new Date(+now + 60 * 60 * 1000).toISOString();
+  const automaticRequests = [];
   let cooldownAtAcquisition = false;
   const request = await startRequest(t, {
     store, port: 0, waitForAcquisition: true, isScanning: () => isScanLocked(lockPath),
-    triggerScan(acquired, watchId, ids) {
+    triggerScan(acquired, watchId, ids, { automatic }) {
+      automaticRequests.push(automatic);
       assert.equal(watchId, null);
       assert.deepEqual(ids, ['CR1']);
       if (cooldownAtAcquisition) throw Object.assign(new Error(), { code: 'SCAN_COOLDOWN', resumeAt });
@@ -381,7 +383,9 @@ test('region requests use the scan lock and require a creative from the profile'
   const time = new Date(+new Date(resumeAt) + 7 * 3_600_000).toISOString().slice(11, 16);
   const cooldownMessage = { error: `Đang tạm nghỉ sau khi Google chặn — thử lại sau ${time}.` };
   cooldownAtAcquisition = true;
-  const race = await post();
+  const race = await request(`/api/profiles/${id}/creatives/CR1/regions`, {
+    method: 'POST', body: JSON.stringify({ automatic: true }),
+  });
   assert.equal(race.status, 409);
   assert.deepEqual(await race.json(), cooldownMessage);
   cooldownAtAcquisition = false;
@@ -390,4 +394,5 @@ test('region requests use the scan lock and require a creative from the profile'
   assert.equal((await post()).status, 202);
   assert.equal((await post()).status, 409);
   assert.equal(launched, 1);
+  assert.deepEqual(automaticRequests, [true, false]);
 });

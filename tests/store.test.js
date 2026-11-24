@@ -738,3 +738,39 @@ test('listAdsForProfile exposes OCR domain source', async () => {
   assert.equal(ad.domain, 'shop.com');
   assert.equal(ad.domainSource, 'ocr');
 });
+
+test('snapshot candidates prioritize recent ads and are retried after seven days', t => {
+  const { store } = setup(t);
+  const profile = store.addProfile('Dai');
+  const watch = store.addWatch(profile.id, 'nike.com');
+  const previewUrl = 'https://displayads-formats.googleusercontent.com/ads/content.js?a=1';
+  const raw = { previewUrl, format: 'text', lastShown: second.toISOString() };
+  store.mergeAds(watch, [
+    { ...raw, creativeId: 'CR1', lastShown: first.toISOString() },
+    { ...raw, creativeId: 'CR2' },
+    { ...raw, creativeId: 'CR3', previewUrl: previewUrl.replace('content.js', 'photo.png') },
+    { ...raw, creativeId: 'CR4' },
+  ], second);
+  store.setAdImage(watch.id, 'CR4', 'images/CR4.png');
+  const ids = at => store.creativesNeedingSnapshots(300, at).map(({ creativeId }) => creativeId);
+  assert.deepEqual(ids(second), ['CR2', 'CR1']);
+  assert.equal(store.claimSnapshot('CR2', second), true);
+  assert.equal(store.claimSnapshot('CR2', second), false);
+  assert.deepEqual(ids(new Date(+second + 7 * 86_400_000 - 1)), ['CR1']);
+  assert.deepEqual(ids(new Date(+second + 7 * 86_400_000)), ['CR2', 'CR1']);
+});
+
+test('background region candidates are running and have no countries', t => {
+  const { store } = setup(t);
+  const profile = store.addProfile('Dai');
+  const watch = store.addWatch(profile.id, 'nike.com');
+  const raw = { advertiserId: 'AR1', format: 'text', lastShown: second.toISOString() };
+  store.mergeAds(watch, [
+    { ...raw, creativeId: 'CR1' },
+    { ...raw, creativeId: 'CR2' },
+    { ...raw, creativeId: 'CR3', lastShown: '2026-11-17T10:00:00Z' },
+  ], second);
+  store.setCreativeRegions('CR2', [{ regionId: 2840, lastShown: second.toISOString() }], first);
+  assert.deepEqual(store.creativesNeedingRegions(5, { now: second, runningWithoutRegions: true }),
+    [{ creativeId: 'CR1', advertiserId: 'AR1' }]);
+});

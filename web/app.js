@@ -33,6 +33,7 @@ const formats = { image: 'Hình ảnh', text: 'Chữ', video: 'Video' };
 let watchId = '';
 let selectedAd;
 let regionLookup;
+let regionDetail;
 let ads = [];
 let rangeAds = [];
 let previousRangeAds = null;
@@ -861,6 +862,14 @@ function preview(ad, thumbnail = false, large = false) {
   image.className = 'preview';
   image.alt = thumbnail ? '' : 'Ảnh mẫu quảng cáo';
   image.loading = 'lazy';
+  const frame = ad.format === 'video' ? element('span') : image;
+  if (frame !== image) {
+    frame.className = 'video-preview';
+    const play = element('span', '▶');
+    play.className = 'video-preview-icon';
+    play.setAttribute('aria-label', 'Video');
+    frame.append(image, play);
+  }
   let triedRemote = !local;
   image.onerror = () => {
     if (remote && !triedRemote) {
@@ -868,10 +877,10 @@ function preview(ad, thumbnail = false, large = false) {
       image.src = remote;
       return;
     }
-    if (image.isConnected !== false) image.replaceWith(fallback());
+    if (frame.isConnected !== false) frame.replaceWith(fallback());
   };
   image.src = local || remote;
-  return image;
+  return frame;
 }
 
 function watchStatCounts(list, project, range) {
@@ -1759,61 +1768,92 @@ function renderDetailRegions(ad) {
     return;
   }
 
+  const pid = profile.value;
+  const creativeId = ad.creativeId;
+  const path = profilePath(pid);
+  const state = regionDetail ??= { pid, creativeId };
+  const stillSelected = () => regionDetail === state && profile.value === pid && selectedAd?.creativeId === creativeId;
+
   const control = element('button', 'Lấy quốc gia');
   control.type = 'button';
   const message = element('p');
   message.className = 'region-lookup-message';
   message.setAttribute('role', 'status');
-  const setPending = (active) => {
-    control.disabled = active;
-    control.textContent = active ? 'Đang lấy quốc gia…' : 'Lấy quốc gia';
-    control.className = 'action region-lookup' + (active ? ' region-lookup-pending' : '');
+  state.render = () => {
+    const waiting = state.phase === 'waiting';
+    const pending = state.phase === 'pending';
+    control.disabled = waiting || pending;
+    control.textContent = pending ? 'Đang lấy quốc gia…' : 'Lấy quốc gia';
+    control.className = 'action region-lookup' + (pending ? ' region-lookup-pending' : '');
+    message.textContent = waiting ? 'Sẽ lấy sau khi lượt quét xong' : state.message ?? '';
   };
-  setPending(regionLookup?.pid === profile.value && regionLookup?.creativeId === ad.creativeId);
-  control.onclick = async () => {
-    if (regionLookup) {
-      message.textContent = 'Đang có lượt quét.';
-      return;
-    }
-    const pid = profile.value;
-    const creativeId = ad.creativeId;
-    const path = profilePath(pid);
-    const stillSelected = () => profile.value === pid && selectedAd?.creativeId === creativeId;
-    const lookup = { pid, creativeId, setPending, message };
-    regionLookup = lookup;
-    setPending(true);
-    message.textContent = '';
+
+  const poll = async () => {
+    let status;
+    do {
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      if (!stillSelected()) return;
+      status = await refreshStatus();
+    } while (!status || status.scanning);
+    return status;
+  };
+  const lookup = async (automatic) => {
+    const update = phase => {
+      state.phase = phase;
+      state.render();
+    };
+    regionLookup = state;
+    state.started = true;
+    state.message = '';
+    const waited = scanning || startingScan;
     try {
-      await api(path + '/creatives/' + encodeURIComponent(creativeId) + '/regions', 'POST');
-      let status;
-      do {
-        await new Promise(resolve => setTimeout(resolve, 3000));
-        status = await refreshStatus();
-      } while (!status || status.scanning);
-      await loadProfileData({ refreshChart: false, reopenGroup: Boolean(stillSelected() && openGroup) });
-      if (stillSelected()) {
-        const matches = candidate => candidate.creativeId === creativeId;
-        const updated = rangeAds.find(matches)
-          ?? summary?.watches.flatMap(watch => (watch.groups ?? []).flatMap(group => group.sampleAds ?? [])).find(matches)
-          ?? (await api(path + '/ads')).find(matches);
-        if (stillSelected() && updated) {
-          selectedAd = updated;
-          regionLookup = undefined;
-          showDetail(updated);
-        }
+      if (waited) {
+        update('waiting');
+        if (!await poll()) return;
+      }
+      if (!stillSelected()) return;
+      update('pending');
+      const request = () => api(path + '/creatives/' + encodeURIComponent(creativeId) + '/regions', 'POST',
+        automatic ? { automatic: true } : undefined);
+      try {
+        await request();
+      } catch (error) {
+        if (waited || error.status !== 409 || error.message !== 'Đang có lượt quét.') throw error;
+        update('waiting');
+        if (!await poll() || !stillSelected()) return;
+        update('pending');
+        await request();
+      }
+      const status = await poll();
+      if (!status || !stillSelected()) return;
+      await loadProfileData({ refreshChart: false, reopenGroup: Boolean(openGroup) });
+      if (!stillSelected()) return;
+      const matches = candidate => candidate.creativeId === creativeId;
+      const updated = rangeAds.find(matches)
+        ?? summary?.watches.flatMap(watch => (watch.groups ?? []).flatMap(group => group.sampleAds ?? [])).find(matches)
+        ?? (await api(path + '/ads')).find(matches);
+      if (!stillSelected()) return;
+      if (updated?.regions?.length) {
+        selectedAd = updated;
+        showDetail(updated);
+      } else {
+        state.message = status.last?.error || 'Chưa lấy được quốc gia. Vui lòng thử lại.';
       }
     } catch (error) {
-      lookup.message.textContent = error.status ? error.message : 'Không tải được thông tin. Vui lòng thử lại.';
+      state.message = error.status ? error.message : 'Không tải được thông tin. Vui lòng thử lại.';
     } finally {
-      regionLookup = undefined;
-      lookup.setPending(false);
+      if (regionLookup === state) regionLookup = undefined;
+      update(undefined);
     }
   };
-  if (control.disabled) Object.assign(regionLookup, { setPending, message });
+  control.onclick = () => lookup(false);
+  state.render();
   detail.append(element('p', 'Chưa có dữ liệu quốc gia cho mẫu này.'), control, message);
+  if (!state.started) void lookup(true);
 }
 
 function showDetail(ad) {
+  if (!ad || regionDetail?.creativeId !== ad.creativeId || regionDetail.pid !== profile.value) regionDetail = undefined;
   detail.replaceChildren();
   if (!ad) {
     if (mobilePanel === 'detail') setMobilePanel();

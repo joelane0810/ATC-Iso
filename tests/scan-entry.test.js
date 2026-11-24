@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { scanOnce, scanFromArgs } from '../bin/scan.js';
+import { backfillRegions, scanOnce, scanFromArgs } from '../bin/scan.js';
 import { isScanLocked } from '../src/lock.js';
 import { createStore } from '../src/store.js';
 import { BlockedError } from '../src/atc.js';
@@ -215,4 +215,33 @@ test('--probe asks Google once after the rest period and never during it', async
   assert.equal(requests.length, 1);
   assert.equal(lookups, 0);
   assert.equal(store.getScanLog().at(-1).probe, true);
+});
+
+
+test('background region timer skips active scans and cooldown, and requests only five candidates', async () => {
+  const at = Date.parse('2026-11-22T12:00:00Z');
+  let scanning = true;
+  let cooldown = true;
+  const calls = [];
+  const run = () => backfillRegions({
+    isScanning: () => scanning,
+    now: () => at,
+    store: {
+      getScanLog: () => cooldown ? [{ status: 'blocked', at: new Date(at - 1000).toISOString() }] : [],
+      creativesNeedingRegions(limit, options) {
+        assert.equal(limit, 5);
+        assert.equal(options.runningWithoutRegions, true);
+        return Array.from({ length: limit }, (_, i) => ({ creativeId: 'CR' + (i + 1) }));
+      },
+    },
+    triggerScan: (...args) => calls.push(args),
+  });
+  await run();
+  scanning = false;
+  await run();
+  assert.deepEqual(calls, []);
+  cooldown = false;
+  await run();
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].slice(1), [null, ['CR1', 'CR2', 'CR3', 'CR4', 'CR5'], { automatic: true }]);
 });

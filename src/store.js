@@ -11,6 +11,10 @@ import { createWebStore } from './web-store.js';
 const DAY = 24 * 60 * 60 * 1000;
 const missingDomain = "coalesce(trim(domain), '') = ''";
 const ocrDue = '(domain_ocr_attempted_at IS NULL OR domain_ocr_attempted_at <= ?)';
+const snapshotDue = '(snapshot_attempted_at IS NULL OR snapshot_attempted_at <= ?)';
+const snapshotCandidate = `coalesce(trim(image), '') = ''
+  AND preview_url GLOB 'https://displayads-formats.googleusercontent.com/*'
+  AND substr(preview_url, 1, instr(replace(preview_url, '#', '?') || '?', '?') - 1) LIKE '%/content.js'`;
 const ocrCutoff = at => new Date(+new Date(at) - 7 * DAY).toISOString();
 const watchFields = 'w.id, w.type, w.value, w.region, p.label, p.kind, p.added_at AS addedAt, p.group_id AS groupId';
 const groupTypeFor = (kind) => kind === 'project' ? 'advertiser' : 'domain';
@@ -39,6 +43,12 @@ export function createStore(root, options) {
   const data = resolve(root, 'data');
   const { run, get, all, transaction, ensureWatch, linkWatch, saveAd, saveScan, saveSnapshot, purgeExpiredTrash, close } =
     openDb(data, options);
+  if (!options?.readOnly) {
+    const hasSnapshotColumn = () => all('PRAGMA table_info(creatives)').some(column => column.name === 'snapshot_attempted_at');
+    if (!hasSnapshotColumn()) transaction(() => {
+      if (!hasSnapshotColumn()) run('ALTER TABLE creatives ADD COLUMN snapshot_attempted_at TEXT');
+    });
+  }
   const now = options?.now ?? (() => new Date());
   function requireProfile(pid) {
     if (!get('SELECT 1 FROM profiles WHERE id = ?', pathId(pid))) throw notFound('Không tìm thấy hồ sơ.');
@@ -320,6 +330,20 @@ export function createStore(root, options) {
         WHERE id = ? AND ${missingDomain} AND ${ocrDue}`,
       new Date(at).toISOString(), creativeId, ocrCutoff(at)).changes));
     },
+    creativesNeedingSnapshots(limit, at = now()) {
+      return all(`SELECT id AS creativeId, preview_url AS previewUrl FROM creatives
+        WHERE ${snapshotCandidate} AND ${snapshotDue}
+        ORDER BY last_shown DESC, id LIMIT ?`, ocrCutoff(at), limit).map(row => ({ ...row }));
+    },
+    claimSnapshot(creativeId, at = now()) {
+      return Boolean(transaction(() => run(`UPDATE creatives SET snapshot_attempted_at = ?
+        WHERE id = ? AND ${snapshotCandidate} AND ${snapshotDue}`,
+      new Date(at).toISOString(), creativeId, ocrCutoff(at)).changes));
+    },
+    setCreativeImage(creativeId, filename) {
+      transaction(() => run("UPDATE creatives SET image = ? WHERE id = ? AND coalesce(trim(image), '') = ''",
+        filename, creativeId));
+    },
     setAdImage(wid, cr, relPath) {
       transaction(() => run(`UPDATE creatives SET image = ? WHERE id = ? AND EXISTS (
         SELECT 1 FROM watch_creatives WHERE watch_id = ? AND creative_id = ?)`, relPath, cr, pathId(wid), cr));
@@ -371,7 +395,7 @@ export function createStore(root, options) {
         run('UPDATE creatives SET regions_checked_at = ?, regions_retry = 0 WHERE id = ?', new Date(now).toISOString(), cr);
       });
     },
-    creativesNeedingRegions(limit, { watchId = null, now = new Date() } = {}) {
+    creativesNeedingRegions(limit, { watchId = null, now = new Date(), runningWithoutRegions = false } = {}) {
       const at = new Date(now).toISOString();
       const cutoff = new Date(Date.parse(at) - 2 * DAY).toISOString();
       const refresh = new Date(Date.parse(at) - 7 * DAY).toISOString();
@@ -379,6 +403,14 @@ export function createStore(root, options) {
       const seen = watchId ? 'wc.first_seen' : 'c.first_seen_by_us';
       const shown = watchId ? 'wc.last_shown' : 'c.last_shown';
       const where = watchId ? "wc.watch_id = ? AND wc.platform = 'search'" : "c.platform = 'search'";
+      if (runningWithoutRegions) {
+        return all(`SELECT c.id AS creativeId, c.advertiser_id AS advertiserId FROM ${source}
+          WHERE ${where} AND c.advertiser_id IS NOT NULL AND ${shown} >= ?
+            AND NOT EXISTS (SELECT 1 FROM creative_regions WHERE creative_id = c.id)
+            AND (c.regions_checked_at IS NULL OR c.regions_checked_at <= ?)
+          ORDER BY c.regions_retry, ${shown} DESC, c.id LIMIT ?`,
+        ...(watchId ? [watchId, cutoff, refresh, limit] : [cutoff, refresh, limit])).map(row => ({ ...row }));
+      }
       return all(`SELECT c.id AS creativeId, c.advertiser_id AS advertiserId FROM ${source}
         WHERE ${where} AND c.advertiser_id IS NOT NULL
           AND (c.regions_retry = 1 OR (c.regions_checked_at IS NULL AND (${seen} = ? OR ${shown} >= ?))
