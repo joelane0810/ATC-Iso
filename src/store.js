@@ -357,6 +357,12 @@ export function createStore(root, options) {
       return Boolean(run(`UPDATE creatives SET domain = ? WHERE id = ? AND domain_source = 'snapshot'`,
         domain, creativeId).changes);
     },
+    // Mẫu chữ còn chưa rõ tên miền mà ảnh chụp cũ (độ nét thấp) đọc không ra: chụp lại ở độ nét cao rồi đọc lại.
+    retakeLowResTextSnapshots(before) {
+      return transaction(() => run(`UPDATE creatives SET image = NULL, snapshot_attempted_at = NULL, domain_snapshot_ocr_at = NULL
+        WHERE format = 'text' AND ${missingDomain} AND domain_snapshot_ocr_at IS NOT NULL AND domain_snapshot_ocr_at < ?
+          AND preview_url GLOB 'https://displayads-formats.googleusercontent.com/*content.js*'`, before).changes);
+    },
     claimSnapshotDomainOcr(creativeId, at = now()) {
       return Boolean(run(`UPDATE creatives SET domain_snapshot_ocr_at = ?
         WHERE id = ? AND ${missingDomain} AND domain_snapshot_ocr_at IS NULL`, new Date(at).toISOString(), creativeId).changes);

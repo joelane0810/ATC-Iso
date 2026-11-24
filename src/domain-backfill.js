@@ -59,6 +59,8 @@ export async function backfillDomains({
   try {
     // Trước tiên: đọc tên miền từ ảnh chụp bản xem trước đã lưu trên máy (không gửi gì lên Google,
     // nên vẫn chạy được cả khi Google đang chặn tải ảnh).
+    // Ảnh chụp trước khi chuyển sang độ nét cao (24/11/2026 15:42) mà không đọc ra: chụp lại để đọc lại.
+    await store.retakeLowResTextSnapshots?.('2026-11-24T08:42:00.000Z');
     const snapshots = (await store.creativesNeedingSnapshotDomains?.(1000)) ?? [];
     for (const { creativeId, image } of snapshots) {
       if (!await store.claimSnapshotDomainOcr(creativeId, now())) continue;
