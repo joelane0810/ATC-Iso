@@ -1302,7 +1302,26 @@ function groupRow(watch, group) {
   if (!isAllTime()) heading.append(badge(group.status === 'new' ? (group.groupType === 'advertiser' ? 'Nhà quảng cáo mới' : 'Dự án mới') : groupLabels[group.status], group.status));
   const name = element('strong', group.name);
   name.className = /\s/.test(group.name) ? 'item-name' : 'item-name unspaced-name';
-  heading.append(name);
+  if (group.groupType === 'domain' && group.key && /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(group.name)) {
+    // Nút mở thẳng trang của dự án ở tab mới (không mở/đóng nhóm).
+    const line = element('span');
+    line.className = 'group-name-line';
+    const open = element('span', '↗');
+    open.className = 'open-site';
+    open.setAttribute('role', 'link');
+    open.tabIndex = 0;
+    open.title = 'Mở ' + group.name + ' ở tab mới';
+    open.setAttribute('aria-label', open.title);
+    const go = (event) => {
+      event.stopPropagation();
+      event.preventDefault?.();
+      window.open('https://' + group.name, '_blank', 'noopener');
+    };
+    open.onclick = go;
+    open.onkeydown = (event) => { if (event.key === 'Enter' || event.key === ' ') go(event); };
+    line.append(name, open);
+    heading.append(line);
+  } else heading.append(name);
   const counts = element('span');
   counts.className = 'group-counts';
   if (isAllTime()) {
@@ -1450,7 +1469,7 @@ async function loadGroupAds(request, name, message) {
 function domainLabel(ad, tag) {
   const label = element(tag, ad.domain || 'Chưa rõ tên miền');
   if (!ad.domain) label.className = 'domain-unknown';
-  else if (tag === 'dd' && ad.domainSource === 'ocr') {
+  else if (tag === 'dd' && (ad.domainSource === 'ocr' || ad.domainSource === 'snapshot')) {
     label.append(element('small', ' (đọc từ ảnh)'));
   }
   return label;

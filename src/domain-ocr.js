@@ -27,6 +27,13 @@ export function extractDomain(text) {
   return best;
 }
 
+// Quảng cáo ứng dụng không có tên miền: ảnh chụp ghi "Google Play" / "App Store" — gom về cửa hàng tương ứng.
+export function extractAppStore(text) {
+  if (/google\s*play/i.test(text)) return 'play.google.com';
+  if (/app\s*store/i.test(text)) return 'apps.apple.com';
+  return null;
+}
+
 export async function createDomainReader() {
   await access(join(langPath, 'eng.traineddata'));
   const { createWorker } = await import('tesseract.js');
@@ -38,6 +45,11 @@ export async function createDomainReader() {
     async read(bufferOrPath) {
       const { data } = await worker.recognize(bufferOrPath);
       return extractDomain(data.text);
+    },
+    // Ảnh chụp bản xem trước (chữ/video): tên miền hiển thị, hoặc cửa hàng ứng dụng nếu là quảng cáo app.
+    async readSnapshot(bufferOrPath) {
+      const { data } = await worker.recognize(bufferOrPath);
+      return extractDomain(data.text) ?? extractAppStore(data.text);
     },
     close: () => worker.terminate(),
   };

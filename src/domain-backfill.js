@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+import { basename, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { BlockedError, isBlockedResponse } from './atc.js';
 import { createDomainReader } from './domain-ocr.js';
@@ -87,6 +89,19 @@ export async function backfillDomains({
       }
       const domain = script ? extractPreviewDomain(script) : null;
       if (domain && await store.setCreativeDomain(creativeId, domain, 'preview')) found++;
+    }
+    // Còn sót: đọc tên miền từ ảnh chụp bản xem trước đã lưu trên máy (không gửi gì lên Google).
+    const snapshots = (await store.creativesNeedingSnapshotDomains?.(1000)) ?? [];
+    for (const { creativeId, image } of snapshots) {
+      if (!await store.claimSnapshotDomainOcr(creativeId, now())) continue;
+      attempted++;
+      const name = basename(String(image));
+      const input = await readFile(join(store.imagesDir(), name)).catch(() => null);
+      if (!input) continue;
+      reader ??= await createReader();
+      const read = reader.readSnapshot ?? reader.read;
+      const domain = await read.call(reader, input).catch(() => null);
+      if (domain && await store.setCreativeDomain(creativeId, domain, 'snapshot')) found++;
     }
   } catch (error) {
     log(`Đọc bù tên miền dừng: ${error.message}`);

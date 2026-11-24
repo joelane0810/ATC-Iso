@@ -150,3 +150,27 @@ test('scan reads saved images and downloads missing images with the existing cli
   assert.equal(ads.CR2.domain, 'downloaded.com');
   assert.equal(ads.CR2.image, 'images/CR2.png');
 });
+
+test('backfill reads domains from saved preview snapshots once, including app-store ads', async t => {
+  const { store, watch, ad } = setup(t);
+  const textAd = { ...ad, creativeId: 'CR7', imageUrl: null, previewUrl: null, format: 'text' };
+  const appAd = { ...ad, creativeId: 'CR8', imageUrl: null, previewUrl: null, format: 'video' };
+  store.mergeAds(watch, [textAd, appAd], at);
+  writeFileSync(join(store.imagesDir(), 'CR7.png'), 'Sponsored beehoneyspa.com');
+  writeFileSync(join(store.imagesDir(), 'CR8.png'), 'Physics Stick Simulator Google Play');
+  store.setAdImage(watch.id, 'CR7', 'images/CR7.png');
+  store.setAdImage(watch.id, 'CR8', 'images/CR8.png');
+  const { extractDomain, extractAppStore } = await import('../src/domain-ocr.js');
+  const options = {
+    store, now: () => at, log: () => {}, wait: async () => {},
+    createReader: async () => ({
+      read: async () => assert.fail('dùng readSnapshot cho ảnh chụp'),
+      readSnapshot: async input => extractDomain(input.toString()) ?? extractAppStore(input.toString()),
+      close: async () => {},
+    }),
+  };
+  assert.deepEqual(await backfillDomains(options), { attempted: 2, found: 2 });
+  assert.equal(store.getAds(watch.id).ads.CR7.domain, 'beehoneyspa.com');
+  assert.equal(store.getAds(watch.id).ads.CR8.domain, 'play.google.com');
+  assert.deepEqual(await backfillDomains(options), { attempted: 0, found: 0 });
+});

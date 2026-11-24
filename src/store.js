@@ -50,6 +50,9 @@ export function createStore(root, options) {
     if (!hasSnapshotColumn()) transaction(() => {
       if (!hasSnapshotColumn()) run('ALTER TABLE creatives ADD COLUMN snapshot_attempted_at TEXT');
     });
+    if (!all('PRAGMA table_info(creatives)').some(column => column.name === 'domain_snapshot_ocr_at')) transaction(() => {
+      run('ALTER TABLE creatives ADD COLUMN domain_snapshot_ocr_at TEXT');
+    });
     // Đếm nhanh: số ads Search đang chạy lấy từ 1 trang kết quả, không đi vào chi tiết.
     run(`CREATE TABLE IF NOT EXISTS quick_counts (
       watch_id TEXT PRIMARY KEY, at TEXT NOT NULL, running INTEGER NOT NULL, sampled INTEGER NOT NULL,
@@ -332,6 +335,16 @@ export function createStore(root, options) {
         WHERE ${missingDomain} AND ${ocrDue}
           AND preview_url GLOB 'https://displayads-formats.googleusercontent.com/*content.js*'
         ORDER BY domain_ocr_attempted_at, first_seen_by_us DESC, id LIMIT ?`, ocrCutoff(at), limit);
+    },
+    // Mẫu chưa rõ tên miền nhưng đã có ảnh chụp trên máy: đọc tên miền từ ảnh chụp (mỗi ảnh một lần).
+    creativesNeedingSnapshotDomains(limit) {
+      return all(`SELECT id AS creativeId, image FROM creatives
+        WHERE ${missingDomain} AND coalesce(trim(image), '') != '' AND domain_snapshot_ocr_at IS NULL
+        ORDER BY last_shown DESC, id LIMIT ?`, limit).map(row => ({ ...row }));
+    },
+    claimSnapshotDomainOcr(creativeId, at = now()) {
+      return Boolean(run(`UPDATE creatives SET domain_snapshot_ocr_at = ?
+        WHERE id = ? AND ${missingDomain} AND domain_snapshot_ocr_at IS NULL`, new Date(at).toISOString(), creativeId).changes);
     },
     claimDomainOcr(creativeId, at = now()) {
       return Boolean(transaction(() => run(`UPDATE creatives SET domain_ocr_attempted_at = ?
