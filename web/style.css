@@ -428,8 +428,16 @@ main {
 .overview-scan:hover:not(:disabled) { background: var(--selected); }
 .sparkline { display: block; width: 96px; }
 .sparkline polyline, .chart-line { fill: none; stroke: var(--accent); stroke-width: 2; }
-.group-controls { display: flex; align-items: center; border-top: 1px solid var(--line); }
-.group-controls > button + button { flex: none; margin-right: 8px; color: #185abc; }
+.group-controls {
+  /* Nội dung nhóm chiếm phần lớn; hai nút nhỏ xếp chồng gọn bên phải. */
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; align-content: center;
+  column-gap: 8px; row-gap: 6px; border-top: 1px solid var(--line);
+}
+.group-controls > .group-row { grid-column: 1; grid-row: span 2; }
+.group-controls > button + button {
+  grid-column: 2; justify-self: stretch; margin-right: 8px; padding: 4px 10px; min-height: 0;
+  font-size: 13px; color: #185abc; white-space: nowrap;
+}
 .group-regions { white-space: nowrap; }
 .group-regions.is-loading {
   background: linear-gradient(90deg, var(--selected) var(--progress, 0%), var(--white) var(--progress, 0%));
@@ -848,6 +856,7 @@ main {
   }
   .overview-expansion { margin: -4px 0 12px; }
   .group-controls { margin-top: 8px; border: 1px solid var(--line); border-radius: 8px; }
+  .group-controls > button + button { font-size: 12px; padding: 4px 8px; margin-right: 6px; }
   .group-row { grid-template-columns: minmax(0, 1fr); gap: 4px; padding: 8px 12px; border-radius: 8px; }
   .group-heading .item-name { font-size: 16px; font-weight: 600; }
   .group-counts { font-size: 13px; }

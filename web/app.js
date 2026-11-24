@@ -1393,7 +1393,7 @@ function groupRow(watch, group) {
 
 // Lấy quốc gia cho mọi mẫu của nhóm (vd. cả dự án trong một nhà quảng cáo).
 function groupRegionsButton(watch, group) {
-  const label = 'Lấy quốc gia cả dự án';
+  const label = 'Quét quốc gia';
   const control = element('button', label);
   control.type = 'button';
   control.className = 'group-regions';
@@ -1401,7 +1401,7 @@ function groupRegionsButton(watch, group) {
   control.onclick = () => run(async () => {
     const pid = profile.value;
     control.disabled = true;
-    control.textContent = 'Đang lấy quốc gia…';
+    control.textContent = 'Đang quét…';
     try {
       await api(profilePath(pid) + '/watches/' + encodeURIComponent(watch.watchId) + '/group-regions', 'POST', { key: group.key });
       control.classList.add('is-loading');
@@ -1412,7 +1412,7 @@ function groupRegionsButton(watch, group) {
         // Tiến độ ngay trên nút: số mẫu đã lấy / tổng, kèm thanh chạy nền.
         const state = status?.progress?.watches?.regions;
         if (state?.regionsTotal) {
-          control.textContent = 'Đang lấy ' + state.regionsDone + '/' + state.regionsTotal + ' mẫu';
+          control.textContent = state.regionsDone + '/' + state.regionsTotal + ' mẫu';
           control.style.setProperty('--progress', Math.round(state.regionsDone / state.regionsTotal * 100) + '%');
         }
       } while (!status || status.scanning);
