@@ -75,7 +75,12 @@ export async function createSnapshotter({ launch = options => chromium.launch(op
         await context.routeWebSocket('**/*', socket => socket.close());
         // Bản xem trước cần tải thư viện từ nhiều máy chủ (Google, AMP…); chỉ chặn tuyệt đối trang ATC.
         await context.route('**/*', route => {
-          const { protocol, hostname } = new URL(route.request().url());
+          const { protocol, hostname, pathname } = new URL(route.request().url());
+          // Khung "adframe" vốn do trang ATC cung cấp (trang trống để quảng cáo vẽ vào) — tự trả trang trống.
+          if (pathname === '/adframe') {
+            return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8',
+              body: '<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0"></body></html>' });
+          }
           const forbidden = protocol !== 'https:' || hostname === 'adstransparency.google.com';
           return forbidden ? route.abort() : route.continue();
         });
@@ -130,7 +135,7 @@ export function createSnapshotBackfill({ store, open = createSnapshotter, pause 
     if (running) return;
     running = true;
     try {
-      await store.resetSnapshotAttemptsBefore?.('2026-11-24T06:30:00.000Z');
+      await store.resetSnapshotAttemptsBefore?.('2026-11-24T05:50:00.000Z');
       const candidates = await store.creativesNeedingSnapshots(300);
       if (!candidates.length) return;
       const directory = store.imagesDir();
