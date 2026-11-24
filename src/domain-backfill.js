@@ -57,6 +57,20 @@ export async function backfillDomains({
   let attempted = 0;
   let found = 0;
   try {
+    // Trước tiên: đọc tên miền từ ảnh chụp bản xem trước đã lưu trên máy (không gửi gì lên Google,
+    // nên vẫn chạy được cả khi Google đang chặn tải ảnh).
+    const snapshots = (await store.creativesNeedingSnapshotDomains?.(1000)) ?? [];
+    for (const { creativeId, image } of snapshots) {
+      if (!await store.claimSnapshotDomainOcr(creativeId, now())) continue;
+      attempted++;
+      const name = basename(String(image));
+      const input = await readFile(join(store.imagesDir(), name)).catch(() => null);
+      if (!input) continue;
+      reader ??= await createReader();
+      const read = reader.readSnapshot ?? reader.read;
+      const domain = await read.call(reader, input).catch(() => null);
+      if (domain && await store.setCreativeDomain(creativeId, domain, 'snapshot')) found++;
+    }
     const candidates = await store.creativesNeedingDomains(2000, { remoteOnly: true, now: now() });
     for (const { creativeId, imageUrl } of candidates) {
       if (!await store.claimDomainOcr(creativeId, now())) continue;
@@ -89,19 +103,6 @@ export async function backfillDomains({
       }
       const domain = script ? extractPreviewDomain(script) : null;
       if (domain && await store.setCreativeDomain(creativeId, domain, 'preview')) found++;
-    }
-    // Còn sót: đọc tên miền từ ảnh chụp bản xem trước đã lưu trên máy (không gửi gì lên Google).
-    const snapshots = (await store.creativesNeedingSnapshotDomains?.(1000)) ?? [];
-    for (const { creativeId, image } of snapshots) {
-      if (!await store.claimSnapshotDomainOcr(creativeId, now())) continue;
-      attempted++;
-      const name = basename(String(image));
-      const input = await readFile(join(store.imagesDir(), name)).catch(() => null);
-      if (!input) continue;
-      reader ??= await createReader();
-      const read = reader.readSnapshot ?? reader.read;
-      const domain = await read.call(reader, input).catch(() => null);
-      if (domain && await store.setCreativeDomain(creativeId, domain, 'snapshot')) found++;
     }
   } catch (error) {
     log(`Đọc bù tên miền dừng: ${error.message}`);
