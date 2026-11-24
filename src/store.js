@@ -14,7 +14,9 @@ const ocrDue = '(domain_ocr_attempted_at IS NULL OR domain_ocr_attempted_at <= ?
 const snapshotDue = '(snapshot_attempted_at IS NULL OR snapshot_attempted_at <= ?)';
 const snapshotCandidate = `coalesce(trim(image), '') = ''
   AND preview_url GLOB 'https://displayads-formats.googleusercontent.com/*'
-  AND substr(preview_url, 1, instr(replace(preview_url, '#', '?') || '?', '?') - 1) LIKE '%/content.js'`;
+  AND substr(preview_url, 1, instr(replace(preview_url, '#', '?') || '?', '?') - 1) LIKE '%/content.js'
+  AND EXISTS (SELECT 1 FROM watch_creatives wc JOIN profile_watches pw ON pw.watch_id = wc.watch_id
+    WHERE wc.creative_id = creatives.id AND pw.deleted_at IS NULL)`;
 const ocrCutoff = at => new Date(+new Date(at) - 7 * DAY).toISOString();
 const watchFields = 'w.id, w.type, w.value, w.region, p.label, p.kind, p.added_at AS addedAt, p.group_id AS groupId';
 const groupTypeFor = (kind) => kind === 'project' ? 'advertiser' : 'domain';
