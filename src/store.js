@@ -333,7 +333,7 @@ export function createStore(root, options) {
     creativesNeedingSnapshots(limit, at = now()) {
       return all(`SELECT id AS creativeId, preview_url AS previewUrl, format FROM creatives
         WHERE ${snapshotCandidate} AND ${snapshotDue}
-        ORDER BY last_shown DESC, id LIMIT ?`, ocrCutoff(at), limit).map(row => ({ ...row }));
+        ORDER BY (format = 'video') DESC, last_shown DESC, id LIMIT ?`, ocrCutoff(at), limit).map(row => ({ ...row }));
     },
     // Lượt chụp đầu tiên (trước bản sửa lỗi) đánh dấu nhầm là hỏng — cho chụp lại một lần.
     resetSnapshotAttemptsBefore(iso) {
