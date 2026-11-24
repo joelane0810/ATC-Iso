@@ -251,3 +251,15 @@ test('with a one-tab budget, region lookups reuse the main tab', async () => {
   const source = readFileSync(new URL('../src/browser.js', import.meta.url), 'utf8');
   assert.match(source, /if \(!detailPage && maxTabs < 2\) detailPage = page;/);
 });
+
+test('RPC retries once when the ATC page navigates mid-request', async () => {
+  let calls = 0;
+  const fake = chrome({ fetchResponse: async (url) => {
+    calls++;
+    if (calls === 1) throw new Error('page.evaluate: Execution context was destroyed, most likely because of a navigation');
+    return { ok: true, status: 200, headers: new Headers({ 'content-type': 'application/json' }), url, text: async () => '{"1":[]}' };
+  } });
+  const client = await fake.open();
+  assert.deepEqual(await client.rpc('SearchService/SearchCreatives', {}), { 1: [] });
+  assert.equal(calls, 2);
+});

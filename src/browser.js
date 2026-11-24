@@ -161,6 +161,20 @@ export async function openChromeClient({
   }
 
   async function request(method, req) {
+    try {
+      return await requestOnce(method, req);
+    } catch (error) {
+      // Trang ATC tự tải lại/chuyển trang giữa chừng: chờ trang ổn định rồi thử lại đúng một lần.
+      if (!/Execution context was destroyed|Target page, context or browser has been closed|frame was detached/i.test(String(error?.message))) throw error;
+      await page.waitForLoadState?.('domcontentloaded', { timeout: rpcTimeout }).catch(() => {});
+      if (!String(page.url?.() ?? '').startsWith('https://adstransparency.google.com/')) {
+        await page.goto(landingUrl, { waitUntil: 'domcontentloaded', timeout: rpcTimeout });
+      }
+      return requestOnce(method, req);
+    }
+  }
+
+  async function requestOnce(method, req) {
     markRequest();
     const response = await page.evaluate(async ({ url, req, timeout }) => {
       const response = await fetch(url, {
