@@ -873,10 +873,12 @@ test('ad detail requests countries, polls every three seconds and shows the refr
   assert.ok(find('Quốc gia hiển thị (0)'));
   assert.ok(find('Chưa có dữ liệu quốc gia cho mẫu này.'));
   const calls = () => requests.filter(({ url }) => url.pathname.endsWith('/regions'));
-  assert.equal(calls().length, 1);
-  assert.deepEqual(calls()[0].body, { automatic: true });
   await new Promise(setImmediate);
+  assert.equal(calls().length, 0);
   const control = find('Lấy quốc gia');
+  await control.onclick();
+  assert.equal(calls().length, 1);
+  assert.equal(calls()[0].body, undefined);
   assert.ok(find(error));
   assert.equal(control.disabled, false);
 
@@ -907,7 +909,7 @@ test('ad detail requests countries, polls every three seconds and shows the refr
   ]);
 });
 
-test('detail waits during a scan, then automatically requests countries once', async () => {
+test('opening a detail never requests countries; the button waits for a running scan', async () => {
   const { get, advance, requests, setStatus } = await boot({
     initialStatus: { scanning: true, scanningWatchId: 'rival', last: null },
     reply: ({ url }) => url.pathname.endsWith('/regions') ? { ok: true, status: 202 } : undefined,
@@ -917,19 +919,16 @@ test('detail waits during a scan, then automatically requests countries once', a
   get('ads').children[0].onclick();
   const calls = () => requests.filter(({ url }) => url.pathname.endsWith('/regions')).length;
   const find = text => get('detail').children.find(node => node.textContent === text);
-  assert.ok(find('Sẽ lấy sau khi lượt quét xong'));
-  assert.equal(calls(), 0);
-  advance(3000);
   await new Promise(setImmediate);
+  assert.equal(calls(), 0);
+  void find('Lấy quốc gia').onclick();
+  await new Promise(setImmediate);
+  assert.ok(find('Sẽ lấy sau khi lượt quét xong'));
   assert.equal(calls(), 0);
   setStatus({ scanning: false, last: { status: 'ok' } });
   advance(3000);
   await new Promise(setImmediate);
   assert.ok(find('Đang lấy quốc gia…'));
-  assert.equal(calls(), 1);
-  advance(3000);
-  await new Promise(setImmediate);
-  assert.ok(find('Lấy quốc gia'));
   assert.equal(calls(), 1);
 });
 

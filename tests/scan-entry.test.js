@@ -145,7 +145,7 @@ test('--regions looks up only the requested creatives, saves dates and stops whe
   assert.equal(opened, 2);
 });
 
-test('full scans look up up to 80 creatives and single-watch scans keep the limit of 20', async t => {
+test('scans never look up countries (only the detail button does)', async t => {
   const root = await mkdtemp(join(tmpdir(), 'atc-region-budget-'));
   const store = createStore(root);
   t.after(() => {
@@ -176,12 +176,11 @@ test('full scans look up up to 80 creatives and single-watch scans keep the limi
     },
   };
   assert.equal(await scanFromArgs([`--watch=${watch.id}`], options), 'ok');
-  assert.equal(seen.length, 20);
-  seen.length = 0;
+  assert.equal(seen.length, 0);
   const sevenDaysAgo = new Date(+now - 8 * 86_400_000);
   for (const { creativeId } of ads) store.setCreativeRegions(creativeId, [], sevenDaysAgo);
   assert.equal(await scanFromArgs([], options), 'ok');
-  assert.equal(seen.length, 80);
+  assert.equal(seen.length, 0);
 });
 
 test('--probe asks Google once after the rest period and never during it', async t => {

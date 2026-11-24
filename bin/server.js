@@ -7,7 +7,6 @@ import { backfillDomains } from '../src/domain-backfill.js';
 import { createStore } from '../src/store.js';
 import { createAccess, readAccessConfig } from '../src/access/index.js';
 import { createSnapshotBackfill } from '../src/preview-snapshot.js';
-import { backfillRegions } from './scan.js';
 import { readProgress } from '../src/scan-progress.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -90,11 +89,7 @@ afterScan = fullScan => {
   checkCompletedScan();
 };
 
-setInterval(() => {
-  void backfillRegions({ store, isScanning, triggerScan }).catch(error => {
-    if (!['SCAN_BUSY', 'SCAN_COOLDOWN'].includes(error.code)) console.error(`Lấy bù quốc gia: ${error.message}`);
-  });
-}, 15 * 60_000).unref();
+// Không còn tự lấy quốc gia nền: quốc gia chỉ lấy khi người dùng bấm nút trong chi tiết quảng cáo.
 
 for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => { access.stop(); process.exit(0); });
 

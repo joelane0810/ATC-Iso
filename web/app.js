@@ -1861,8 +1861,8 @@ function renderDetailRegions(ad) {
   };
   control.onclick = () => lookup(false);
   state.render();
+  // Chỉ lấy quốc gia khi bấm nút (không tự lấy khi mở chi tiết).
   detail.append(element('p', 'Chưa có dữ liệu quốc gia cho mẫu này.'), control, message);
-  if (!state.started) void lookup(true);
 }
 
 function showDetail(ad) {

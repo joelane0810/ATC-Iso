@@ -79,7 +79,8 @@ export async function scanOnce({
     }
     const watches = creativeIds ? [] : await store.allWatches();
     if (watchId && !watches.some(watch => watch.id === watchId)) throw new Error('Không tìm thấy mục theo dõi.');
-    const scanOptions = { onlyWatchIds: watchId ? [watchId] : null, maxDetails: watchId ? 20 : 80 };
+    // Lượt quét không lấy quốc gia (chỉ lấy khi bấm nút "Lấy quốc gia" trong chi tiết quảng cáo).
+    const scanOptions = { onlyWatchIds: watchId ? [watchId] : null, maxDetails: 0 };
     // Kiểm tra Google đã bỏ chặn chưa: chỉ 1 lần hỏi (1 trang của 1 mục), không ảnh, không quốc gia.
     if (probe) {
       if (resumeAt || !watches.length) {
