@@ -243,7 +243,7 @@ main {
 .regions, .group-samples { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; font-size: 12px; }
 .group-row > .regions { gap: 6px 12px; font-size: 15px; align-self: center; }
 .group-name-line { display: flex; align-items: center; gap: 6px; flex-basis: 100%; min-width: 0; }
-.group-name-line strong { min-width: 0; overflow-wrap: anywhere; }
+.group-name-line strong { flex: 0 1 auto !important; min-width: 0; overflow-wrap: anywhere; }
 .open-site {
   flex: none; display: inline-grid; place-items: center; width: 26px; height: 26px;
   border: 1px solid var(--line); border-radius: 6px; color: var(--accent); font-size: 14px; cursor: pointer; background: var(--white);
@@ -430,10 +430,12 @@ main {
 .sparkline polyline, .chart-line { fill: none; stroke: var(--accent); stroke-width: 2; }
 .group-controls {
   /* Nội dung nhóm chiếm phần lớn; hai nút nhỏ xếp chồng gọn bên phải. */
-  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; align-content: center;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: 1fr auto auto 1fr;
   column-gap: 8px; row-gap: 6px; border-top: 1px solid var(--line);
 }
-.group-controls > .group-row { grid-column: 1; grid-row: span 2; }
+.group-controls > .group-row { grid-column: 1; grid-row: 1 / 5; align-self: stretch; }
+.group-controls > button + button { grid-row: 2; }
+.group-controls > button + button + button { grid-row: 3; }
 .group-controls > button + button {
   grid-column: 2; justify-self: stretch; margin-right: 8px; padding: 4px 10px; min-height: 0;
   font-size: 13px; color: #185abc; white-space: nowrap;
