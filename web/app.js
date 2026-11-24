@@ -1375,15 +1375,24 @@ function groupRegionsButton(watch, group) {
     control.textContent = 'Đang lấy quốc gia…';
     try {
       await api(profilePath(pid) + '/watches/' + encodeURIComponent(watch.watchId) + '/group-regions', 'POST', { key: group.key });
+      control.classList.add('is-loading');
       let status;
       do {
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        await new Promise(resolve => setTimeout(resolve, 2000));
         status = await refreshStatus();
+        // Tiến độ ngay trên nút: số mẫu đã lấy / tổng, kèm thanh chạy nền.
+        const state = status?.progress?.watches?.regions;
+        if (state?.regionsTotal) {
+          control.textContent = 'Đang lấy ' + state.regionsDone + '/' + state.regionsTotal + ' mẫu';
+          control.style.setProperty('--progress', Math.round(state.regionsDone / state.regionsTotal * 100) + '%');
+        }
       } while (!status || status.scanning);
       if (profile.value === pid) await loadProfileData({ refreshChart: false, reopenGroup: Boolean(openGroup) });
     } finally {
       control.disabled = false;
       control.textContent = label;
+      control.classList.remove('is-loading');
+      control.style.removeProperty('--progress');
     }
   });
   return control;

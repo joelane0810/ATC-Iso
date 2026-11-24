@@ -429,6 +429,11 @@ main {
 .group-controls { display: flex; align-items: center; border-top: 1px solid var(--line); }
 .group-controls > button + button { flex: none; margin-right: 8px; color: #185abc; }
 .group-regions { white-space: nowrap; }
+.group-regions.is-loading {
+  background: linear-gradient(90deg, var(--selected) var(--progress, 0%), var(--white) var(--progress, 0%));
+  color: var(--accent-text);
+  font-variant-numeric: tabular-nums;
+}
 .group-samples { grid-column: 1 / -1; justify-content: flex-start; }
 .group-samples:empty { display: none; }
 
