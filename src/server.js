@@ -136,7 +136,8 @@ export async function startServer({
         return json(res, 200, await store.suggest(params.get('q') ?? ''));
       }
       const regionsRoute = path.match(/^\/api\/profiles\/([\w-]+)\/creatives\/([^/]*)\/regions$/);
-      if (method === 'POST' && (path === '/api/scan' || regionsRoute)) {
+      const groupRegionsRoute = path.match(/^\/api\/profiles\/([\w-]+)\/watches\/([a-z0-9-]+)\/group-regions$/i);
+      if (method === 'POST' && (path === '/api/scan' || regionsRoute || groupRegionsRoute)) {
         let watchId = null;
         let creativeIds;
         let automatic = false;
@@ -146,6 +147,15 @@ export async function startServer({
           if (!/^CR\d+$/.test(creativeId)) return json(res, 409, { error: 'Mã mẫu quảng cáo không hợp lệ.' });
           creativeIds = [creativeId];
           automatic = (await readBody(req, true)).automatic === true;
+        } else if (groupRegionsRoute) {
+          // Lấy quốc gia cho mọi mẫu của một nhóm (vd. một dự án trong nhà quảng cáo).
+          const [, pid, wid] = groupRegionsRoute;
+          const { key } = await readBody(req);
+          if (typeof key !== 'string' || !key) return json(res, 409, { error: 'Nhóm không hợp lệ.' });
+          creativeIds = await store.groupCreativeIds(pid, wid, key);
+          if (!creativeIds.length) {
+            return json(res, 409, { error: 'Mọi mẫu của nhóm này đã có quốc gia trong 24 giờ qua.' });
+          }
         } else {
           const body = await readBody(req, true);
           ({ watchId = null } = body);
@@ -156,7 +166,7 @@ export async function startServer({
         }
         if (await scanning() || scanPending) return json(res, 409, { error: 'Đang có lượt quét.' });
         scanPending = true;
-        pendingWatchId = regionsRoute ? 'regions' : quick ? 'quick' : watchId;
+        pendingWatchId = regionsRoute || groupRegionsRoute ? 'regions' : quick ? 'quick' : watchId;
         let validated = false;
         try {
           if (regionsRoute) {

@@ -1,6 +1,6 @@
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 
-const readMethods = ['listProfiles', 'getWatchlist', 'getGroups', 'getTrash', 'isWatchActive', 'getScanLog', 'getLastScan', 'getScanningWatchId', 'getSummary', 'getSeries', 'suggest', 'listAdsForProfile', 'imagesDir', 'watchOwners'];
+const readMethods = ['listProfiles', 'getWatchlist', 'getGroups', 'getTrash', 'isWatchActive', 'getScanLog', 'getLastScan', 'getScanningWatchId', 'getSummary', 'getSeries', 'suggest', 'listAdsForProfile', 'imagesDir', 'watchOwners', 'groupCreativeIds'];
 const writeMethods = ['addProfile', 'addWatch', 'removeWatch', 'setWatchGroup', 'addGroup', 'renameGroup', 'removeGroup',
   'removeWatches', 'restoreWatches', 'purgeWatches'];
 

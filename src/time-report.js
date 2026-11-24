@@ -135,6 +135,17 @@ export function createTimeReport({ all, scanHistory }) {
       }
       return { ...dates, ...range, bucket: buckets.bucket, points: buckets.points() };
     },
+    // Mọi mẫu Search của một nhóm (dự án của nhà QC, hoặc nhà QC của dự án) cần lấy quốc gia;
+    // bỏ qua mẫu đã lấy trong 24 giờ qua. Mẫu chạy gần nhất lấy trước.
+    groupCreativeIds(pid, watchId, key, { now = new Date(), limit = 500 } = {}) {
+      const since = new Date(+new Date(now) - DAY).toISOString();
+      return all(`WITH members AS (${members})
+        SELECT m.creativeId FROM members m JOIN creatives c ON c.id = m.creativeId
+        WHERE m.watchId = ? AND m.key = ? AND c.advertiser_id IS NOT NULL
+          AND (c.regions_checked_at IS NULL OR c.regions_checked_at < ?)
+        GROUP BY m.creativeId ORDER BY max(m.lastDay) DESC, m.creativeId LIMIT ?`, pid, watchId, key, since, limit)
+        .map(row => row.creativeId);
+    },
     getSummary(pid, { window = 'day', from, to, now = new Date() } = {}) {
       const span = windows.get(window);
       if (!span) throw new Error('Khoảng thời gian không hợp lệ.');

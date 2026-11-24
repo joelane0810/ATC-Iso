@@ -1339,6 +1339,7 @@ function groupRow(watch, group) {
     });
     controls.append(follow);
   }
+  if (group.key) controls.append(groupRegionsButton(watch, group));
   wrapper.append(controls, panel);
   row.onclick = () => {
     const alreadyOpen = openGroup?.row === row;
@@ -1358,6 +1359,33 @@ function groupRow(watch, group) {
     return loadGroupAds(request, group.name, message);
   };
   return wrapper;
+}
+
+// Lấy quốc gia cho mọi mẫu của nhóm (vd. cả dự án trong một nhà quảng cáo).
+function groupRegionsButton(watch, group) {
+  const label = group.groupType === 'domain' ? 'Lấy quốc gia cả dự án' : 'Lấy quốc gia cả nhà QC';
+  const control = element('button', label);
+  control.type = 'button';
+  control.className = 'group-regions';
+  control.title = 'Lấy quốc gia hiển thị cho tất cả ads của ' + group.name + ' (bỏ qua mẫu đã lấy trong 24 giờ qua)';
+  control.onclick = () => run(async () => {
+    const pid = profile.value;
+    control.disabled = true;
+    control.textContent = 'Đang lấy quốc gia…';
+    try {
+      await api(profilePath(pid) + '/watches/' + encodeURIComponent(watch.watchId) + '/group-regions', 'POST', { key: group.key });
+      let status;
+      do {
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        status = await refreshStatus();
+      } while (!status || status.scanning);
+      if (profile.value === pid) await loadProfileData({ refreshChart: false, reopenGroup: Boolean(openGroup) });
+    } finally {
+      control.disabled = false;
+      control.textContent = label;
+    }
+  });
+  return control;
 }
 
 function closeGroup() {
@@ -2332,7 +2360,9 @@ function renderScanStatus() {
     message = 'Google đã bỏ chặn · kiểm tra lúc ' + at(last.at);
   }
   if (scanning || startingScan) {
+    const regionState = scanStatus?.progress?.watches?.regions;
     message = scanningWatchId === 'regions' ? 'Đang lấy quốc gia…'
+      + (regionState?.regionsTotal > 1 ? ' ' + regionState.regionsDone + '/' + regionState.regionsTotal + ' mẫu' : '')
       : scanningWatchId === 'quick' ? 'Đang đếm nhanh nhà quảng cáo chưa có dữ liệu hôm nay…'
       : 'Đang quét ' + (label || (scanningWatchId ? 'một mục' : 'tất cả (mọi hồ sơ)')) + '…';
   }

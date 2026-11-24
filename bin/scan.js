@@ -40,13 +40,25 @@ async function lookupCreativeRegions({ store, client, creativeIds, scannedAt, sc
   const progress = (type, fields) => tracker.handle({ type, watchId: regionsWatchId, ...fields });
   try {
     let done = 0;
+    let failures = 0;
     progress('regions', { done, total: creativeIds.length });
     for (const creativeId of creativeIds) {
       const advertiserId = await store.getCreativeAdvertiserId(creativeId);
-      if (!advertiserId) throw new Error('Không tìm thấy nhà quảng cáo của mẫu này.');
+      if (!advertiserId) {
+        if (creativeIds.length === 1) throw new Error('Không tìm thấy nhà quảng cáo của mẫu này.');
+        progress('regions', { done: ++done, total: creativeIds.length });
+        continue;
+      }
       const regions = await client.lookupRegions({ advertiserId, creativeId });
       await store.setCreativeRegions(creativeId, regions, scannedAt);
       progress('regions', { done: ++done, total: creativeIds.length });
+      // Cả dự án: 3 mẫu liền không lấy được thì dừng để khỏi dồn yêu cầu lên Google.
+      failures = regions === null ? failures + 1 : 0;
+      if (failures >= 3) {
+        entry.status = 'error';
+        entry.error = 'Dừng lấy quốc gia sau 3 mẫu liền không lấy được (' + done + '/' + creativeIds.length + ').';
+        break;
+      }
     }
     progress('done');
   } catch (error) {
@@ -186,8 +198,8 @@ export function scanFromArgs(args, options) {
   if (watchId === '') throw new Error('Vui lòng chọn mục theo dõi.');
   const regionsArg = args.find(arg => arg.startsWith('--regions='));
   const ids = regionsArg?.slice('--regions='.length).split(',');
-  if (ids && (watchId || ids.length > 10 || ids.some(id => !/^CR\d+$/.test(id)))) {
-    throw new Error('Chọn từ một đến mười mẫu quảng cáo hợp lệ.');
+  if (ids && (watchId || ids.length > 500 || ids.some(id => !/^CR\d+$/.test(id)))) {
+    throw new Error('Chọn từ một đến 500 mẫu quảng cáo hợp lệ.');
   }
   const probe = args.includes('--probe');
   const manual = args.includes('--manual');

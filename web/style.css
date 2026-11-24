@@ -297,6 +297,12 @@ main {
   top: 0;
   align-self: start;
   min-height: calc(100vh - 80px);
+  /* Chi tiết dài hơn màn hình: cuộn ngay trong khung chi tiết. */
+  max-height: 100vh;
+  max-height: 100dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
   padding: 28px 24px;
   border-left: 1px solid var(--line);
 }
@@ -422,6 +428,7 @@ main {
 .sparkline polyline, .chart-line { fill: none; stroke: var(--accent); stroke-width: 2; }
 .group-controls { display: flex; align-items: center; border-top: 1px solid var(--line); }
 .group-controls > button + button { flex: none; margin-right: 8px; color: #185abc; }
+.group-regions { white-space: nowrap; }
 .group-samples { grid-column: 1 / -1; justify-content: flex-start; }
 .group-samples:empty { display: none; }
 

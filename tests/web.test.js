@@ -508,7 +508,8 @@ test('overview shows grouped changes, stable watch colors and the two totals blo
   assert.equal(dotStyle(sidebar.children[0]), dotStyle(competitor.children[0].children[0].children[1]));
   const first = expand()[0].children[0];
   const [name, counts, flags, thumbs] = first.children[0].children;
-  assert.equal(first.children.length, 1);
+  assert.equal(first.children.length, 2);
+  assert.equal(first.children[1].textContent, 'Lấy quốc gia cả dự án');
   assert.deepEqual(name.children.map((node) => node.textContent), ['Dự án mới', 'example.com']);
   assert.deepEqual(counts.children.map((node) => node.textContent), ['0 → 3', '+3', '3 ads mới']);
   assert.deepEqual(flags.children.map((node) => node.textContent), ['🇺🇸 3', '🇻🇳 1', '🇯🇵 1', '🇩🇪 1', '🇬🇧 1', '🇫🇷 1', '+1']);

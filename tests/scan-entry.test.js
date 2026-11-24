@@ -124,7 +124,7 @@ test('--regions looks up only the requested creatives, saves dates and stops whe
   };
 
   assert.throws(() => scanFromArgs(['--regions=CR1,bad'], options), /hợp lệ/);
-  assert.throws(() => scanFromArgs(['--regions=' + Array(11).fill('CR1').join(',')], options), /hợp lệ/);
+  assert.throws(() => scanFromArgs(['--regions=' + Array(501).fill('CR1').join(',')], options), /hợp lệ/);
   assert.equal(await scanFromArgs(['--regions=CR2,CR1'], options), 'ok');
   assert.deepEqual(requests.splice(0), [
     { advertiserId: 'AR2', creativeId: 'CR2' }, { advertiserId: 'AR1', creativeId: 'CR1' },

@@ -801,3 +801,16 @@ test('watchOwners names every profile that follows a watch', (t) => {
   assert.deepEqual(owners[own.id].profiles.map(p => p.name), ['Hoa']);
   assert.equal(owners.quick, undefined);
 });
+
+test('groupCreativeIds lists a project inside an advertiser and skips ads checked within a day', (t) => {
+  const { store } = setup(t);
+  const { id } = store.addProfile('Dai');
+  const advertiser = store.addWatch(id, 'AR123');
+  const now = new Date('2026-11-24T08:00:00Z');
+  const ad = (creativeId, domain) => ({ creativeId, advertiserId: 'AR123', domain, lastShown: now.toISOString(), firstShown: '2026-11-20T00:00:00.000Z' });
+  store.mergeAds(advertiser, [ad('CR1', 'shop.example'), ad('CR2', 'shop.example'), ad('CR3', 'other.example')], now);
+  const key = store.getSummary(id, { now }).watches[0].groups.find(g => g.name.includes('shop')).key;
+  assert.deepEqual(store.groupCreativeIds(id, advertiser.id, key, { now }).sort(), ['CR1', 'CR2']);
+  store.setCreativeRegions('CR1', [{ regionId: 2840, lastShown: '2026-11-24T00:00:00.000Z' }], now);
+  assert.deepEqual(store.groupCreativeIds(id, advertiser.id, key, { now }), ['CR2']);
+});
