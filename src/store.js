@@ -335,6 +335,11 @@ export function createStore(root, options) {
         WHERE ${snapshotCandidate} AND ${snapshotDue}
         ORDER BY last_shown DESC, id LIMIT ?`, ocrCutoff(at), limit).map(row => ({ ...row }));
     },
+    // Lượt chụp đầu tiên (trước bản sửa lỗi) đánh dấu nhầm là hỏng — cho chụp lại một lần.
+    resetSnapshotAttemptsBefore(iso) {
+      return transaction(() => run(`UPDATE creatives SET snapshot_attempted_at = NULL
+        WHERE image IS NULL AND snapshot_attempted_at < ?`, iso).changes);
+    },
     claimSnapshot(creativeId, at = now()) {
       return Boolean(transaction(() => run(`UPDATE creatives SET snapshot_attempted_at = ?
         WHERE id = ? AND ${snapshotCandidate} AND ${snapshotDue}`,

@@ -94,9 +94,14 @@ export async function createSnapshotter({ launch = options => chromium.launch(op
         await Promise.all(page.frames().map(frame => frame.evaluate(holdVideoStart).catch(() => {})));
         await page.waitForTimeout(1500);
         if (blocked || await page.evaluate(previewReady, true) !== true) { note('empty'); return null; }
-        const childResults = await Promise.all(page.frames().filter(frame => frame.parentFrame()).map(frame =>
-          frame.evaluate(previewReady, true).catch(() => false)));
-        if (childResults.includes('error')) { note('google-error'); return null; }
+        // Chỉ coi là mẫu hỏng khi KHUNG LỚN đang hiện trang lỗi của Google; khung đo lường ẩn/nhỏ bỏ qua.
+        let visibleError = false;
+        for (const frame of page.frames().filter(item => item.parentFrame())) {
+          if (await frame.evaluate(previewReady, true).catch(() => false) !== 'error') continue;
+          const box = await (await frame.frameElement().catch(() => null))?.boundingBox().catch(() => null);
+          if (box && box.width >= 150 && box.height >= 80) visibleError = true;
+        }
+        if (visibleError) { note('google-error-frame'); return null; }
         const png = await page.locator('#atc-preview').screenshot({ timeout, animations: 'disabled' });
         return blocked ? null : png;
       } catch (error) {
@@ -116,6 +121,7 @@ export function createSnapshotBackfill({ store, open = createSnapshotter, pause 
     if (running) return;
     running = true;
     try {
+      await store.resetSnapshotAttemptsBefore?.('2026-11-24T05:45:00.000Z');
       const candidates = await store.creativesNeedingSnapshots(300);
       if (!candidates.length) return;
       const directory = store.imagesDir();
