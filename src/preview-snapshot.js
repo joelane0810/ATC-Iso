@@ -72,11 +72,11 @@ export async function createSnapshotter({ launch = options => chromium.launch(op
       const context = await browser.newContext({ viewport: { width: 400, height: 600 }, serviceWorkers: 'block' });
       try {
         await context.routeWebSocket('**/*', socket => socket.close());
-        // Chỉ cho tải từ máy chủ hiển thị quảng cáo của Google; không bao giờ mở trang ATC.
+        // Bản xem trước cần tải thư viện từ nhiều máy chủ (Google, AMP…); chỉ chặn tuyệt đối trang ATC.
         await context.route('**/*', route => {
           const { protocol, hostname } = new URL(route.request().url());
-          const allowed = protocol === 'https:' && allowedHosts.some(host => hostname === host || hostname.endsWith('.' + host));
-          return allowed ? route.continue() : route.abort();
+          const forbidden = protocol !== 'https:' || hostname === 'adstransparency.google.com';
+          return forbidden ? route.abort() : route.continue();
         });
         const page = await context.newPage();
         await page.setContent(previewDocument(url), { waitUntil: 'domcontentloaded', timeout });
