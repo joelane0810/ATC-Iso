@@ -472,6 +472,19 @@ export function createStore(root, options) {
       }
       return summary;
     },
+    // Tên mục và các hồ sơ đang theo dõi nó — để mọi hồ sơ thấy rõ bên nào đang quét.
+    watchOwners(ids) {
+      const wanted = [...new Set(ids.filter(id => typeof id === 'string'))];
+      if (!wanted.length) return {};
+      const result = {};
+      for (const row of all(`SELECT p.watch_id AS watchId, p.label, pr.id AS profileId, pr.name AS profileName
+        FROM profile_watches p JOIN profiles pr ON pr.id = p.profile_id
+        WHERE p.deleted_at IS NULL AND p.watch_id IN (${wanted.map(() => '?').join(', ')}) ORDER BY pr.rowid`, ...wanted)) {
+        const entry = result[row.watchId] ??= { label: row.label, profiles: [] };
+        entry.profiles.push({ id: row.profileId, name: row.profileName });
+      }
+      return result;
+    },
     setQuickCount(watchId, { at, running, sampled, more, total = null, raw = null }) {
       run(`INSERT INTO quick_counts (watch_id, at, running, sampled, more, total, raw) VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(watch_id) DO UPDATE SET at = excluded.at, running = excluded.running, sampled = excluded.sampled,

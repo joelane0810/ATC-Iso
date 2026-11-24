@@ -788,3 +788,16 @@ test('quick counts show for advertisers until a full scan is newer', (t) => {
   assert.equal(store.getSummary(id, { now: new Date('2026-11-24T08:00:00Z') }).watches.find(w => w.watchId === advertiser.id).quickCount, undefined);
   assert.deepEqual(store.watchesWithoutScanOn('2026-11-24'), []);
 });
+
+test('watchOwners names every profile that follows a watch', (t) => {
+  const { store } = setup(t);
+  const dai = store.addProfile('Dai');
+  const hoa = store.addProfile('Hoa');
+  const shared = store.addWatch(dai.id, 'nike.com');
+  store.addWatch(hoa.id, 'nike.com');
+  const own = store.addWatch(hoa.id, 'AR123');
+  const owners = store.watchOwners([shared.id, own.id, null, 'quick']);
+  assert.deepEqual(owners[shared.id].profiles.map(p => p.name), ['Dai', 'Hoa']);
+  assert.deepEqual(owners[own.id].profiles.map(p => p.name), ['Hoa']);
+  assert.equal(owners.quick, undefined);
+});

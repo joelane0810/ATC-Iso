@@ -2306,10 +2306,21 @@ function renderImageStatus(images) {
   panel.replaceChildren(...rows);
 }
 
+// Tên mục đang quét; mục thuộc hồ sơ khác thì ghi kèm tên hồ sơ để biết bên nào đang quét.
+function scanTargetName(id) {
+  if (!id) return null;
+  const owner = scanStatus?.owners?.[id];
+  const own = watches.find((watch) => watch.id === id)?.label ?? watchCounts.get(id)?.label;
+  const name = own ?? owner?.label;
+  if (!name) return null;
+  const mine = owner ? owner.profiles.some((item) => item.id === profile.value) : Boolean(own);
+  return mine || !owner?.profiles.length ? name
+    : name + ' (hồ sơ ' + owner.profiles.map((item) => item.name).join(', ') + ')';
+}
+
 function renderScanStatus() {
   const { last, scanningWatchId } = scanStatus ?? {};
-  const label = watches.find(({ id }) => id === scanningWatchId)?.label
-    ?? watchCounts.get(scanningWatchId)?.label;
+  const label = scanTargetName(scanningWatchId);
   const labels = { ok: 'Hoàn tất', blocked: 'Bị Google chặn', error: 'Gặp lỗi' };
   let message = labels[last?.status] ?? 'Chưa có lượt quét.';
   const at = (value) => displayDate(value, vietnamTime);
@@ -2323,7 +2334,7 @@ function renderScanStatus() {
   if (scanning || startingScan) {
     message = scanningWatchId === 'regions' ? 'Đang lấy quốc gia…'
       : scanningWatchId === 'quick' ? 'Đang đếm nhanh nhà quảng cáo chưa có dữ liệu hôm nay…'
-      : 'Đang quét ' + (label || (scanningWatchId ? 'một mục' : 'tất cả')) + '…';
+      : 'Đang quét ' + (label || (scanningWatchId ? 'một mục' : 'tất cả (mọi hồ sơ)')) + '…';
   }
   const active = scanning || startingScan;
   const progress = scanStatus?.progress;
@@ -2332,7 +2343,7 @@ function renderScanStatus() {
   if (active && order.length > 1) {
     const done = order.filter(id => ['done', 'blocked', 'error', 'skipped'].includes(states[id]?.state)).length;
     const current = order.find(id => states[id]?.state === 'scanning');
-    const name = watches.find(({ id }) => id === current)?.label ?? watchCounts.get(current)?.label;
+    const name = scanTargetName(current);
     message = (scanningWatchId === 'quick' ? 'Đang đếm nhanh ' : 'Đang quét ') + (name ? name + ' · ' : '') + done + '/' + order.length + ' mục xong';
   }
   const status = byId('status');

@@ -124,7 +124,12 @@ export async function startServer({
           : progress.finishedAt && Date.now() - Date.parse(progress.finishedAt) < 120_000);
         let images = null;
         try { images = imagingStatus(); } catch {}
-        return json(res, 200, { scanning: active, scanningWatchId, last, lanUrls: lanUrls(), ...(images ? { images } : {}),
+        let owners = {};
+        try {
+          owners = active ? await store.watchOwners?.([scanningWatchId, ...(fresh ? progress.order ?? [] : [])]) ?? {} : {};
+        } catch {}
+        return json(res, 200, { scanning: active, scanningWatchId, last, lanUrls: lanUrls(),
+          ...(Object.keys(owners).length ? { owners } : {}), ...(images ? { images } : {}),
           ...(fresh ? { progress } : {}), ...(accessStatus() ? { gateway: accessStatus() } : {}) });
       }
       if (method === 'GET' && path === '/api/suggest') {
