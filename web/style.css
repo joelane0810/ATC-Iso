@@ -321,15 +321,18 @@ main {
 .detail-regions { display: grid; gap: 4px; margin: 0 0 20px; padding: 0; list-style: none; }
 .detail-regions li {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content max-content max-content;
-  gap: 6px;
+  grid-template-columns: minmax(0, 1fr) max-content max-content;
+  grid-template-areas: 'name days status' 'dates dates status';
+  gap: 2px 12px;
   align-items: center;
-  padding: 5px 0;
+  padding: 8px 0;
   border-bottom: 1px solid var(--line);
 }
-.detail-region-name { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.detail-region-dates, .detail-region-days, .detail-region-status { font-size: 12px; white-space: nowrap; }
-.detail-region-dates { font-variant-numeric: tabular-nums; }
+.detail-region-name { grid-area: name; font-size: 15px; color: var(--text); overflow-wrap: anywhere; }
+.detail-region-days { grid-area: days; justify-self: end; font-size: 13px; color: var(--muted); white-space: nowrap; }
+.detail-region-dates { grid-area: dates; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.detail-region-status { grid-area: status; align-self: center; font-size: 14px !important; padding: 5px 12px !important; white-space: nowrap; }
+.regions-fetched { margin-left: 8px; font-size: 12px; color: var(--muted); }
 .region-lookup-message { margin: 4px 0 12px; color: var(--stopped-text); }
 .region-lookup-message:empty { margin-top: 0; }
 .region-lookup-pending::before {
@@ -346,17 +349,6 @@ main {
 }
 @media (prefers-reduced-motion: reduce) {
   .region-lookup-pending::before { animation: none; }
-}
-@media (width < 1280px) {
-  .detail-regions li {
-    grid-template-columns: minmax(0, 1fr) max-content;
-    grid-template-areas: 'name status' 'dates days';
-    gap: 2px 8px;
-  }
-  .detail-region-name { grid-area: name; }
-  .detail-region-dates { grid-area: dates; }
-  .detail-region-days { grid-area: days; justify-self: end; }
-  .detail-region-status { grid-area: status; justify-self: end; }
 }
 .group-samples > img.preview { width: 72px; height: 54px; max-height: 54px; object-fit: cover; object-position: top; padding: 0; }
 .group-samples { flex-wrap: nowrap; overflow: hidden; }

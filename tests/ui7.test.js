@@ -902,10 +902,10 @@ test('ad detail requests countries, polls every three seconds and shows the refr
   assert.ok(find('Quốc gia hiển thị (4)'));
   const list = detail.children.find(node => node.className === 'detail-regions');
   assert.deepEqual(list.children.map(row => row.children.map(node => node.textContent)), [
-    ['🇺🇸 Hoa Kỳ', '19/11/2026 → 22/11/2026', '4 ngày', 'Đang chạy'],
-    ['🇩🇪 Đức', '21/11/2026 → 21/11/2026', '1 ngày', 'Đang chạy'],
-    ['🇯🇵 Nhật Bản', 'đến 21/11/2026', '', 'Đang chạy'],
-    ['🇻🇳 Việt Nam', '16/11/2026 → 20/11/2026', '5 ngày', 'Đã dừng'],
+    ['🇺🇸 Hoa Kỳ', '4 ngày', '19/11/2026 → hiện tại', 'Đang chạy'],
+    ['🇩🇪 Đức', '1 ngày', '21/11/2026 → hiện tại', 'Đang chạy'],
+    ['🇯🇵 Nhật Bản', '', 'chưa rõ → hiện tại', 'Đang chạy'],
+    ['🇻🇳 Việt Nam', '5 ngày', '16/11/2026 → 20/11/2026', 'Đã dừng'],
   ]);
 });
 

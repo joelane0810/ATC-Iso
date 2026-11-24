@@ -1317,7 +1317,17 @@ function groupRow(watch, group) {
   samples.className = 'group-samples';
   samples.setAttribute('aria-hidden', 'true');
   for (const ad of group.sampleAds.filter((ad) => ad.platform === 'search').slice(0, 4)) samples.append(preview(ad, true));
-  row.append(heading, counts, regionStrip(group.regions, true), samples);
+  const strip = regionStrip(group.regions, true);
+  if (group.regions.length && group.regionsChecked?.latest) {
+    const { latest, oldest } = group.regionsChecked;
+    const day = (value) => displayDate(value).slice(0, 5);
+    const fetched = element('span', 'lấy ' + (dateInVietnam(oldest) === dateInVietnam(latest)
+      ? displayDate(latest) : day(oldest) + '–' + displayDate(latest)));
+    fetched.className = 'regions-fetched';
+    fetched.title = 'Ngày lấy dữ liệu quốc gia của các mẫu trong nhóm này';
+    strip.append(fetched);
+  }
+  row.append(heading, counts, strip, samples);
   const wrapper = element('div');
   const panel = element('div');
   panel.className = 'group-ads';
@@ -1799,20 +1809,22 @@ function renderDetailRegions(ad) {
     }).sort((a, b) => Number(b.running) - Number(a.running)
       || b.lastDay.localeCompare(a.lastDay) || a.name.localeCompare(b.name, 'vi'));
     for (const { flag, name, firstShown, lastShown, running } of rows) {
+      // Dòng trên: quốc gia + số ngày chạy. Dòng dưới: từ ngày bắt đầu đến ngày kết thúc (hoặc hiện tại).
+      // Nhãn trạng thái nằm giữa hai dòng, bên phải.
       const row = element('li');
       const country = element('span', flag + ' ' + name);
       country.className = 'detail-region-name';
       country.title = name;
-      const dates = firstShown ? displayDate(firstShown) + ' → ' + displayDate(lastShown)
-        : 'đến ' + displayDate(lastShown);
-      const interval = element('span', dates);
+      const start = firstShown ? displayDate(firstShown) : 'chưa rõ';
+      const interval = element('span', start + ' → ' + (running ? 'hiện tại' : displayDate(lastShown)));
       interval.className = 'detail-region-dates';
+      if (running) interval.title = 'Ngày gần nhất ATC ghi nhận: ' + displayDate(lastShown);
       const duration = firstShown ? (Date.parse(lastShown) - Date.parse(firstShown)) / dayMs + 1 : 0;
       const count = element('span', duration > 0 ? formatCount.format(duration) + ' ngày' : '');
       count.className = 'detail-region-days';
       const state = badge(running ? 'Đang chạy' : 'Đã dừng', running ? 'new' : 'steady');
       state.className += ' detail-region-status';
-      row.append(country, interval, count, state);
+      row.append(country, count, interval, state);
       countries.append(row);
     }
     detail.append(countries);

@@ -813,4 +813,6 @@ test('groupCreativeIds lists a project inside an advertiser and skips ads checke
   assert.deepEqual(store.groupCreativeIds(id, advertiser.id, key, { now }).sort(), ['CR1', 'CR2']);
   store.setCreativeRegions('CR1', [{ regionId: 2840, lastShown: '2026-11-24T00:00:00.000Z' }], now);
   assert.deepEqual(store.groupCreativeIds(id, advertiser.id, key, { now }), ['CR2']);
+  const group = store.getSummary(id, { now }).watches[0].groups.find(g => g.key === key);
+  assert.deepEqual(group.regionsChecked, { latest: now.toISOString(), oldest: now.toISOString() });
 });

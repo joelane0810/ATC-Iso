@@ -236,6 +236,14 @@ export function createTimeReport({ all, scanHistory }) {
       pid, end, start, end, start)) {
         byGroup.get(watchId).get(key).regions.push({ regionId, iso: regionIdToIso(regionId), running });
       }
+      // Ngày lấy quốc gia của nhóm (mới nhất và cũ nhất) để biết dữ liệu quốc gia cũ hay mới.
+      for (const { watchId, key, latest, oldest } of all(`WITH members AS (${members})
+        SELECT watchId, key, max(c.regions_checked_at) AS latest, min(c.regions_checked_at) AS oldest
+        FROM members JOIN creatives c ON c.id = members.creativeId
+        WHERE c.regions_checked_at IS NOT NULL GROUP BY watchId, key`, pid)) {
+        const group = byGroup.get(watchId)?.get(key);
+        if (group) group.regionsChecked = { latest, oldest };
+      }
       const samples = all(`WITH members AS (${members}), ranked AS (
           SELECT *, row_number() OVER (PARTITION BY watchId, key ORDER BY
             (firstDay <= ? AND lastDay >= ? AND firstDay <= lastDay) DESC, firstShown DESC, creativeId) AS rank
