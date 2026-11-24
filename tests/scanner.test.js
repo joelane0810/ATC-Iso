@@ -379,3 +379,36 @@ test('scan reports per-watch progress so each watch can finish before the scan e
   assert.ok(events.some(event => event.type === 'page' && event.watchId === 'first' && event.page === 1 && event.maxPages === 5));
   assert.deepEqual(events.at(-1), { type: 'error', watchId: 'second', blocked: true });
 });
+
+test('quick count reads one page: small advertiser is saved, big one only gets a count', async () => {
+  const small = { id: 'small', type: 'advertiser', value: 'AR1' };
+  const big = { id: 'big', type: 'advertiser', value: 'AR2' };
+  const recent = '2026-11-21T00:00:00Z';
+  const old = '2026-10-01T00:00:00Z';
+  const files = new Map();
+  const counts = [];
+  const result = await runScan({
+    store: {
+      allWatches: () => [small, big], getAds: id => files.get(id) ?? null,
+      mergeAds(watch, ads) {
+        const file = { ads: Object.fromEntries(ads.map(ad => [ad.creativeId, { ...ad, platform: 'search' }])) };
+        files.set(watch.id, file);
+        return { file, newIds: ads.map(ad => ad.creativeId) };
+      },
+      setQuickCount: (id, value) => counts.push([id, value]),
+      imagesDir: () => tmpdir(), appendScanLog: () => {},
+    },
+    client: {
+      rpc: async (method, req) => (req.watch.id === 'small'
+        ? { ads: [{ creativeId: 'CR1', lastShown: recent }] }
+        : { ads: [{ creativeId: 'CR2', lastShown: recent }, { creativeId: 'CR3', lastShown: old }], nextToken: 'next', extra: { 4: '57' } }),
+      captureImage: async () => { throw new Error('no captures in quick mode'); },
+    },
+    now, log: () => {}, maxPages: 1, maxDetails: 0, skipCaptures: true, quick: true,
+  });
+  assert.equal(result.watched, 2);
+  assert.deepEqual(Object.keys(files.get('small').ads), ['CR1']);
+  assert.equal(files.has('big'), false);
+  assert.deepEqual(counts.map(([id, { running, sampled, more, total }]) => [id, running, sampled, more, total]),
+    [['big', 1, 2, true, 57]]);
+});

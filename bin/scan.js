@@ -12,6 +12,7 @@ import { runScan } from '../src/scanner.js';
 import { acquireTabBudget, TabLimitError } from '../src/tab-guard.js';
 import { createProgressTracker, progressPath } from '../src/scan-progress.js';
 import { createStore } from '../src/store.js';
+import { vietnamDate } from '../src/time-report.js';
 import { syncToGitHub } from '../src/sync.js';
 
 const execFileAsync = promisify(execFile);
@@ -63,7 +64,7 @@ const projectRoot = fileURLToPath(new URL('../', import.meta.url));
 export async function scanOnce({
   root = projectRoot, store = createStore(root), open = openChromeClient,
   sync = syncData, log = console.error, onAcquired = () => {}, watchId = null, creativeIds = null, probe = false,
-  manual = false,
+  manual = false, quick = false,
   tabBudget = () => acquireTabBudget({ log }),
 } = {}) {
   return withLock(join(root, 'data', '.scan.lock'), async () => {
@@ -87,7 +88,18 @@ export async function scanOnce({
       }
       Object.assign(scanOptions, { onlyWatchIds: [watches[0].id], maxPages: 1, maxDetails: 0, skipCaptures: true });
     }
-    if (resumeAt) {
+    // Đếm nhanh: nhà quảng cáo chưa có dữ liệu hôm nay — 1 trang mỗi bên, không ảnh, không quốc gia.
+    if (quick) {
+      const today = vietnamDate(new Date().toISOString());
+      const pending = new Set(await store.watchesWithoutScanOn(today));
+      const ids = watches.filter(watch => pending.has(watch.id)).map(watch => watch.id);
+      if (!ids.length) {
+        onAcquired();
+        log('Không có nhà quảng cáo nào cần đếm nhanh.');
+        return 'ok';
+      }
+      Object.assign(scanOptions, { onlyWatchIds: ids, maxPages: 1, maxDetails: 0, skipCaptures: true, light: true, quick: true });
+    } else if (resumeAt) {
       const eligible = [];
       if (watchId) eligible.push(watchId);
       else for (const watch of watches) if (!(await store.getAds(watch.id))) eligible.push(watch.id);
@@ -104,6 +116,7 @@ export async function scanOnce({
       ...value,
       ...(scanTarget ? { watchId: scanTarget } : {}),
       ...(scanOptions.light ? { light: true } : {}),
+      ...(scanOptions.quick ? { quick: true } : {}),
       ...(probe ? { probe: true } : {}),
       ...(value.status === 'blocked'
         ? { resumeAt: new Date(Date.parse(value.at) + REST_MS).toISOString() }
@@ -177,7 +190,8 @@ export function scanFromArgs(args, options) {
   }
   const probe = args.includes('--probe');
   const manual = args.includes('--manual');
-  return scanOnce({ ...options, watchId, probe, manual, creativeIds: ids ? [...new Set(ids)] : null });
+  const quick = args.includes('--quick');
+  return scanOnce({ ...options, watchId, probe, manual, quick, creativeIds: ids ? [...new Set(ids)] : null });
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

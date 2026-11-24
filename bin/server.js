@@ -15,11 +15,12 @@ const scanScript = fileURLToPath(new URL('./scan.js', import.meta.url));
 
 let afterScan = () => {};
 
-function triggerScan(acquired, watchId, creativeIds, { automatic = false, probe = false } = {}) {
+function triggerScan(acquired, watchId, creativeIds, { automatic = false, probe = false, quick = false } = {}) {
   return new Promise((resolve, reject) => {
     const args = creativeIds ? [`--regions=${creativeIds.join(',')}`] : watchId ? [`--watch=${watchId}`] : [];
     if (!automatic && !probe) args.push('--manual');
     if (probe) args.push('--probe');
+    if (quick) args.push('--quick');
     const child = fork(scanScript, args, { cwd: root, stdio: ['inherit', 'inherit', 'inherit', 'ipc'] });
     let busy = false;
     child.once('message', state => {

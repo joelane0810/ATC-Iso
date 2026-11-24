@@ -50,7 +50,12 @@ export function createStore(root, options) {
     if (!hasSnapshotColumn()) transaction(() => {
       if (!hasSnapshotColumn()) run('ALTER TABLE creatives ADD COLUMN snapshot_attempted_at TEXT');
     });
+    // Đếm nhanh: số ads Search đang chạy lấy từ 1 trang kết quả, không đi vào chi tiết.
+    run(`CREATE TABLE IF NOT EXISTS quick_counts (
+      watch_id TEXT PRIMARY KEY, at TEXT NOT NULL, running INTEGER NOT NULL, sampled INTEGER NOT NULL,
+      more INTEGER NOT NULL, total INTEGER, raw TEXT)`);
   }
+  const hasQuickCounts = () => Boolean(get("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'quick_counts'"));
   const now = options?.now ?? (() => new Date());
   function requireProfile(pid) {
     if (!get('SELECT 1 FROM profiles WHERE id = ?', pathId(pid))) throw notFound('Không tìm thấy hồ sơ.');
@@ -112,6 +117,7 @@ export function createStore(root, options) {
   const scanHistory = (at) => all(`SELECT entry FROM scans WHERE status IS NOT NULL AND status != 'running'
     AND (? IS NULL OR julianday(at) <= julianday(?)) ORDER BY id DESC LIMIT 30`, at, at)
     .reverse().map(({ entry }) => JSON.parse(entry));
+  const timeReport = createTimeReport({ all, scanHistory });
   const getScanLog = () => scanHistory(null);
   function regionsByCreative(rows) {
     const result = new Map();
@@ -446,7 +452,30 @@ export function createStore(root, options) {
       ...(watchId ? [watchId, at, cutoff, refresh, cutoff, at, limit] : [at, cutoff, refresh, cutoff, at, limit]))
         .map(row => ({ ...row }));
     },
-    ...createTimeReport({ all, scanHistory }),
+    ...timeReport,
+    getSummary(pid, options) {
+      const summary = timeReport.getSummary(pid, options);
+      if (!hasQuickCounts()) return summary;
+      const counts = new Map(all(`SELECT watch_id AS watchId, at, running, sampled, more, total FROM quick_counts`)
+        .map(row => [row.watchId, { at: row.at, running: row.running, sampled: row.sampled, more: Boolean(row.more), total: row.total }]));
+      for (const watch of summary.watches) {
+        const count = counts.get(watch.watchId);
+        // Chỉ hiện số đếm nhanh khi nó mới hơn lần quét đầy đủ gần nhất.
+        if (count && (!watch.lastScanAt || count.at > watch.lastScanAt)) watch.quickCount = count;
+      }
+      return summary;
+    },
+    setQuickCount(watchId, { at, running, sampled, more, total = null, raw = null }) {
+      run(`INSERT INTO quick_counts (watch_id, at, running, sampled, more, total, raw) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(watch_id) DO UPDATE SET at = excluded.at, running = excluded.running, sampled = excluded.sampled,
+          more = excluded.more, total = excluded.total, raw = excluded.raw`,
+      watchId, at, running, sampled, more ? 1 : 0, total, raw == null ? null : JSON.stringify(raw));
+    },
+    watchesWithoutScanOn(date) {
+      return all(`SELECT DISTINCT w.id, w.type, w.last_scan_at AS lastScanAt FROM watches w
+        JOIN profile_watches p ON p.watch_id = w.id AND p.deleted_at IS NULL`)
+        .filter(row => row.type === 'advertiser' && vietnamDate(row.lastScanAt) !== date).map(row => row.id);
+    },
     getLastScan() {
       const history = getScanLog();
       const last = history.at(-1);

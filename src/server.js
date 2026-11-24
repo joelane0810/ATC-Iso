@@ -135,20 +135,23 @@ export async function startServer({
         let watchId = null;
         let creativeIds;
         let automatic = false;
+        let quick = false;
         if (regionsRoute) {
           const [, , creativeId] = regionsRoute;
           if (!/^CR\d+$/.test(creativeId)) return json(res, 409, { error: 'Mã mẫu quảng cáo không hợp lệ.' });
           creativeIds = [creativeId];
           automatic = (await readBody(req, true)).automatic === true;
         } else {
-          ({ watchId = null } = await readBody(req, true));
+          const body = await readBody(req, true);
+          ({ watchId = null } = body);
+          quick = body.quick === true && watchId === null;
           if (watchId !== null && (typeof watchId !== 'string' || !/^[a-z0-9-]+$/i.test(watchId))) {
             throw new Error('Mục theo dõi không hợp lệ.');
           }
         }
         if (await scanning() || scanPending) return json(res, 409, { error: 'Đang có lượt quét.' });
         scanPending = true;
-        pendingWatchId = regionsRoute ? 'regions' : watchId;
+        pendingWatchId = regionsRoute ? 'regions' : quick ? 'quick' : watchId;
         let validated = false;
         try {
           if (regionsRoute) {
@@ -173,7 +176,7 @@ export async function startServer({
             acknowledged = true;
             resolve({});
           };
-          Promise.resolve().then(() => triggerScan(acquired, watchId, creativeIds, { automatic })).then(acquired, (error) => {
+          Promise.resolve().then(() => triggerScan(acquired, watchId, creativeIds, quick ? { quick } : { automatic })).then(acquired, (error) => {
             if (error.code === 'SCAN_BUSY') resolve({ busy: true });
             else if (error.code === 'SCAN_COOLDOWN') resolve({ resumeAt: error.resumeAt });
             else {

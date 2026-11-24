@@ -18,6 +18,7 @@ let selectingEnd = false;
 let draftPreset;
 const format = byId('format');
 const scan = byId('scan');
+const quickCount = byId('quick-count');
 const errorMessage = byId('error');
 const trashError = byId('trash-error');
 const gallery = byId('gallery');
@@ -481,9 +482,12 @@ function renderWatchItem(watch, kind, management) {
     + (watch.kind === 'project' ? ' nhà QC' : ' dự án'));
   groupPill.className = 'count-pill count-groups';
   groupPill.title = watch.kind === 'project' ? 'Số nhà quảng cáo đang chạy' : 'Số dự án đang chạy';
-  const running = element('span', formatCount.format(runningNow) + ' ads');
-  running.className = 'count-pill';
-  running.title = 'Số ads đang chạy';
+  const quick = watchCounts.get(watch.id)?.quickCount;
+  const running = quick ? quickCountPill(quick) : element('span', formatCount.format(runningNow) + ' ads');
+  if (!quick) {
+    running.className = 'count-pill';
+    running.title = 'Số ads đang chạy';
+  }
   counts.append(groupPill, running);
   if (newAds > 0) {
     const fresh = element('span', formatCount.format(newAds) + ' ads mới');
@@ -1195,8 +1199,13 @@ function overviewWatchRows(watch, groups, columns, allTime) {
   const kind = kindOf(watch);
   const type = element('span', kindLabels[kind]);
   type.className = 'kind-chip kind-' + kind;
-  const running = element('strong', formatCount.format(watch.runningNow));
+  const running = element('strong', watch.quickCount ? '≈ ' + quickCountText(watch.quickCount).replace(' ads', '')
+    : formatCount.format(watch.runningNow));
   running.setAttribute('data-label', 'đang chạy');
+  if (watch.quickCount) {
+    running.className = 'quick-count';
+    running.title = quickCountTitle(watch.quickCount);
+  }
   const counts = element('span');
   counts.className = 'overview-counts';
   counts.append(running);
@@ -2313,6 +2322,7 @@ function renderScanStatus() {
   }
   if (scanning || startingScan) {
     message = scanningWatchId === 'regions' ? 'Đang lấy quốc gia…'
+      : scanningWatchId === 'quick' ? 'Đang đếm nhanh nhà quảng cáo chưa có dữ liệu hôm nay…'
       : 'Đang quét ' + (label || (scanningWatchId ? 'một mục' : 'tất cả')) + '…';
   }
   const active = scanning || startingScan;
@@ -2323,11 +2333,15 @@ function renderScanStatus() {
     const done = order.filter(id => ['done', 'blocked', 'error', 'skipped'].includes(states[id]?.state)).length;
     const current = order.find(id => states[id]?.state === 'scanning');
     const name = watches.find(({ id }) => id === current)?.label ?? watchCounts.get(current)?.label;
-    message = 'Đang quét ' + (name ? name + ' · ' : '') + done + '/' + order.length + ' mục xong';
+    message = (scanningWatchId === 'quick' ? 'Đang đếm nhanh ' : 'Đang quét ') + (name ? name + ' · ' : '') + done + '/' + order.length + ' mục xong';
   }
   const status = byId('status');
   status.textContent = message;
   status.classList?.toggle('is-scanning', active);
+  if (quickCount) {
+    quickCount.disabled = active;
+    quickCount.classList?.toggle('is-scanning', active && scanningWatchId === 'quick');
+  }
   for (const button of [scan, byId('scan-watch'), ...document.querySelectorAll('[data-scan]')]) {
     if (!button) continue;
     button.disabled = active;
@@ -2429,16 +2443,34 @@ async function refreshStatus(reload = false) {
   }
 }
 
-function startScan(id) {
+// Kết quả đếm nhanh (1 trang ATC): "12 ads" nếu đủ, "40+ ads" nếu nhà QC còn nhiều trang.
+function quickCountText(quick) {
+  return formatCount.format(quick.running) + (quick.more ? '+' : '') + ' ads';
+}
+
+function quickCountTitle(quick) {
+  return 'Đếm nhanh lúc ' + displayDate(quick.at, vietnamTime) + ': ' + quickCountText(quick) + ' Search đang chạy'
+    + (quick.total != null ? ' · ATC báo khoảng ' + formatCount.format(quick.total) + ' ads' : '')
+    + ' — chưa quét đầy đủ';
+}
+
+function quickCountPill(quick) {
+  const pill = element('span', '≈ ' + quickCountText(quick));
+  pill.className = 'count-pill count-quick';
+  pill.title = quickCountTitle(quick);
+  return pill;
+}
+
+function startScan(id, { quick = false } = {}) {
   if (scanning || startingScan) return;
   startingScan = true;
   ++statusVersion;
   clearTimeout(pollTimer);
-  scanStatus = { ...scanStatus, scanningWatchId: id };
+  scanStatus = { ...scanStatus, scanningWatchId: quick ? 'quick' : id };
   renderScanStatus();
   return run(async () => {
     try {
-      await api('scan', 'POST', id ? { watchId: id } : {});
+      await api('scan', 'POST', quick ? { quick: true } : id ? { watchId: id } : {});
     } catch (error) {
       if (error.status !== 409) {
         startingScan = false;
@@ -2647,6 +2679,7 @@ watchForm.onsubmit = (event) => {
 };
 
 scan.onclick = () => startScan();
+if (quickCount) quickCount.onclick = () => startScan(null, { quick: true });
 
 try {
   const saved = JSON.parse(localStorage.getItem(rangeStorage));

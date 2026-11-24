@@ -11,13 +11,22 @@ const MAX_PAGES_LATER = 10;
 const DEFAULT_MAX_DETAILS = 20;
 const RUNNING_WINDOW = 2 * 24 * 60 * 60 * 1000;
 
+// Tổng số ads ATC báo kèm phản hồi (nếu có): ưu tiên trường 4, rồi 5.
+function totalFromExtra(extra) {
+  for (const key of ['4', '5']) {
+    const value = Number(extra?.[key]);
+    if (Number.isSafeInteger(value) && value >= 0) return value;
+  }
+  return null;
+}
+
 export async function runScan({
   store, client, now = () => new Date(), log = console.log,
   maxDetails = typeof client.lookupRegions === 'function' ? DEFAULT_MAX_DETAILS : 0,
   onlyWatchIds = null, maxPages = null, skipCaptures = false, scanId,
   createReader = createDomainReader,
   record = entry => store.appendScanLog(entry), waitForCapture = delay,
-  progress = () => {},
+  progress = () => {}, quick = false,
 }) {
   const scannedAt = now();
   const result = { status: 'ok', watched: 0, newAds: 0 };
@@ -78,8 +87,18 @@ export async function runScan({
         if (store.isWatchActive && !store.isWatchActive(watch.id)) continue watchesLoop;
         const request = buildSearchCreativesReq({ watch, pageToken });
         const response = await client.rpc('SearchService/SearchCreatives', request);
-        const { ads: pageAds, nextToken } = parseCreatives(response);
+        const { ads: pageAds, nextToken, extra } = parseCreatives(response);
         pages++;
+        // Đếm nhanh: chỉ 1 trang. Nhà QC nhiều ads (còn trang sau) thì chỉ ghi số đếm, không lưu dữ liệu dở dang.
+        if (quick && nextToken) {
+          const running = pageAds.filter(ad => Date.parse(ad.lastShown) >= runningSince).length;
+          await store.setQuickCount?.(watch.id, { at: scannedAt.toISOString(), running, sampled: pageAds.length,
+            more: true, total: totalFromExtra(extra), raw: extra });
+          log(`Đếm nhanh ${watch.label || watch.value}: ${running}+ ads đang chạy (còn trang sau)`);
+          result.watched++;
+          report({ type: 'saved', watchId: watch.id, ads: pageAds.length, newAds: 0 });
+          continue watchesLoop;
+        }
         let hasUnconfirmedAds = false;
         for (const ad of pageAds) {
           const lastShown = ads.get(ad.creativeId)?.lastShown;

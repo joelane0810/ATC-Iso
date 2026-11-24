@@ -774,3 +774,17 @@ test('background region candidates are running and have no countries', t => {
   assert.deepEqual(store.creativesNeedingRegions(5, { now: second, runningWithoutRegions: true }),
     [{ creativeId: 'CR1', advertiserId: 'AR1' }]);
 });
+
+test('quick counts show for advertisers until a full scan is newer', (t) => {
+  const { store } = setup(t);
+  const { id } = store.addProfile('Dai');
+  const advertiser = store.addWatch(id, 'AR123');
+  store.addWatch(id, 'nike.com');
+  assert.deepEqual(store.watchesWithoutScanOn('2026-11-24'), [advertiser.id]);
+  store.setQuickCount(advertiser.id, { at: '2026-11-24T05:00:00.000Z', running: 40, sampled: 40, more: true, total: 120, raw: { 4: '120' } });
+  const quick = store.getSummary(id, { now: new Date('2026-11-24T06:00:00Z') }).watches.find(w => w.watchId === advertiser.id).quickCount;
+  assert.deepEqual(quick, { at: '2026-11-24T05:00:00.000Z', running: 40, sampled: 40, more: true, total: 120 });
+  store.mergeAds(advertiser, [{ creativeId: 'CR1', advertiserId: 'AR123', lastShown: '2026-11-24T00:00:00Z' }], new Date('2026-11-24T07:00:00Z'));
+  assert.equal(store.getSummary(id, { now: new Date('2026-11-24T08:00:00Z') }).watches.find(w => w.watchId === advertiser.id).quickCount, undefined);
+  assert.deepEqual(store.watchesWithoutScanOn('2026-11-24'), []);
+});

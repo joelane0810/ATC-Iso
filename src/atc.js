@@ -75,7 +75,12 @@ export function parseCreatives(json) {
       detailsUrl: `${ATC}/advertiser/${advertiserId}/creative/${creativeId}`,
     };
   });
-  return { ads, nextToken: json?.[2] || null };
+  // Các trường khác của phản hồi (ngoài danh sách và mã trang tiếp) — có thể chứa tổng số ads ATC hiển thị.
+  const extra = {};
+  for (const [key, value] of Object.entries(json ?? {})) {
+    if (key !== '1' && key !== '2' && (typeof value !== 'object' || value === null)) extra[key] = value;
+  }
+  return { ads, nextToken: json?.[2] || null, extra };
 }
 
 export function parseSuggestions(json) {

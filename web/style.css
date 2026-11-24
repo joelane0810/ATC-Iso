@@ -652,7 +652,7 @@ main {
   /* Hàng 1: ☰ · ATC Iso · (hồ sơ + nút thêm) ở góc phải. Hàng 2: tìm kiếm. Hàng 3: trạng thái · Quét tất cả. */
   .topbar {
     grid-template-columns: auto minmax(0, 1fr) auto auto;
-    grid-template-areas: "menu title profile add" "search search search search" "status status status scan";
+    grid-template-areas: "menu title profile add" "search search search search" "status status quick scan";
     align-items: center;
   }
   #watch-menu { grid-area: menu; }
@@ -670,6 +670,7 @@ main {
   .profile-menu #profile-form { left: auto; right: 0; top: calc(100% + 6px); }
   #status { grid-area: status; font-size: 12px; color: var(--muted); }
   #scan { grid-area: scan; justify-self: end; }
+  #quick-count { grid-area: quick; justify-self: end; min-height: 36px; padding: 4px 8px; font-size: 14px; }
   .topbar h1 { font-size: 18px; }
   .brand-logo { height: 28px; }
   #watch-form { height: 40px; gap: 12px; padding: 0 8px 0 16px; }
@@ -1119,7 +1120,10 @@ button.is-scanning::after {
 .images-queue li small { color: var(--muted, #5f6368); }
 .images-recent { color: var(--muted, #5f6368); }
 @media (width < 1280px) {
-  .topbar { grid-template-areas: "menu title profile add" "search search search search" "status status status scan" "images images images images"; }
+  .topbar { grid-template-areas: "menu title profile add" "search search search search" "status status quick scan" "images images images images"; }
   .images-status { grid-area: images; justify-self: start; }
   .images-panel { left: 0; right: auto; }
 }
+
+.count-pill.count-quick { border-style: dashed; color: var(--muted); }
+.quick-count { color: var(--muted); }
