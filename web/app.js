@@ -1339,7 +1339,8 @@ function groupRow(watch, group) {
     });
     controls.append(follow);
   }
-  if (group.key) controls.append(groupRegionsButton(watch, group));
+  // Chỉ dự án trong nhà quảng cáo mới có nút; nhà QC trong dự án có thể tới cả nghìn ads nên không có.
+  if (group.key && group.groupType === 'domain') controls.append(groupRegionsButton(watch, group));
   wrapper.append(controls, panel);
   row.onclick = () => {
     const alreadyOpen = openGroup?.row === row;
@@ -1363,7 +1364,7 @@ function groupRow(watch, group) {
 
 // Lấy quốc gia cho mọi mẫu của nhóm (vd. cả dự án trong một nhà quảng cáo).
 function groupRegionsButton(watch, group) {
-  const label = group.groupType === 'domain' ? 'Lấy quốc gia cả dự án' : 'Lấy quốc gia cả nhà QC';
+  const label = 'Lấy quốc gia cả dự án';
   const control = element('button', label);
   control.type = 'button';
   control.className = 'group-regions';
