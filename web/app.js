@@ -2450,12 +2450,15 @@ function quickCountText(quick) {
 
 function quickCountTitle(quick) {
   return 'Đếm nhanh lúc ' + displayDate(quick.at, vietnamTime) + ': ' + quickCountText(quick) + ' Search đang chạy'
-    + (quick.total != null ? ' · ATC báo khoảng ' + formatCount.format(quick.total) + ' ads' : '')
+    + (quick.total != null ? ' · ATC báo tổng khoảng ' + formatCount.format(quick.total)
+      + (quick.totalMax ? '–' + formatCount.format(quick.totalMax) : '') + ' ads' : '')
     + ' — chưa quét đầy đủ';
 }
 
 function quickCountPill(quick) {
-  const pill = element('span', '≈ ' + quickCountText(quick));
+  const range = quick.more && quick.total != null
+    ? ' · tổng ' + formatCount.format(quick.total) + (quick.totalMax ? '–' + formatCount.format(quick.totalMax) : '') : '';
+  const pill = element('span', '≈ ' + quickCountText(quick) + range);
   pill.className = 'count-pill count-quick';
   pill.title = quickCountTitle(quick);
   return pill;

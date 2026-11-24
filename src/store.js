@@ -456,8 +456,15 @@ export function createStore(root, options) {
     getSummary(pid, options) {
       const summary = timeReport.getSummary(pid, options);
       if (!hasQuickCounts()) return summary;
-      const counts = new Map(all(`SELECT watch_id AS watchId, at, running, sampled, more, total FROM quick_counts`)
-        .map(row => [row.watchId, { at: row.at, running: row.running, sampled: row.sampled, more: Boolean(row.more), total: row.total }]));
+      const counts = new Map(all(`SELECT watch_id AS watchId, at, running, sampled, more, total, raw FROM quick_counts`)
+        .map(row => {
+          // ATC trả tổng số ads dạng khoảng: trường 4 = cận dưới, trường 5 = cận trên.
+          let upper = null;
+          try { upper = Number(JSON.parse(row.raw ?? 'null')?.[5]); } catch {}
+          const totalMax = Number.isSafeInteger(upper) && upper > (row.total ?? -1) ? upper : null;
+          return [row.watchId, { at: row.at, running: row.running, sampled: row.sampled, more: Boolean(row.more),
+            total: row.total, totalMax }];
+        }));
       for (const watch of summary.watches) {
         const count = counts.get(watch.watchId);
         // Chỉ hiện số đếm nhanh khi nó mới hơn lần quét đầy đủ gần nhất.
