@@ -1,6 +1,7 @@
 import { isSqliteBusy } from './db.js';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { ADFRAME_HTML } from './preview-snapshot.js';
+import { measureMemory } from './memory.js';
 import { createServer } from 'node:http';
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -114,6 +115,7 @@ export async function startServer({
           return json(res, 201, await store.addProfile(name.trim()));
         }
       }
+      if (method === 'GET' && path === '/api/memory') return json(res, 200, await measureMemory());
       if (method === 'GET' && path === '/api/status') {
         const active = await scanning();
         const last = await store.getLastScan();
