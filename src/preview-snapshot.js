@@ -1,7 +1,7 @@
 import { chromium } from 'playwright-core';
 import { isBlockedResponse } from './atc.js';
 import { randomUUID } from 'node:crypto';
-import { appendFile, rename, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -61,7 +61,8 @@ function holdVideoStart() {
   }
 }
 
-export async function createSnapshotter({ launch = options => chromium.launch(options), note = () => {} } = {}) {
+export async function createSnapshotter({ launch = options => chromium.launch(options), note = () => {}, debugDir = null } = {}) {
+  let debugCount = 0;
   const browser = await launch({ channel: 'chrome', headless: true });
   let blocked = false;
   return {
@@ -81,7 +82,15 @@ export async function createSnapshotter({ launch = options => chromium.launch(op
         const page = await context.newPage();
         await page.setContent(previewDocument(url), { waitUntil: 'domcontentloaded', timeout });
         const ready = await page.waitForFunction(previewReady, false, { timeout });
-        if (await ready.jsonValue() === 'error' || blocked) { note('google-error'); return null; }
+        if (await ready.jsonValue() === 'error' || blocked) {
+          note('google-error');
+          if (debugDir && debugCount++ < 3) {
+            await page.screenshot({ path: join(debugDir, `loi-${debugCount}.png`) }).catch(() => {});
+            await writeFile(join(debugDir, `loi-${debugCount}.txt`), await page.evaluate(() => document.body.innerText.slice(0, 2000)
+              + '\n---\n' + document.documentElement.outerHTML.slice(0, 4000))).catch(() => {});
+          }
+          return null;
+        }
         await Promise.all(page.frames().map(frame => frame.evaluate(holdVideoStart).catch(() => {})));
         await page.waitForTimeout(1500);
         if (blocked || await page.evaluate(previewReady, true) !== true) { note('empty'); return null; }
@@ -113,7 +122,9 @@ export function createSnapshotBackfill({ store, open = createSnapshotter, pause 
       const logFile = join(directory, '..', 'snapshot-log.txt');
       let current = '';
       const note = reason => appendFile(logFile, `${new Date().toISOString()} ${current} ${reason}\n`).catch(() => {});
-      const snapshotter = await open({ note });
+      const debugDir = join(directory, '..', 'snapshot-debug');
+      await mkdir(debugDir, { recursive: true }).catch(() => {});
+      const snapshotter = await open({ note, debugDir });
       try {
         let attempted = false;
         for (const { creativeId, previewUrl } of candidates) {
