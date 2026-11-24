@@ -344,8 +344,11 @@ export function createStore(root, options) {
     },
     // Tên miền đáng tin của cùng nhà quảng cáo (ATC báo hoặc đọc từ tệp xem trước) — để sửa lỗi đọc ảnh.
     knownDomainsFor(creativeId) {
-      return all(`SELECT DISTINCT o.domain FROM creatives c JOIN creatives o ON o.advertiser_id = c.advertiser_id
-        WHERE c.id = ? AND coalesce(trim(o.domain), '') != '' AND (o.domain_source IS NULL OR o.domain_source = 'preview')`,
+      // Tên miền đọc từ ảnh chỉ được tin khi ít nhất 2 mẫu khác cùng đọc ra.
+      return all(`SELECT o.domain FROM creatives c JOIN creatives o ON o.advertiser_id = c.advertiser_id AND o.id != c.id
+        WHERE c.id = ? AND coalesce(trim(o.domain), '') != ''
+        GROUP BY o.domain
+        HAVING sum(o.domain_source IS NULL OR o.domain_source = 'preview') > 0 OR count(*) >= 2`,
       creativeId).map(row => row.domain);
     },
     // Tên miền đã đọc từ ảnh chụp, để soát lại bằng luật sửa lỗi mới.

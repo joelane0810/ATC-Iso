@@ -1467,7 +1467,8 @@ async function loadGroupAds(request, name, message) {
 }
 
 function domainLabel(ad, tag) {
-  const label = element(tag, ad.domain || 'Chưa rõ tên miền');
+  // Quảng cáo video: ATC không công bố trang đích nên không thể có tên miền.
+  const label = element(tag, ad.domain || (ad.format === 'video' ? 'Video — ATC không công bố tên miền' : 'Chưa rõ tên miền'));
   if (!ad.domain) label.className = 'domain-unknown';
   else if (tag === 'dd' && (ad.domainSource === 'ocr' || ad.domainSource === 'snapshot')) {
     label.append(element('small', ' (đọc từ ảnh)'));
