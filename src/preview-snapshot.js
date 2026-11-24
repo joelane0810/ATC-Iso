@@ -124,7 +124,18 @@ export async function createSnapshotter({ launch = options => chromium.launch(op
           return null;
         }
         const png = await page.locator('#atc-preview').screenshot({ timeout, animations: 'disabled' });
-        if (png.length < MIN_PNG_BYTES) { note('blank'); return null; }
+        if (png.length < MIN_PNG_BYTES) {
+          note('blank');
+          if (debugDir && debugCount++ < 3) {
+            await page.screenshot({ path: join(debugDir, `trang-${debugCount}.png`), fullPage: true }).catch(() => {});
+            const frames = await Promise.all(page.frames().map(async frame => frame.url() + ' :: '
+              + (await frame.evaluate(() => (document.body?.innerText ?? '').slice(0, 200) + ' || '
+                + document.documentElement.outerHTML.length + ' || ' + document.documentElement.outerHTML.slice(0, 1500)).catch(e => '?' + e.message))));
+            const box = await page.locator('#atc-preview').boundingBox().catch(() => null);
+            await writeFile(join(debugDir, `trang-${debugCount}.txt`), JSON.stringify(box) + '\n' + frames.join('\n\n')).catch(() => {});
+          }
+          return null;
+        }
         return blocked ? null : png;
       } catch (error) {
         note('fail: ' + String(error?.message ?? error).split('\n')[0].slice(0, 160));
