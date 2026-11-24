@@ -146,6 +146,13 @@ test('Task 3 HTTP API and static files', async (t) => {
   assert.equal(app.headers.get('cache-control'), 'no-cache');
   assert.match(app.headers.get('content-type'), /javascript/);
   assert.equal((await get('/style.css')).headers.get('cache-control'), 'no-cache');
+  assert.match(homeText, /rel="icon" href="\/favicon\.svg"/);
+  assert.match(homeText, /aria-label="ATC Iso"/);
+  assert.match((await get('/favicon.svg')).headers.get('content-type'), /image\/svg\+xml/);
+  assert.match((await get('/apple-touch-icon.png')).headers.get('content-type'), /image\/png/);
+  const manifest = await get('/manifest.webmanifest');
+  assert.match(manifest.headers.get('content-type'), /manifest\+json/);
+  assert.equal((await manifest.json()).short_name, 'ATC Iso');
   const image = await get('/images/CR1.png');
   assert.equal(image.headers.get('cache-control'), null);
   assert.equal(await image.text(), 'ảnh');

@@ -7,7 +7,9 @@ import { fileURLToPath } from 'node:url';
 
 const webDir = fileURLToPath(new URL('../web/', import.meta.url));
 const webFiles = new Map([['/', 'index.html'], ['/index.html', 'index.html'],
-  ['/app.js', 'app.js'], ['/style.css', 'style.css']]);
+  ['/app.js', 'app.js'], ['/style.css', 'style.css'], ['/favicon.svg', 'favicon.svg'],
+  ['/apple-touch-icon.png', 'apple-touch-icon.png'], ['/icon-192.png', 'icon-192.png'], ['/icon-512.png', 'icon-512.png'],
+  ['/manifest.webmanifest', 'manifest.webmanifest']]);
 const vietnamTime = new Intl.DateTimeFormat('vi-VN', {
   hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'Asia/Ho_Chi_Minh',
 });
@@ -23,6 +25,8 @@ const contentTypes = {
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
 };
