@@ -101,7 +101,16 @@ export async function createSnapshotter({ launch = options => chromium.launch(op
           const box = await (await frame.frameElement().catch(() => null))?.boundingBox().catch(() => null);
           if (box && box.width >= 150 && box.height >= 80) visibleError = true;
         }
-        if (visibleError) { note('google-error-frame'); return null; }
+        if (visibleError) {
+          note('google-error-frame');
+          if (debugDir && debugCount++ < 3) {
+            await page.screenshot({ path: join(debugDir, `khung-${debugCount}.png`) }).catch(() => {});
+            const frames = await Promise.all(page.frames().map(async frame => frame.url() + ' :: '
+              + (await frame.evaluate(() => document.body?.innerText?.slice(0, 300)).catch(() => '?'))));
+            await writeFile(join(debugDir, `khung-${debugCount}.txt`), frames.join('\n\n')).catch(() => {});
+          }
+          return null;
+        }
         const png = await page.locator('#atc-preview').screenshot({ timeout, animations: 'disabled' });
         return blocked ? null : png;
       } catch (error) {
@@ -121,7 +130,7 @@ export function createSnapshotBackfill({ store, open = createSnapshotter, pause 
     if (running) return;
     running = true;
     try {
-      await store.resetSnapshotAttemptsBefore?.('2026-11-24T05:45:00.000Z');
+      await store.resetSnapshotAttemptsBefore?.('2026-11-24T06:30:00.000Z');
       const candidates = await store.creativesNeedingSnapshots(300);
       if (!candidates.length) return;
       const directory = store.imagesDir();
