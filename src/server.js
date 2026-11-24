@@ -84,7 +84,7 @@ async function serveFile(res, dir, name, headers = {}) {
 }
 
 export async function startServer({
-  store, port = 4317, host = '127.0.0.1', triggerScan, isScanning, waitForAcquisition = false, lanUrls = () => [], access = null, accessStatus = () => null, readScanProgress = () => null,
+  store, port = 4317, host = '127.0.0.1', triggerScan, isScanning, waitForAcquisition = false, lanUrls = () => [], access = null, accessStatus = () => null, readScanProgress = () => null, imagingStatus = () => null,
 }) {
   const hasCreativeForProfile = store.hasCreativeForProfile?.bind(store);
   const webStore = store.forWeb?.();
@@ -118,7 +118,9 @@ export async function startServer({
         // Tiến độ chỉ có ý nghĩa khi đang quét hoặc vừa xong (≤ 2 phút) để giao diện hiện "Xong".
         const fresh = progress && (active ? !progress.finishedAt
           : progress.finishedAt && Date.now() - Date.parse(progress.finishedAt) < 120_000);
-        return json(res, 200, { scanning: active, scanningWatchId, last, lanUrls: lanUrls(),
+        let images = null;
+        try { images = imagingStatus(); } catch {}
+        return json(res, 200, { scanning: active, scanningWatchId, last, lanUrls: lanUrls(), ...(images ? { images } : {}),
           ...(fresh ? { progress } : {}), ...(accessStatus() ? { gateway: accessStatus() } : {}) });
       }
       if (method === 'GET' && path === '/api/suggest') {

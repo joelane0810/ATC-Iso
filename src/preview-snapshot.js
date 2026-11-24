@@ -177,7 +177,15 @@ async function videoThumbnail(previewUrl, fetchImpl) {
 
 export function createSnapshotBackfill({ store, open = createSnapshotter, pause = sleep, fetchImpl = globalThis.fetch }) {
   let running = false;
-  return async () => {
+  // Tiến độ lượt lấy ảnh hiện tại, để web hiển thị.
+  const progress = { running: false, total: 0, done: 0, ok: 0, failed: 0, current: null, startedAt: null, finishedAt: null, recent: [] };
+  const finishItem = (creativeId, ok) => {
+    progress.done++;
+    if (ok) progress.ok++; else progress.failed++;
+    progress.recent.unshift({ creativeId, ok, at: new Date().toISOString() });
+    progress.recent.length = Math.min(progress.recent.length, 20);
+  };
+  const run = async () => {
     if (running) return;
     running = true;
     try {
@@ -193,6 +201,8 @@ export function createSnapshotBackfill({ store, open = createSnapshotter, pause 
       }
       const candidates = await store.creativesNeedingSnapshots(300);
       if (!candidates.length) return;
+      Object.assign(progress, { running: true, total: candidates.length, done: 0, ok: 0, failed: 0, current: null,
+        startedAt: new Date().toISOString(), finishedAt: null });
       const directory = store.imagesDir();
       const logFile = join(directory, '..', 'snapshot-log.txt');
       let current = '';
@@ -207,24 +217,27 @@ export function createSnapshotBackfill({ store, open = createSnapshotter, pause 
           if (attempted) await pause(300);
           attempted = true;
           current = creativeId;
+          progress.current = { creativeId, format };
           if (format === 'video') {
             const jpg = await videoThumbnail(previewUrl, fetchImpl);
             if (jpg) {
               const name = creativeId + '.jpg';
               await writeFile(join(directory, name), jpg);
               await store.setCreativeImage(creativeId, 'images/' + name);
+              finishItem(creativeId, true);
               continue;
             }
           }
           const png = await snapshotter.snapshot(previewUrl);
           if (snapshotter.blocked) break;
-          if (!png) continue;
+          if (!png) { finishItem(creativeId, false); continue; }
           const filename = creativeId + '.png';
           const temporary = join(directory, filename + '.' + randomUUID() + '.tmp');
           try {
             await writeFile(temporary, png);
             await rename(temporary, join(directory, filename));
             await store.setCreativeImage(creativeId, 'images/' + filename);
+            finishItem(creativeId, true);
           } finally {
             await rm(temporary, { force: true });
           }
@@ -234,6 +247,8 @@ export function createSnapshotBackfill({ store, open = createSnapshotter, pause 
       }
     } finally {
       running = false;
+      if (progress.running) Object.assign(progress, { running: false, current: null, finishedAt: new Date().toISOString() });
     }
   };
+  return Object.assign(run, { progress });
 }

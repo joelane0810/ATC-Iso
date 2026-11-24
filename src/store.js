@@ -342,6 +342,16 @@ export function createStore(root, options) {
       return transaction(() => run(`UPDATE creatives SET snapshot_attempted_at = NULL
         WHERE image IS NULL AND snapshot_attempted_at < ?`, iso).changes);
     },
+    // Hàng chờ lấy ảnh: tổng số và vài mẫu kế tiếp (để web hiển thị).
+    snapshotQueue(limit = 20, at = now()) {
+      const cutoff = ocrCutoff(at);
+      const [{ total }] = all(`SELECT count(*) AS total FROM creatives WHERE ${snapshotCandidate} AND ${snapshotDue}`, cutoff);
+      const next = all(`SELECT c.id AS creativeId, c.format, c.domain, c.last_shown AS lastShown,
+          (SELECT json_extract(wc.observation, '$.advertiserName') FROM watch_creatives wc WHERE wc.creative_id = c.id LIMIT 1) AS advertiserName
+        FROM creatives c WHERE ${snapshotCandidate.replaceAll('creatives.id', 'c.id')} AND ${snapshotDue}
+        ORDER BY (c.format = 'video') DESC, c.last_shown DESC, c.id LIMIT ?`, cutoff, limit).map(row => ({ ...row }));
+      return { total, next };
+    },
     snapshotImages() {
       return all(`SELECT id AS creativeId, image FROM creatives
         WHERE snapshot_attempted_at IS NOT NULL AND image LIKE 'images/CR%.png'`);

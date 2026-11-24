@@ -1102,3 +1102,22 @@ button.is-scanning::after {
   object-position: top;
   padding: 0;
 }
+
+/* Tiến độ lấy ảnh mẫu */
+.images-status { position: relative; font-size: 12px; }
+.images-status summary { cursor: pointer; list-style: none; padding: 4px 10px; border-radius: 999px; background: #f1f3f4; color: #3c4043; white-space: nowrap; font-weight: 600; }
+.images-status summary::-webkit-details-marker { display: none; }
+.images-status summary.is-scanning { background: #e8f0fe; color: var(--accent-text, #1a73e8); }
+.images-panel { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; width: min(360px, 90vw); max-height: 60vh; overflow: auto;
+  padding: 12px; border: 1px solid var(--line, #dadce0); border-radius: 10px; background: #fff; box-shadow: 0 6px 24px #0002; }
+.images-panel p { margin: 0 0 8px; color: #3c4043; }
+.images-panel h4 { margin: 10px 0 6px; font-size: 13px; }
+.images-queue { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.images-queue li strong { display: block; font-size: 13px; overflow-wrap: anywhere; }
+.images-queue li small { color: var(--muted, #5f6368); }
+.images-recent { color: var(--muted, #5f6368); }
+@media (width < 1280px) {
+  .topbar { grid-template-areas: "menu title profile add" "search search search search" "status status status scan" "images images images images"; }
+  .images-status { grid-area: images; justify-self: start; }
+  .images-panel { left: 0; right: auto; }
+}

@@ -2259,6 +2259,44 @@ function scanButton(label, id, fullLabel) {
   return button;
 }
 
+// Tiến độ lấy ảnh mẫu (chụp bản xem trước / ảnh bìa video) và hàng chờ.
+function renderImageStatus(images) {
+  const box = document.getElementById?.('images-status');
+  if (!box) return;
+  const queueTotal = images?.queue?.total ?? 0;
+  box.hidden = !images || (!images.running && !queueTotal);
+  if (box.hidden) return;
+  const summary = byId('images-summary');
+  summary.textContent = images.running
+    ? '🖼 Đang lấy ảnh ' + formatCount.format(images.done) + '/' + formatCount.format(images.total) + ' · còn ' + formatCount.format(queueTotal) + ' chờ'
+    : '🖼 ' + formatCount.format(queueTotal) + ' mẫu chờ lấy ảnh';
+  summary.classList?.toggle('is-scanning', Boolean(images.running));
+  const panel = byId('images-panel');
+  const rows = [];
+  rows.push(element('p', images.running
+    ? 'Đang lấy ảnh cho mẫu quảng cáo chưa có ảnh: xong ' + formatCount.format(images.ok) + ', không lấy được ' + formatCount.format(images.failed) + '.'
+    : 'Lượt lấy ảnh tiếp theo chạy trong vòng 30 phút, hoặc ngay sau lượt quét kế tiếp.'));
+  if (images.current) {
+    rows.push(element('p', 'Đang xử lý: ' + images.current.creativeId + (images.current.format === 'video' ? ' (ảnh bìa video)' : ' (chụp bản xem trước)')));
+  }
+  const list = element('ol');
+  list.className = 'images-queue';
+  for (const item of images.queue?.next ?? []) {
+    const li = element('li');
+    li.append(element('strong', item.domain || item.advertiserName || item.creativeId),
+      element('small', (item.format === 'video' ? 'Video' : 'Chữ') + (item.advertiserName && item.domain ? ' · ' + item.advertiserName : '')));
+    list.append(li);
+  }
+  if (list.children.length) rows.push(element('h4', 'Đang xếp hàng (' + formatCount.format(queueTotal) + ')'), list);
+  const recent = images.recent ?? [];
+  if (recent.length) {
+    const done = element('p', 'Vừa xong: ' + recent.filter((item) => item.ok).length + ' có ảnh, ' + recent.filter((item) => !item.ok).length + ' không lấy được (trong 20 mẫu gần nhất).');
+    done.className = 'images-recent';
+    rows.push(done);
+  }
+  panel.replaceChildren(...rows);
+}
+
 function renderScanStatus() {
   const { last, scanningWatchId } = scanStatus ?? {};
   const label = watches.find(({ id }) => id === scanningWatchId)?.label
@@ -2377,6 +2415,7 @@ async function refreshStatus(reload = false) {
     scanning = result.scanning;
     if (!regionLookup && scanning && finishedCount(result.progress) > doneBefore) await loadProfileData().catch(() => {});
     renderLanUrls(result.lanUrls);
+    renderImageStatus(result.images);
     if (reload) startingScan = false;
     renderScanStatus();
     if (reload && !scanning && !regionLookup) {
